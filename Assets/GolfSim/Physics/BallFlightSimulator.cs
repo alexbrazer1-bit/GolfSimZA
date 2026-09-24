@@ -15,6 +15,7 @@ namespace GolfSimZA.Physics
         [SerializeField] private float spinLift = 0.000018f;
         [SerializeField] private float spinDecayPerSecond = 0.08f;
         [SerializeField] private float metersToUnity = 1.0f;
+        [SerializeField] private float maximumFlightTime = 12.0f;
 
         [Header("Ground physics")]
         [SerializeField] private float groundY = 0.0f;
@@ -26,6 +27,7 @@ namespace GolfSimZA.Physics
         private Vector3 velocity;
         private bool airborne;
         private bool rolling;
+        private bool hasLanded;
         private float currentSpinRpm;
         private Vector3 launchPosition;
         private float maxHeight;
@@ -47,7 +49,8 @@ namespace GolfSimZA.Physics
                 return;
 
             activeShot = shot;
-            float speed = Mathf.Max(0f, shot.BallSpeedMps) * metersToUnity;
+            float scale = Mathf.Max(0.0001f, metersToUnity);
+            float speed = Mathf.Max(0f, shot.BallSpeedMps) * scale;
             float elevation = Mathf.Clamp(shot.LaunchAngleDeg, -10f, 70f) * Mathf.Deg2Rad;
             float azimuth = shot.LaunchDirectionDeg * Mathf.Deg2Rad;
 
@@ -64,6 +67,7 @@ namespace GolfSimZA.Physics
             flightTime = 0f;
             airborne = true;
             rolling = false;
+            hasLanded = false;
         }
 
         private void Update()
@@ -79,7 +83,7 @@ namespace GolfSimZA.Physics
 
         private void SimulateAirborne()
         {
-            float dt = Time.deltaTime;
+            float dt = Mathf.Min(Time.deltaTime, 0.05f);
             flightTime += dt;
 
             Vector3 horizontalVelocity = new Vector3(velocity.x, 0f, velocity.z);
@@ -91,29 +95,50 @@ namespace GolfSimZA.Physics
             currentSpinRpm = Mathf.MoveTowards(currentSpinRpm, 0f, currentSpinRpm * spinDecayPerSecond * dt);
             ball.position += velocity * dt;
             maxHeight = Mathf.Max(maxHeight, ball.position.y);
+            totalMeters = HorizontalDistanceFromLaunch();
 
+            // First ground contact is the carry distance. This is handled before
+            // bounce/roll physics so carry cannot remain 0.0 m after a visible shot.
             if (ball.position.y <= groundY)
             {
-                ball.position = new Vector3(ball.position.x, groundY, ball.position.z);
-                carryMeters = HorizontalDistanceFromLaunch();
-
-                velocity.y = -velocity.y * bounceRetention;
-                velocity.x *= horizontalBounceRetention;
-                velocity.z *= horizontalBounceRetention;
-
-                if (Mathf.Abs(velocity.y) < 1.0f)
-                {
-                    airborne = false;
-                    rolling = new Vector3(velocity.x, 0f, velocity.z).magnitude > stopSpeed;
-                    if (!rolling)
-                        CompleteShot();
-                }
+                LandBall();
+                return;
             }
+
+            // Safety fallback so a bad scene surface can never leave the camera
+            // following an airborne ball forever.
+            if (flightTime >= maximumFlightTime)
+            {
+                ball.position = new Vector3(ball.position.x, groundY, ball.position.z);
+                LandBall();
+            }
+        }
+
+        private void LandBall()
+        {
+            if (hasLanded)
+                return;
+
+            hasLanded = true;
+            ball.position = new Vector3(ball.position.x, groundY, ball.position.z);
+            carryMeters = HorizontalDistanceFromLaunch();
+            totalMeters = carryMeters;
+
+            float verticalImpactSpeed = Mathf.Abs(velocity.y);
+            velocity.y = -verticalImpactSpeed * bounceRetention;
+            velocity.x *= horizontalBounceRetention;
+            velocity.z *= horizontalBounceRetention;
+
+            airborne = false;
+            rolling = new Vector3(velocity.x, 0f, velocity.z).magnitude > stopSpeed;
+
+            if (!rolling)
+                CompleteShot();
         }
 
         private void SimulateRoll()
         {
-            float dt = Time.deltaTime;
+            float dt = Mathf.Min(Time.deltaTime, 0.05f);
             Vector3 horizontalVelocity = new Vector3(velocity.x, 0f, velocity.z);
             float speed = horizontalVelocity.magnitude;
 
@@ -140,9 +165,15 @@ namespace GolfSimZA.Physics
 
         private void CompleteShot()
         {
-            totalMeters = HorizontalDistanceFromLaunch();
-            carryMeters = Mathf.Min(carryMeters, totalMeters);
-            ShotCompleted?.Invoke(activeShot, carryMeters, totalMeters, maxHeight / Mathf.Max(0.0001f, metersToUnity), flightTime);
+            totalMeters = Mathf.Max(totalMeters, HorizontalDistanceFromLaunch());
+            carryMeters = Mathf.Clamp(carryMeters, 0f, totalMeters);
+
+            ShotCompleted?.Invoke(
+                activeShot,
+                carryMeters,
+                totalMeters,
+                maxHeight / Mathf.Max(0.0001f, metersToUnity),
+                flightTime);
         }
     }
 }
