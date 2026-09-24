@@ -3,6 +3,7 @@ using System.Reflection;
 using GolfSimZA.Core;
 using GolfSimZA.Players;
 using GolfSimZA.UI;
+using GolfSimZA.Courses;
 using UnityEngine;
 using UnityEngine.InputSystem;
 
@@ -23,18 +24,12 @@ namespace GolfSimZA.LaunchMonitors
 
             public ClubPreset(string name, int number, float loft, float ballSpeed, float clubSpeed, float launch, float spin)
             {
-                this.name = name;
-                this.number = number;
-                this.loft = loft;
-                this.ballSpeed = ballSpeed;
-                this.clubSpeed = clubSpeed;
-                this.launch = launch;
-                this.spin = spin;
+                this.name = name; this.number = number; this.loft = loft; this.ballSpeed = ballSpeed;
+                this.clubSpeed = clubSpeed; this.launch = launch; this.spin = spin;
             }
         }
 
         [SerializeField] private int selectedClubIndex;
-
         private readonly ClubPreset[] clubs =
         {
             new ClubPreset("Driver", 1, 10.5f, 67.0f, 45.0f, 13.5f, 2400.0f),
@@ -59,16 +54,8 @@ namespace GolfSimZA.LaunchMonitors
         private int lastShotSlot;
         private int mappingShotSequence;
 
-        public bool TryConnect()
-        {
-            IsConnected = true;
-            return true;
-        }
-
-        public void Disconnect()
-        {
-            IsConnected = false;
-        }
+        public bool TryConnect() { IsConnected = true; return true; }
+        public void Disconnect() { IsConnected = false; }
 
         private void Awake()
         {
@@ -80,8 +67,7 @@ namespace GolfSimZA.LaunchMonitors
 
         private void Update()
         {
-            if (!IsConnected || Keyboard.current == null)
-                return;
+            if (!IsConnected || Keyboard.current == null) return;
 
             if (ClubMappingSession.IsActive)
             {
@@ -90,30 +76,74 @@ namespace GolfSimZA.LaunchMonitors
             }
 
             SyncFromRoundUI();
+            ApplyRecommendedClub();
 
             for (int i = 0; i < clubs.Length; i++)
             {
                 if (IsNumberKeyPressed(Keyboard.current, i + 1))
                 {
                     selectedClubIndex = i;
+                    PlayerPrefs.DeleteKey("GolfSimZA.RoundClubName");
                     Debug.Log($"[GolfSimZA] Selected club: {SelectedClubName}");
                 }
             }
 
             if (Keyboard.current.spaceKey.wasPressedThisFrame)
             {
-                ClubPreset club = clubs[Mathf.Clamp(selectedClubIndex, 0, clubs.Length - 1)];
+                ClubPreset club = GetActiveClubPreset();
                 lastShotSlot = selectedClubIndex + 1;
                 lastShotTime = Time.unscaledTime;
                 ShotReceived?.Invoke(ShotData.CreateTestShot(club.name, club.number, club.loft, club.ballSpeed, club.clubSpeed, club.launch, club.spin));
             }
         }
 
+        private void ApplyRecommendedClub()
+        {
+            string requested = PlayerPrefs.GetString("GolfSimZA.RoundClubName", "");
+            if (string.IsNullOrWhiteSpace(requested)) return;
+
+            string player = "Player 1";
+            string names = CourseSession.PlayerNames;
+            if (!string.IsNullOrWhiteSpace(names))
+            {
+                string[] split = names.Split(new[] { '|' }, StringSplitOptions.RemoveEmptyEntries);
+                if (split.Length > 0 && !string.IsNullOrWhiteSpace(split[0])) player = split[0].Trim();
+            }
+
+            GolfBagProfile profile = GolfBagProfile.Load(player);
+            int index = profile.FindClubIndex(requested);
+            if (index < 0 || !profile.InBag[index]) return;
+
+            // Keep the simulator's legacy club buttons in sync where possible.
+            for (int i = 0; i < clubs.Length; i++)
+                if (string.Equals(clubs[i].name, requested, StringComparison.OrdinalIgnoreCase))
+                    selectedClubIndex = i;
+        }
+
+        private ClubPreset GetActiveClubPreset()
+        {
+            string requested = PlayerPrefs.GetString("GolfSimZA.RoundClubName", "");
+            if (!string.IsNullOrWhiteSpace(requested))
+            {
+                string player = "Player 1";
+                string names = CourseSession.PlayerNames;
+                if (!string.IsNullOrWhiteSpace(names))
+                {
+                    string[] split = names.Split(new[] { '|' }, StringSplitOptions.RemoveEmptyEntries);
+                    if (split.Length > 0 && !string.IsNullOrWhiteSpace(split[0])) player = split[0].Trim();
+                }
+                GolfBagProfile profile = GolfBagProfile.Load(player);
+                int index = profile.FindClubIndex(requested);
+                if (index >= 0 && profile.InBag[index])
+                    return BuildMappingPreset(profile.ClubNames[index], index, profile.Lofts[index], 0);
+            }
+            return clubs[Mathf.Clamp(selectedClubIndex, 0, clubs.Length - 1)];
+        }
+
         private void HandleMappingInput()
         {
             int requestedIndex = Mathf.Clamp(PlayerPrefs.GetInt("GolfSimZA.MapClubIndex", 0), 0, GolfBagProfile.ClubCount - 1);
             if (!Keyboard.current.spaceKey.wasPressedThisFrame) return;
-
             GolfBagProfile profile = GolfBagProfile.Load(PlayerPrefs.GetString("GolfSimZA.MapPlayer", "Player 1"));
             string clubName = profile.ClubNames[requestedIndex];
             float loft = profile.Lofts[requestedIndex];
@@ -125,14 +155,12 @@ namespace GolfSimZA.LaunchMonitors
         {
             if (string.Equals(name, "Putter", StringComparison.OrdinalIgnoreCase))
                 return new ClubPreset(name, index + 1, loft, 8.0f, 5.0f, 3.0f, 1200.0f);
-
             float speed = Mathf.Clamp(74f - loft * 0.72f, 26f, 69f);
             float clubSpeed = Mathf.Max(18f, speed / 1.48f);
             float launch = Mathf.Clamp(loft * 0.52f + 8f, 10f, 32f);
             float spin = Mathf.Clamp(1800f + loft * 145f, 2200f, 10500f);
             float variance = 1f + UnityEngine.Random.Range(-0.018f, 0.018f);
-            speed *= variance;
-            clubSpeed *= variance;
+            speed *= variance; clubSpeed *= variance;
             launch += UnityEngine.Random.Range(-0.7f, 0.7f);
             spin *= UnityEngine.Random.Range(0.96f, 1.04f);
             return new ClubPreset(name, index + 1, loft, speed, clubSpeed, launch, spin);
@@ -140,17 +168,13 @@ namespace GolfSimZA.LaunchMonitors
 
         private void LateUpdate()
         {
-            if (ClubMappingSession.IsActive || roundGameplayUI == null || roundSelectedClubField == null)
-                return;
-
+            if (ClubMappingSession.IsActive || roundGameplayUI == null || roundSelectedClubField == null) return;
             int uiSlot = GetRoundUISlot();
             if (Time.unscaledTime - lastShotTime < 0.35f)
             {
-                if (uiSlot != lastShotSlot)
-                    roundSelectedClubField.SetValue(roundGameplayUI, lastShotSlot);
+                if (uiSlot != lastShotSlot) roundSelectedClubField.SetValue(roundGameplayUI, lastShotSlot);
                 return;
             }
-
             if (uiSlot >= 1 && uiSlot <= clubs.Length && uiSlot != selectedClubIndex + 1)
                 selectedClubIndex = uiSlot - 1;
         }
@@ -163,10 +187,7 @@ namespace GolfSimZA.LaunchMonitors
                 if (roundGameplayUI != null)
                     roundSelectedClubField = typeof(RoundGameplayUI).GetField("selectedClubNumber", BindingFlags.Instance | BindingFlags.NonPublic);
             }
-
-            if (roundGameplayUI == null || roundSelectedClubField == null)
-                return;
-
+            if (roundGameplayUI == null || roundSelectedClubField == null) return;
             int uiSlot = GetRoundUISlot();
             if (uiSlot >= 1 && uiSlot <= clubs.Length && Time.unscaledTime - lastShotTime >= 0.35f)
                 selectedClubIndex = uiSlot - 1;
