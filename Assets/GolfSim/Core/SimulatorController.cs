@@ -37,6 +37,18 @@ namespace GolfSimZA.Core
             launchMonitor.TryConnect();
         }
 
+        private void Update()
+        {
+            // Keep the HUD live while the ball is flying and rolling. Previously
+            // LastShot stayed at its launch-time 0.0 m values until the final
+            // ShotCompleted event, which made a valid shot appear to read 0.0 m.
+            if (ballFlightSimulator == null || !lastShot.IsValid || !ballFlightSimulator.IsInFlight)
+                return;
+
+            lastShot.CarryMeters = ballFlightSimulator.CarryMeters;
+            lastShot.TotalMeters = ballFlightSimulator.TotalMeters;
+        }
+
         private void OnDestroy()
         {
             if (launchMonitor != null)
