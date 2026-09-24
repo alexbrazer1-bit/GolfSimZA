@@ -25,6 +25,20 @@ namespace GolfSimZA.Core
                 shots.RemoveAt(0);
         }
 
+        public void ReplaceLast(ShotData shot)
+        {
+            if (!shot.IsValid)
+                return;
+
+            if (shots.Count == 0)
+            {
+                Add(shot);
+                return;
+            }
+
+            shots[shots.Count - 1] = shot;
+        }
+
         public void Clear() => shots.Clear();
     }
 }
