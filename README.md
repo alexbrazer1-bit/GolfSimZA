@@ -22,7 +22,9 @@ We will not bundle Garmin proprietary SDKs or reverse-engineered proprietary mat
 
 Unity 6 / 6000.x. The initial target is Windows Standalone 64-bit.
 
-## Current milestone: 0.1.1
+## Current milestone: 0.1.2
+
+### 0.1.1 foundation
 
 - Unity package/project foundation
 - Golf shot data model
@@ -33,13 +35,25 @@ Unity 6 / 6000.x. The initial target is Windows Standalone 64-bit.
 - One-click driving-range scene creator
 - Windows build target foundation
 
+### 0.1.2 simulator workflow
+
+- Expanded shot data with club metadata
+- Eight development club presets: Driver, 3 Wood, 5 Iron, 7 Iron, 9 Iron, Pitching Wedge, Sand Wedge and Putter
+- New Input System controls for development shots
+- Club selection using keys 1-8
+- Spacebar shot launch
+- Bounded shot history for the current simulator session
+- HUD showing club, ball speed, club speed, launch, direction, spin and recent shots
+- Garmin R10 adapter boundary remains isolated from the development provider
+
 ### Prototype controls
 
 1. Open the project in Unity 6.
 2. Run `GolfSimZA > Create 0.1.1 Driving Range`.
 3. Open the generated driving-range scene.
 4. Press Play.
-5. Press **Space** to fire a development driver shot.
+5. Press **1-8** to select a development club.
+6. Press **Space** to fire a test shot.
 
 The development shot provider is intentionally separate from the Garmin R10 adapter. This lets us validate the simulator physics and UI before enabling an approved R10 transport.
 
