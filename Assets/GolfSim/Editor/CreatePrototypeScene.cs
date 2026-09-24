@@ -15,16 +15,22 @@ namespace GolfSimZA.Editor
         [MenuItem("GolfSimZA/Create 0.1.2 Driving Range")]
         public static void Create()
         {
-            CreateScene(false);
+            CreateScene(false, false);
         }
 
         [MenuItem("GolfSimZA/Create 0.2 Visual Driving Range")]
         public static void CreateVisualDrivingRange()
         {
-            CreateScene(true);
+            CreateScene(true, false);
         }
 
-        private static void CreateScene(bool visual)
+        [MenuItem("GolfSimZA/Create 0.4 Simulator Presentation Range")]
+        public static void CreatePresentationDrivingRange()
+        {
+            CreateScene(true, true);
+        }
+
+        private static void CreateScene(bool visual, bool presentation)
         {
             Scene scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
 
@@ -80,6 +86,16 @@ namespace GolfSimZA.Editor
                 camera.clearFlags = CameraClearFlags.SolidColor;
             }
 
+            if (presentation)
+            {
+                FlightPresentation presentationController = range.AddComponent<FlightPresentation>();
+                SerializedObject presentationSo = new SerializedObject(presentationController);
+                presentationSo.FindProperty("flight").objectReferenceValue = flight;
+                presentationSo.FindProperty("ball").objectReferenceValue = ball.transform;
+                presentationSo.FindProperty("followCamera").objectReferenceValue = camera;
+                presentationSo.ApplyModifiedPropertiesWithoutUndo();
+            }
+
             GameObject lightObject = new GameObject("Sun");
             Light light = lightObject.AddComponent<Light>();
             light.type = LightType.Directional;
@@ -90,9 +106,11 @@ namespace GolfSimZA.Editor
             if (!AssetDatabase.IsValidFolder(directory))
                 AssetDatabase.CreateFolder("Assets", "Scenes");
 
-            string scenePath = visual
-                ? "Assets/Scenes/GolfSimZA_0_2_VisualDrivingRange.unity"
-                : "Assets/Scenes/GolfSimZA_0_1_2_DrivingRange.unity";
+            string scenePath = presentation
+                ? "Assets/Scenes/GolfSimZA_0_4_SimulatorPresentationRange.unity"
+                : visual
+                    ? "Assets/Scenes/GolfSimZA_0_2_VisualDrivingRange.unity"
+                    : "Assets/Scenes/GolfSimZA_0_1_2_DrivingRange.unity";
 
             EditorSceneManager.SaveScene(scene, scenePath);
             EditorBuildSettings.scenes = new[]
@@ -102,9 +120,11 @@ namespace GolfSimZA.Editor
 
             AssetDatabase.SaveAssets();
             AssetDatabase.Refresh();
-            Debug.Log(visual
-                ? "[GolfSimZA] Phase 0.2 visual driving range created. Press Play, select a club with 1-8, then press Space."
-                : "[GolfSimZA] Phase 0.1.2 driving range created. Press Play, select a club with 1-8, then press Space.");
+            Debug.Log(presentation
+                ? "[GolfSimZA] Phase 0.4 simulator presentation range created. Press Play, select a club with 1-8, then press Space."
+                : visual
+                    ? "[GolfSimZA] Phase 0.2 visual driving range created. Press Play, select a club with 1-8, then press Space."
+                    : "[GolfSimZA] Phase 0.1.2 driving range created. Press Play, select a club with 1-8, then press Space.");
         }
 
         private static void BuildVisualRange()
