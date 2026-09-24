@@ -21,7 +21,8 @@ namespace GolfSimZA.Physics
         [SerializeField] private float groundY = 0.0f;
         [SerializeField, Range(0.05f, 0.9f)] private float bounceRetention = 0.28f;
         [SerializeField, Range(0.5f, 1f)] private float horizontalBounceRetention = 0.86f;
-        [SerializeField] private float rollDeceleration = 2.2f;
+        [SerializeField] private float rollDeceleration = 12.0f;
+        [SerializeField] private float maxRollMeters = 35.0f;
         [SerializeField] private float stopSpeed = 0.15f;
 
         private Vector3 velocity;
@@ -30,6 +31,7 @@ namespace GolfSimZA.Physics
         private bool hasLanded;
         private float currentSpinRpm;
         private Vector3 launchPosition;
+        private Vector3 landingPosition;
         private float maxHeight;
         private float carryMeters;
         private float totalMeters;
@@ -61,6 +63,7 @@ namespace GolfSimZA.Physics
             currentSpinRpm = Mathf.Max(0f, shot.BackSpinRpm);
             ball.position = new Vector3(ball.position.x, Mathf.Max(ball.position.y, groundY + 0.03f), ball.position.z);
             launchPosition = ball.position;
+            landingPosition = ball.position;
             maxHeight = ball.position.y;
             carryMeters = 0f;
             totalMeters = 0f;
@@ -97,8 +100,7 @@ namespace GolfSimZA.Physics
             maxHeight = Mathf.Max(maxHeight, ball.position.y);
             totalMeters = HorizontalDistanceFromLaunch();
 
-            // First ground contact is the carry distance. This is handled before
-            // bounce/roll physics so carry cannot remain 0.0 m after a visible shot.
+            // First ground contact is the carry distance.
             if (ball.position.y <= groundY)
             {
                 LandBall();
@@ -121,6 +123,7 @@ namespace GolfSimZA.Physics
 
             hasLanded = true;
             ball.position = new Vector3(ball.position.x, groundY, ball.position.z);
+            landingPosition = ball.position;
             carryMeters = HorizontalDistanceFromLaunch();
             totalMeters = carryMeters;
 
@@ -141,10 +144,15 @@ namespace GolfSimZA.Physics
             float dt = Mathf.Min(Time.deltaTime, 0.05f);
             Vector3 horizontalVelocity = new Vector3(velocity.x, 0f, velocity.z);
             float speed = horizontalVelocity.magnitude;
+            float rollDistance = HorizontalDistanceFromLanding();
 
-            if (speed <= stopSpeed)
+            // Stop the ball naturally once it has slowed down, and also prevent
+            // an exaggerated roll from carrying the ball hundreds of metres.
+            if (speed <= stopSpeed || rollDistance >= maxRollMeters)
             {
                 velocity = Vector3.zero;
+                ball.position = new Vector3(ball.position.x, groundY, ball.position.z);
+                totalMeters = HorizontalDistanceFromLaunch();
                 rolling = false;
                 CompleteShot();
                 return;
@@ -153,12 +161,20 @@ namespace GolfSimZA.Physics
             float newSpeed = Mathf.Max(0f, speed - rollDeceleration * dt);
             velocity = horizontalVelocity.normalized * newSpeed;
             ball.position += velocity * dt;
+            ball.position = new Vector3(ball.position.x, groundY, ball.position.z);
             totalMeters = HorizontalDistanceFromLaunch();
         }
 
         private float HorizontalDistanceFromLaunch()
         {
             Vector3 delta = ball.position - launchPosition;
+            delta.y = 0f;
+            return delta.magnitude / Mathf.Max(0.0001f, metersToUnity);
+        }
+
+        private float HorizontalDistanceFromLanding()
+        {
+            Vector3 delta = ball.position - landingPosition;
             delta.y = 0f;
             return delta.magnitude / Mathf.Max(0.0001f, metersToUnity);
         }
