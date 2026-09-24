@@ -7,16 +7,14 @@ using UnityEngine.SceneManagement;
 namespace GolfSimZA.UI
 {
     /// <summary>
-    /// Stage 0.9.5: presents the six-shot mapping result as a clean TrackMan-style
-    /// practice summary after ClubMappingSession returns to the player screen.
-    /// It reads the existing mapping session so no existing gameplay logic is changed.
+    /// Stage 0.9.5: presents the six-shot mapping result as a clean practice summary.
+    /// The result is tied to the current player/club/shot set so every newly mapped club can be reviewed once.
     /// </summary>
     public sealed class ClubMappingResultUI : MonoBehaviour
     {
         private const string SceneName = "GolfSimZA_0_5_Players";
-        private const string DismissedKey = "GolfSimZA.MappingResultDismissed";
+        private const string DismissedSignatureKey = "GolfSimZA.MappingResultDismissedSignature";
 
-        private MonoBehaviour mappingSession;
         private FieldInfo playerField;
         private FieldInfo clubField;
         private FieldInfo carriesField;
@@ -26,6 +24,7 @@ namespace GolfSimZA.UI
         private bool visible;
         private string playerName = "Player 1";
         private string clubName = "Driver";
+        private string resultSignature = string.Empty;
         private readonly float[] carries = new float[6];
         private readonly float[] totals = new float[6];
         private int shotCount;
@@ -44,9 +43,7 @@ namespace GolfSimZA.UI
         }
 
         private void OnEnable() => SceneManager.sceneLoaded += OnSceneLoaded;
-
         private void OnDisable() => SceneManager.sceneLoaded -= OnSceneLoaded;
-
         private void Start() => OnSceneLoaded(SceneManager.GetActiveScene(), LoadSceneMode.Single);
 
         private void OnSceneLoaded(Scene scene, LoadSceneMode mode)
@@ -68,11 +65,9 @@ namespace GolfSimZA.UI
             totalsField = type.GetField("totals", BindingFlags.Instance | BindingFlags.NonPublic);
             shotCountField = type.GetField("shotCount", BindingFlags.Instance | BindingFlags.NonPublic);
             completedField = type.GetField("completed", BindingFlags.Instance | BindingFlags.NonPublic);
-            mappingSession = session;
 
             if (completedField == null || !(bool)completedField.GetValue(session)) return;
             if (shotCountField == null || (int)shotCountField.GetValue(session) < 6) return;
-            if (PlayerPrefs.GetInt(DismissedKey, 0) == 1) return;
 
             playerName = playerField != null ? (string)playerField.GetValue(session) : "Player 1";
             clubName = clubField != null ? (string)clubField.GetValue(session) : "Club";
@@ -84,7 +79,17 @@ namespace GolfSimZA.UI
                 carries[i] = carryValues != null && i < carryValues.Length ? carryValues[i] : 0f;
                 totals[i] = totalValues != null && i < totalValues.Length ? totalValues[i] : 0f;
             }
+
+            resultSignature = BuildSignature();
+            if (PlayerPrefs.GetString(DismissedSignatureKey, string.Empty) == resultSignature) return;
             visible = true;
+        }
+
+        private string BuildSignature()
+        {
+            string signature = playerName + "|" + clubName;
+            for (int i = 0; i < 6; i++) signature += "|" + carries[i].ToString("F2") + ":" + totals[i].ToString("F2");
+            return signature;
         }
 
         private void EnsureStyles()
@@ -205,14 +210,12 @@ namespace GolfSimZA.UI
             }
             GUI.EndScrollView();
 
-            GUI.Label(new Rect(area.x + 22f, area.yMax - 112f, area.width - 44f, 24f),
-                "Your bag now uses the average of all 6 shots for this club.", subtitle);
-            GUI.Label(new Rect(area.x + 22f, area.yMax - 88f, area.width - 44f, 20f),
-                "Carry range: " + worst.ToString("F1") + "–" + best.ToString("F1") + " m  •  Consistency: ±" + consistency.ToString("F1") + " m", muted);
+            GUI.Label(new Rect(area.x + 22f, area.yMax - 112f, area.width - 44f, 24f), "Your bag now uses the average of all 6 shots for this club.", subtitle);
+            GUI.Label(new Rect(area.x + 22f, area.yMax - 88f, area.width - 44f, 20f), "Carry range: " + worst.ToString("F1") + "–" + best.ToString("F1") + " m  •  Consistency: ±" + consistency.ToString("F1") + " m", muted);
 
             if (GUI.Button(new Rect(area.x + 22f, area.yMax - 52f, area.width - 44f, 40f), "DONE  •  RETURN TO PLAYER / BAG", button))
             {
-                PlayerPrefs.SetInt(DismissedKey, 1);
+                PlayerPrefs.SetString(DismissedSignatureKey, resultSignature);
                 PlayerPrefs.Save();
                 visible = false;
             }
