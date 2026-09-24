@@ -77,10 +77,10 @@ namespace GolfSimZA.UI
             GUILayout.Label("Demo course names are placeholders until licensed/original course content is added.", smallStyle);
             GUILayout.Space(12);
 
-            if (GUILayout.Button("START PRACTICE / ROUND", buttonStyle))
+            if (GUILayout.Button("START ROUND", buttonStyle))
             {
                 CourseSession.SetSession(courses[selectedCourse], tees[selectedTee], roundLength);
-                SceneManager.LoadScene("GolfSimZA_0_4_SimulatorPresentationRange");
+                SceneManager.LoadScene("GolfSimZA_0_6_PlayRound");
             }
 
             GUILayout.Space(8);
