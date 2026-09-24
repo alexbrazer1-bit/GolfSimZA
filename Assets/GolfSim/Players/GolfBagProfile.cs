@@ -6,17 +6,25 @@ namespace GolfSimZA.Players
     [Serializable]
     public sealed class GolfBagProfile
     {
-        public const int ClubCount = 14;
+        public const int ClubCount = 36;
+        public const int MaxBagClubs = 14;
 
         public static readonly string[] DefaultClubNames =
         {
-            "Driver", "3 Wood", "5 Wood", "4 Hybrid", "5 Iron", "6 Iron", "7 Iron",
-            "8 Iron", "9 Iron", "Pitching Wedge", "Gap Wedge", "Sand Wedge", "Lob Wedge", "Putter"
+            "Driver", "2 Wood", "3 Wood", "4 Wood", "5 Wood", "7 Wood", "9 Wood",
+            "2 Hybrid", "3 Hybrid", "4 Hybrid", "5 Hybrid", "6 Hybrid",
+            "2 Iron", "3 Iron", "4 Iron", "5 Iron", "6 Iron", "7 Iron", "8 Iron", "9 Iron",
+            "Pitching Wedge", "Gap Wedge", "Approach Wedge", "48°", "50°", "52°", "54°", "56°", "58°", "60°", "62°",
+            "Chipper", "Putter", "Driving Iron", "Utility Iron", "Bump & Run"
         };
 
         public static readonly float[] DefaultLofts =
         {
-            10.5f, 15f, 18f, 22f, 25f, 28f, 34f, 38f, 42f, 46f, 50f, 56f, 60f, 3f
+            10.5f, 13.5f, 15f, 16.5f, 18f, 21f, 24f,
+            18f, 19f, 22f, 25f, 28f,
+            18f, 21f, 24f, 27f, 30f, 34f, 38f, 42f,
+            46f, 50f, 52f, 48f, 50f, 52f, 54f, 56f, 58f, 60f, 62f,
+            35f, 3f, 20f, 23f, 34f
         };
 
         public readonly string[] ClubNames = new string[ClubCount];
@@ -33,7 +41,7 @@ namespace GolfSimZA.Players
                 Lofts[i] = DefaultLofts[i];
                 CarryMeters[i] = 0f;
                 TotalMeters[i] = 0f;
-                InBag[i] = true;
+                InBag[i] = i < 14;
             }
         }
 
@@ -48,7 +56,7 @@ namespace GolfSimZA.Players
                 profile.Lofts[i] = PlayerPrefs.GetFloat(key + ".Loft." + i, DefaultLofts[i]);
                 profile.CarryMeters[i] = PlayerPrefs.GetFloat(key + ".Carry." + i, 0f);
                 profile.TotalMeters[i] = PlayerPrefs.GetFloat(key + ".Total." + i, 0f);
-                profile.InBag[i] = PlayerPrefs.GetInt(key + ".InBag." + i, 1) == 1;
+                profile.InBag[i] = PlayerPrefs.GetInt(key + ".InBag." + i, i < 14 ? 1 : 0) == 1;
             }
 
             return profile;
@@ -74,6 +82,13 @@ namespace GolfSimZA.Players
             for (int i = 0; i < ClubCount; i++)
                 if (string.Equals(ClubNames[i], clubName, StringComparison.OrdinalIgnoreCase)) return i;
             return -1;
+        }
+
+        public int CountInBag()
+        {
+            int count = 0;
+            for (int i = 0; i < ClubCount; i++) if (InBag[i]) count++;
+            return count;
         }
 
         private static string Prefix(string playerName)
