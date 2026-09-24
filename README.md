@@ -22,7 +22,7 @@ We will not bundle Garmin proprietary SDKs or reverse-engineered proprietary mat
 
 Unity 6 / 6000.x. The initial target is Windows Standalone 64-bit.
 
-## Current milestone: 0.1.2
+## Current milestone: 0.3
 
 ### 0.1.1 foundation
 
@@ -46,14 +46,35 @@ Unity 6 / 6000.x. The initial target is Windows Standalone 64-bit.
 - HUD showing club, ball speed, club speed, launch, direction, spin and recent shots
 - Garmin R10 adapter boundary remains isolated from the development provider
 
-### Prototype controls
+### 0.2 visual driving range
+
+- Visual fairway and target greens at 50m, 100m, 150m and 200m
+- Distance markers and target flags
+- Camera and lighting setup for the visual range
+- Shot tracer for the development ball flight
+- Refined simulator HUD layout
+
+### 0.3 golf ball and shot physics
+
+- Continuous 3D ball-flight simulation from launch data
+- Aerodynamic drag and spin-based lift approximation
+- Spin decay during flight
+- Ground impact and bounce response
+- Post-landing roll and deceleration
+- Calculated carry and total distance
+- Calculated apex height and flight time
+- Completed shot results written back into shot history
+- HUD displays calculated carry and total distance
+
+## Prototype controls
 
 1. Open the project in Unity 6.
-2. Run `GolfSimZA > Create 0.1.1 Driving Range`.
+2. Run `GolfSimZA > Create 0.2 Visual Driving Range` if you need to regenerate the visual range.
 3. Open the generated driving-range scene.
 4. Press Play.
 5. Press **1-8** to select a development club.
 6. Press **Space** to fire a test shot.
+7. Watch the ball flight, landing/roll and calculated carry/total distance in the HUD.
 
 The development shot provider is intentionally separate from the Garmin R10 adapter. This lets us validate the simulator physics and UI before enabling an approved R10 transport.
 
