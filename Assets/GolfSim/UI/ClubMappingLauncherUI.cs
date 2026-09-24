@@ -13,6 +13,7 @@ namespace GolfSimZA.UI
         private FieldInfo playersField;
         private FieldInfo bagProfileField;
         private bool showPicker;
+        private int bagCount;
         private Vector2 scroll;
         private GUIStyle panelStyle, titleStyle, subtitleStyle, buttonStyle, activeButtonStyle, rowStyle, smallStyle;
         private Texture2D panelTexture, darkTexture, blueTexture, blueBrightTexture;
@@ -117,7 +118,7 @@ namespace GolfSimZA.UI
             if (!showPicker)
             {
                 float x = Screen.width - 225f;
-                if (GUI.Button(new Rect(x, 24f, 195f, 40f), "6-SHOT CLUB MAPPING", buttonStyle)) showPicker = true;
+                if (GUI.Button(new Rect(x, 24f, 195f, 40f), "CLUB LIBRARY • MAP", buttonStyle)) showPicker = true;
                 return;
             }
 
@@ -128,8 +129,9 @@ namespace GolfSimZA.UI
             float height = Mathf.Min(650f, Screen.height - 60f);
             Rect area = new Rect((Screen.width - width) * 0.5f, (Screen.height - height) * 0.5f, width, height);
             GUI.Box(area, GUIContent.none, panelStyle);
-            GUI.Label(new Rect(area.x + 20f, area.y + 15f, area.width - 160f, 30f), "6-SHOT CLUB MAPPING", titleStyle);
-            GUI.Label(new Rect(area.x + 20f, area.y + 47f, area.width - 40f, 20f), SelectedPlayerName() + "  •  select a club to map", subtitleStyle);
+            bagCount = profile.CountInBag();
+            GUI.Label(new Rect(area.x + 20f, area.y + 15f, area.width - 160f, 30f), "CLUB LIBRARY", titleStyle);
+            GUI.Label(new Rect(area.x + 20f, area.y + 47f, area.width - 40f, 20f), SelectedPlayerName() + "  •  " + bagCount + " / " + GolfBagProfile.MaxBagClubs + " clubs selected", subtitleStyle);
             if (GUI.Button(new Rect(area.xMax - 120f, area.y + 15f, 90f, 34f), "CLOSE", buttonStyle)) { showPicker = false; return; }
 
             scroll = GUI.BeginScrollView(new Rect(area.x + 16f, area.y + 82f, area.width - 32f, area.height - 102f), scroll, new Rect(0, 0, area.width - 55f, GolfBagProfile.ClubCount * 46f));
@@ -141,9 +143,27 @@ namespace GolfSimZA.UI
                 GUI.Label(new Rect(200f, y + 4f, 70f, 32f), profile.Lofts[i].ToString("F1") + "°", smallStyle);
                 string mapped = profile.CarryMeters[i] > 0f ? profile.CarryMeters[i].ToString("F0") + " m carry" : "NOT MAPPED";
                 GUI.Label(new Rect(285f, y + 4f, 145f, 32f), mapped, smallStyle);
-                bool enabled = profile.InBag[i];
-                GUI.enabled = enabled;
-                if (GUI.Button(new Rect(area.width - 200f, y + 2f, 140f, 36f), enabled ? "MAP 6 SHOTS" : "ADD TO BAG FIRST", enabled ? activeButtonStyle : buttonStyle))
+
+                bool inBag = profile.InBag[i];
+                bool canAdd = !inBag && bagCount < GolfBagProfile.MaxBagClubs;
+                if (GUI.Button(new Rect(area.width - 350f, y + 2f, 120f, 36f), inBag ? "✓ IN BAG" : (canAdd ? "ADD TO BAG" : "BAG FULL"), inBag ? activeButtonStyle : buttonStyle))
+                {
+                    if (inBag)
+                    {
+                        profile.InBag[i] = false;
+                        bagCount--;
+                        profile.Save(SelectedPlayerName());
+                    }
+                    else if (canAdd)
+                    {
+                        profile.InBag[i] = true;
+                        bagCount++;
+                        profile.Save(SelectedPlayerName());
+                    }
+                }
+
+                GUI.enabled = inBag;
+                if (GUI.Button(new Rect(area.width - 210f, y + 2f, 140f, 36f), "MAP 6 SHOTS", activeButtonStyle))
                 {
                     PlayerPrefs.SetInt("GolfSimZA.MapMode", 1);
                     PlayerPrefs.SetString("GolfSimZA.MapPlayer", SelectedPlayerName());
