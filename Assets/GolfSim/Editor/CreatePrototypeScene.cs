@@ -36,7 +36,7 @@ namespace GolfSimZA.Editor
 
             GameObject ground = GameObject.CreatePrimitive(PrimitiveType.Plane);
             ground.name = "DrivingRange_Ground";
-            ground.transform.localScale = new Vector3(20f, 1f, 20f);
+            ground.transform.localScale = visual ? new Vector3(60f, 1f, 60f) : new Vector3(20f, 1f, 20f);
             if (visual)
                 ApplyMaterial(ground, new Color(0.12f, 0.42f, 0.16f));
 
@@ -129,7 +129,7 @@ namespace GolfSimZA.Editor
 
         private static void BuildVisualRange()
         {
-            CreateStrip("Fairway", new Vector3(0f, 0.012f, 42f), new Vector3(18f, 0.02f, 84f), new Color(0.20f, 0.55f, 0.20f));
+            CreateStrip("Fairway", new Vector3(0f, 0.012f, 150f), new Vector3(18f, 0.02f, 300f), new Color(0.20f, 0.55f, 0.20f));
             CreateStrip("TargetGreen_50m", new Vector3(0f, 0.025f, 50f), new Vector3(11f, 0.04f, 7f), new Color(0.25f, 0.62f, 0.24f));
             CreateStrip("TargetGreen_100m", new Vector3(0f, 0.025f, 100f), new Vector3(13f, 0.04f, 8f), new Color(0.25f, 0.62f, 0.24f));
             CreateStrip("TargetGreen_150m", new Vector3(0f, 0.025f, 150f), new Vector3(15f, 0.04f, 9f), new Color(0.25f, 0.62f, 0.24f));
