@@ -7,9 +7,8 @@ namespace GolfSimZA.Editor
 {
     /// <summary>
     /// Keeps the GolfSimZA editor menu aligned with the implemented project stages.
-    /// The later stages are feature updates to the existing 0.5/0.6 flow, so these
-    /// commands rebuild the required local scenes with the current code and open the
-    /// relevant screen for testing.
+    /// 0.7-0.9.5 are gameplay, physics and bag-mapping milestones; 1.0 is the
+    /// playable Garmin R10 integration milestone.
     /// </summary>
     public static class GolfSimStageMenu
     {
@@ -36,6 +35,16 @@ namespace GolfSimZA.Editor
 
         [MenuItem("GolfSimZA/Create 0.9.5 Mapping Results")]
         public static void Create095() => PreparePlayers("0.9.5");
+
+        [MenuItem("GolfSimZA/Create 1.0 Playable Garmin R10 Simulator")]
+        public static void Create10() => CreatePlayableR10.Create();
+
+        [MenuItem("GolfSimZA/Build Current 1.0")]
+        public static void BuildCurrent10()
+        {
+            CreatePlayableR10.Create();
+            Debug.Log("[GolfSimZA] 1.0 prepared: Course → Round Settings → Players → Play Round → Garmin R10.");
+        }
 
         [MenuItem("GolfSimZA/Build Current 0.9.5")]
         public static void BuildCurrent095()
