@@ -27,7 +27,7 @@ namespace GolfSimZA.Physics
         private bool airborne;
         private bool rolling;
         private float currentSpinRpm;
-        private float launchZ;
+        private Vector3 launchPosition;
         private float maxHeight;
         private float carryMeters;
         private float totalMeters;
@@ -56,13 +56,12 @@ namespace GolfSimZA.Physics
             velocity.y = speed * Mathf.Sin(elevation);
 
             currentSpinRpm = Mathf.Max(0f, shot.BackSpinRpm);
-            launchZ = ball.position.z;
+            ball.position = new Vector3(ball.position.x, Mathf.Max(ball.position.y, groundY + 0.03f), ball.position.z);
+            launchPosition = ball.position;
             maxHeight = ball.position.y;
             carryMeters = 0f;
             totalMeters = 0f;
             flightTime = 0f;
-
-            ball.position = new Vector3(ball.position.x, Mathf.Max(ball.position.y, groundY + 0.03f), ball.position.z);
             airborne = true;
             rolling = false;
         }
@@ -85,13 +84,7 @@ namespace GolfSimZA.Physics
 
             Vector3 horizontalVelocity = new Vector3(velocity.x, 0f, velocity.z);
             float horizontalSpeed = horizontalVelocity.magnitude;
-
-            // Approximate aerodynamic drag and Magnus lift. This is deliberately
-            // lightweight so the prototype remains deterministic and responsive.
             Vector3 dragForce = -velocity * (airDrag * velocity.magnitude);
-            Vector3 liftDirection = horizontalSpeed > 0.01f
-                ? Vector3.Cross(Vector3.up, horizontalVelocity.normalized)
-                : Vector3.zero;
             float lift = currentSpinRpm * horizontalSpeed * spinLift;
 
             velocity += (Vector3.down * gravity + dragForce + Vector3.up * lift) * dt;
@@ -140,14 +133,15 @@ namespace GolfSimZA.Physics
 
         private float HorizontalDistanceFromLaunch()
         {
-            Vector3 delta = ball.position - new Vector3(ball.position.x, ball.position.y, launchZ);
-            return Mathf.Abs(delta.z) / Mathf.Max(0.0001f, metersToUnity);
+            Vector3 delta = ball.position - launchPosition;
+            delta.y = 0f;
+            return delta.magnitude / Mathf.Max(0.0001f, metersToUnity);
         }
 
         private void CompleteShot()
         {
             totalMeters = HorizontalDistanceFromLaunch();
-            carryMeters = Mathf.Max(carryMeters, totalMeters);
+            carryMeters = Mathf.Min(carryMeters, totalMeters);
             ShotCompleted?.Invoke(activeShot, carryMeters, totalMeters, maxHeight / Mathf.Max(0.0001f, metersToUnity), flightTime);
         }
     }
