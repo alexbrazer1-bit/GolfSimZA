@@ -1,6 +1,7 @@
 using System;
 using System.Reflection;
 using GolfSimZA.Core;
+using GolfSimZA.Players;
 using GolfSimZA.UI;
 using UnityEngine;
 using UnityEngine.InputSystem;
@@ -56,6 +57,7 @@ namespace GolfSimZA.LaunchMonitors
         private FieldInfo roundSelectedClubField;
         private float lastShotTime = -10f;
         private int lastShotSlot;
+        private int mappingShotSequence;
 
         public bool TryConnect()
         {
@@ -81,6 +83,12 @@ namespace GolfSimZA.LaunchMonitors
             if (!IsConnected || Keyboard.current == null)
                 return;
 
+            if (ClubMappingSession.IsActive)
+            {
+                HandleMappingInput();
+                return;
+            }
+
             SyncFromRoundUI();
 
             for (int i = 0; i < clubs.Length; i++)
@@ -101,9 +109,38 @@ namespace GolfSimZA.LaunchMonitors
             }
         }
 
+        private void HandleMappingInput()
+        {
+            int requestedIndex = Mathf.Clamp(PlayerPrefs.GetInt("GolfSimZA.MapClubIndex", 0), 0, GolfBagProfile.ClubCount - 1);
+            if (!Keyboard.current.spaceKey.wasPressedThisFrame) return;
+
+            GolfBagProfile profile = GolfBagProfile.Load(PlayerPrefs.GetString("GolfSimZA.MapPlayer", "Player 1"));
+            string clubName = profile.ClubNames[requestedIndex];
+            float loft = profile.Lofts[requestedIndex];
+            ClubPreset shot = BuildMappingPreset(clubName, requestedIndex, loft, mappingShotSequence++);
+            ShotReceived?.Invoke(ShotData.CreateTestShot(shot.name, shot.number, shot.loft, shot.ballSpeed, shot.clubSpeed, shot.launch, shot.spin));
+        }
+
+        private ClubPreset BuildMappingPreset(string name, int index, float loft, int shotNumber)
+        {
+            if (string.Equals(name, "Putter", StringComparison.OrdinalIgnoreCase))
+                return new ClubPreset(name, index + 1, loft, 8.0f, 5.0f, 3.0f, 1200.0f);
+
+            float speed = Mathf.Clamp(74f - loft * 0.72f, 26f, 69f);
+            float clubSpeed = Mathf.Max(18f, speed / 1.48f);
+            float launch = Mathf.Clamp(loft * 0.52f + 8f, 10f, 32f);
+            float spin = Mathf.Clamp(1800f + loft * 145f, 2200f, 10500f);
+            float variance = 1f + UnityEngine.Random.Range(-0.018f, 0.018f);
+            speed *= variance;
+            clubSpeed *= variance;
+            launch += UnityEngine.Random.Range(-0.7f, 0.7f);
+            spin *= UnityEngine.Random.Range(0.96f, 1.04f);
+            return new ClubPreset(name, index + 1, loft, speed, clubSpeed, launch, spin);
+        }
+
         private void LateUpdate()
         {
-            if (roundGameplayUI == null || roundSelectedClubField == null)
+            if (ClubMappingSession.IsActive || roundGameplayUI == null || roundSelectedClubField == null)
                 return;
 
             int uiSlot = GetRoundUISlot();
