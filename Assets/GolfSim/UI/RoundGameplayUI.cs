@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 using GolfSimZA.Core;
 using GolfSimZA.Courses;
 using GolfSimZA.Physics;
@@ -58,7 +57,6 @@ namespace GolfSimZA.UI
 
         private readonly Color navy = new Color(0.025f, 0.10f, 0.14f);
         private readonly Color panel = new Color(0.055f, 0.16f, 0.20f);
-        private readonly Color activePanel = new Color(0.08f, 0.24f, 0.30f);
         private readonly Color muted = new Color(0.70f, 0.78f, 0.81f);
 
         private void Awake()
@@ -94,7 +92,7 @@ namespace GolfSimZA.UI
                 SaveActivePlayerPosition();
                 shotFinished = true;
                 waitingForNextPlayer = playerNames.Length > 1;
-                status = $"{playerNames[activePlayerIndex]} • Shot complete • {ballFlightSimulator.CarryMeters:F1} m carry • {ballFlightSimulator.TotalMeters:F1} m total";
+                status = $"{playerNames[activePlayerIndex]} • Shot complete • Carry {ballFlightSimulator.CarryMeters:F1} m • Total {ballFlightSimulator.TotalMeters:F1} m";
             }
             wasInFlight = inFlight;
         }
@@ -165,7 +163,7 @@ namespace GolfSimZA.UI
 
             GUILayout.Label($"{CourseSession.TeeName} tees  •  {status}", bodyStyle);
             GUILayout.Space(6);
-            GUILayout.Label($"STROKES  {playerHoleStrokes[activePlayerIndex]}    •    ROUND  {totalStrokes}", bodyStyle);
+            GUILayout.Label($"{playerNames[activePlayerIndex]}  •  STROKES {playerHoleStrokes[activePlayerIndex]}    •    ROUND {totalStrokes}", bodyStyle);
 
             if (playerHoleStrokes[activePlayerIndex] > 0 && !ballFlightSimulator.IsInFlight)
             {
@@ -218,21 +216,19 @@ namespace GolfSimZA.UI
             for (int i = 0; i < playerNames.Length; i++)
             {
                 bool active = i == activePlayerIndex;
-                GUI.Box(GUILayoutUtility.GetRect(1f, active ? 86f : 76f), GUIContent.none, active ? GUI.skin.box : GUI.skin.box);
-                Rect row = GUILayoutUtility.GetLastRect();
-                row.x += 6f;
-                row.width -= 12f;
+                Rect row = GUILayoutUtility.GetRect(1f, active ? 86f : 76f);
+                GUI.Box(row, GUIContent.none);
 
+                Rect inner = new Rect(row.x + 6f, row.y + 2f, row.width - 12f, row.height - 4f);
                 GUIStyle nameStyle = active ? activePlayerStyle : playerStyle;
-                GUI.Label(new Rect(row.x, row.y + 8f, row.width * 0.52f, 24f), active ? "● " + playerNames[i] : playerNames[i], nameStyle);
+                GUI.Label(new Rect(inner.x, inner.y + 6f, inner.width * 0.52f, 24f), active ? "● " + playerNames[i] : playerNames[i], nameStyle);
 
-                int relativeToPar = GetPlayerRelativeToPar(i);
-                string score = playerTotalStrokes[i] == 0 ? "E" : FormatScore(relativeToPar);
-                GUI.Label(new Rect(row.x, row.y + 34f, row.width * 0.52f, 22f), $"Score  {score}  •  {playerTotalStrokes[i]} shots", playerMetaStyle);
+                string score = playerTotalStrokes[i] == 0 ? "E" : FormatScore(GetPlayerRelativeToPar(i));
+                GUI.Label(new Rect(inner.x, inner.y + 34f, inner.width * 0.52f, 22f), $"Score  {score}  •  {playerTotalStrokes[i]} shots", playerMetaStyle);
 
                 float distance = DistanceToPin(i);
-                GUI.Label(new Rect(row.x + row.width * 0.50f, row.y + 20f, row.width * 0.48f, 34f), $"{distance:F0} m", distanceStyle);
-                GUI.Label(new Rect(row.x + row.width * 0.50f, row.y + 51f, row.width * 0.48f, 18f), "to pin", playerMetaStyle);
+                GUI.Label(new Rect(inner.x + inner.width * 0.50f, inner.y + 16f, inner.width * 0.48f, 34f), $"{distance:F0} m", distanceStyle);
+                GUI.Label(new Rect(inner.x + inner.width * 0.50f, inner.y + 49f, inner.width * 0.48f, 18f), "to pin", playerMetaStyle);
 
                 GUILayout.Space(5);
             }
@@ -250,14 +246,16 @@ namespace GolfSimZA.UI
 
         private int GetPlayerRelativeToPar(int playerIndex)
         {
+            if (playerTotalStrokes[playerIndex] == 0)
+                return 0;
+
             int completedHolePar = 0;
             for (int i = 0; i < holesCompleted; i++)
                 completedHolePar += parByHole[Mathf.Clamp(i, 0, parByHole.Length - 1)];
 
-            int currentPar = parByHole[holeIndex];
-            int currentStrokes = playerIndex == activePlayerIndex ? playerHoleStrokes[playerIndex] : playerHoleStrokes[playerIndex];
-            int holesPar = completedHolePar + currentPar;
-            return playerTotalStrokes[playerIndex] - holesPar;
+            bool hasStartedCurrentHole = playerHoleStrokes[playerIndex] > 0;
+            int parToCount = completedHolePar + (hasStartedCurrentHole ? parByHole[holeIndex] : 0);
+            return playerTotalStrokes[playerIndex] - parToCount;
         }
 
         private float DistanceToPin(int playerIndex)
@@ -271,13 +269,11 @@ namespace GolfSimZA.UI
 
             Vector3 delta = pin.position - position;
             delta.y = 0f;
-            return delta.magnitude / Mathf.Max(0.0001f, ballFlightSimulator != null ? GetMetersToUnity() : 1f);
+            return delta.magnitude / Mathf.Max(0.0001f, GetMetersToUnity());
         }
 
         private float GetMetersToUnity()
         {
-            // Current prototype uses a 1:1 world scale. Keeping this in one place
-            // makes the sidebar ready for real course scaling later.
             return 1f;
         }
 
@@ -299,6 +295,9 @@ namespace GolfSimZA.UI
             activePlayerIndex = (activePlayerIndex + 1) % playerNames.Length;
             shotFinished = false;
             waitingForNextPlayer = false;
+            lastObservedShotCount = simulatorController != null && simulatorController.History != null
+                ? simulatorController.History.Count
+                : lastObservedShotCount;
             status = playerNames[activePlayerIndex] + " • Your turn";
 
             if (ball != null)
@@ -307,7 +306,7 @@ namespace GolfSimZA.UI
 
         private void StartHole()
         {
-            holeIndex = Mathf.Clamp(holeIndex, 0, CourseSession.RoundLength - 1);
+            holeIndex = Mathf.Clamp(holeIndex, 0, Mathf.Max(0, CourseSession.RoundLength - 1));
             shotFinished = false;
             waitingForNextPlayer = false;
             status = "Ready to tee off • " + playerNames[activePlayerIndex];
