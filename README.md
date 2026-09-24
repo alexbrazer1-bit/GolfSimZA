@@ -22,79 +22,60 @@ We will not bundle Garmin proprietary SDKs or reverse-engineered proprietary mat
 
 Unity 6 / 6000.x. The initial target is Windows Standalone 64-bit.
 
-## Current milestone: 0.5
-
-### 0.1.1 foundation
-
-- Unity package/project foundation
-- Golf shot data model
-- Launch-monitor adapter abstraction
-- Garmin R10 adapter boundary
-- Development test-shot provider
-- Prototype ball-flight, bounce and roll simulation
-- One-click driving-range scene creator
-- Windows build target foundation
-
-### 0.1.2 simulator workflow
-
-- Expanded shot data with club metadata
-- Eight development club presets: Driver, 3 Wood, 5 Iron, 7 Iron, 9 Iron, Pitching Wedge, Sand Wedge and Putter
-- New Input System controls for development shots
-- Club selection using keys 1-8
-- Spacebar shot launch
-- Bounded shot history for the current simulator session
-- HUD showing club, ball speed, club speed, launch, direction, spin and recent shots
-- Garmin R10 adapter boundary remains isolated from the development provider
-
-### 0.2 visual driving range
-
-- Visual fairway and target greens at 50m, 100m, 150m and 200m
-- Distance markers and target flags
-- Camera and lighting setup for the visual range
-- Shot tracer for the development ball flight
-- Refined simulator HUD layout
-
-### 0.3 golf ball and shot physics
-
-- Continuous 3D ball-flight simulation from launch data
-- Aerodynamic drag and spin-based lift approximation
-- Spin decay during flight
-- Ground impact and bounce response
-- Post-landing roll and deceleration
-- Calculated carry and total distance
-- Calculated apex height and flight time
-- Completed shot results written back into shot history
-- HUD displays calculated carry and total distance
-
-### 0.4 simulator presentation
-
-- Dedicated presentation-range scene generator
-- Camera follows the ball during flight and returns to the address view after the shot
-- Persistent landing marker for the latest completed shot
-- Existing tracer retained for the full ball-flight path
-- Presentation layer kept separate from launch-monitor transport and physics
-- Ground-roll tuning validated so shots stop after a realistic roll distance
+## Current milestone: 0.9.5
 
 ### 0.5 course and round foundation
 
 - Course/tee/round selection scene
 - Session state persists the selected course, tee and 9/18-hole round
 - Three placeholder demo courses for UI testing
-- Course selection launches the validated 0.4 presentation simulator
+- Course selection launches the validated presentation simulator
 - Real course content remains gated behind appropriate licensing/original-content requirements
 - Build settings include the course-selection and simulator scenes
+
+### 0.6 play round
+
+- Dedicated round gameplay scene
+- Hole number, par and distance HUD
+- Shot data and score presentation
+- Player score/distance-to-pin side panel
+- Realistic practice-first driving-range presentation retained
+
+### 0.9 player golf bags and club mapping
+
+- Player must be selected before Map My Bag is available
+- Expanded golf-club library covering woods, hybrids, irons, wedges, putter, utility/driving irons and short-game clubs
+- Individual player golf bags with a 14-club limit
+- TrackMan-inspired Map My Bag workflow
+- Six required shots for every club mapping session
+- Carry and total distance are calculated from the average of all six shots
+- Mapped distances are stored per player and per club
+- Round club selection can use the player's mapped distances
+
+### 0.9.5 mapping analytics
+
+- Six-shot mapping completion summary
+- Individual carry and total results for all six shots
+- Carry average and total average
+- Best carry and carry spread/standard deviation
+- Mapping result is associated with the player and club
+- Repeat mappings can produce a new result summary without permanently blocking future club mappings
+- Existing mapping and round-play logic remains unchanged
 
 ## Prototype controls
 
 1. Open the project in Unity 6.
-2. Run `GolfSimZA > Create 0.5 Course Selection` for the new course-selection scene.
-3. Open `GolfSimZA_0_5_CourseSelection`.
-4. Press Play.
-5. Choose a demo course, tee and 9/18 holes.
-6. Select **START PRACTICE / ROUND**.
-7. In the simulator, press **1-8** to select a development club and **Space** to fire a test shot.
+2. Open the GolfSimZA course-selection scene.
+3. Choose a demo course, tee and 9/18 holes.
+4. Configure the players.
+5. Select a player before opening **MAP MY BAG**.
+6. Add the clubs that player actually carries.
+7. Map a selected club by hitting six shots.
+8. Review the six-shot result summary.
+9. Return to the player's bag and continue mapping additional clubs.
+10. Start a round using the mapped club distances.
 
-The development shot provider is intentionally separate from the Garmin R10 adapter. This lets us validate the simulator physics, course/session flow and UI before enabling an approved R10 transport.
+The development shot provider is intentionally separate from the Garmin R10 adapter. This lets us validate the simulator physics, course/session flow, UI and personalized club mapping before enabling an approved R10 transport.
 
 ## R10 development target
 
@@ -120,6 +101,7 @@ Assets/
     GarminR10/
   GolfSim/Editor/
   GolfSim/UI/
+  GolfSim/Players/
   GolfSim/Courses/
   GolfSim/Firebase/
 Documentation/
