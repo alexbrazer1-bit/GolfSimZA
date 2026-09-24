@@ -66,6 +66,12 @@ namespace GolfSimZA.Core
             if (!shot.IsValid)
                 return;
 
+            // A new input cannot interrupt an active flight. This prevents a
+            // second SPACE press or monitor packet from resetting the ball while
+            // it is airborne or rolling toward its landing point.
+            if (ballFlightSimulator != null && ballFlightSimulator.IsInFlight)
+                return;
+
             lastShot = shot;
             shotHistory.Add(shot);
             ballFlightSimulator?.Launch(shot);
