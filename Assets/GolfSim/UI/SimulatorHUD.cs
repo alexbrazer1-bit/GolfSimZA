@@ -10,16 +10,33 @@ namespace GolfSimZA.UI
         private GUIStyle titleStyle;
         private GUIStyle bodyStyle;
         private GUIStyle smallStyle;
+        private bool stylesReady;
 
-        private void Awake()
+        private void EnsureStyles()
         {
-            titleStyle = new GUIStyle(GUI.skin.label) { fontSize = 24, fontStyle = FontStyle.Bold };
-            bodyStyle = new GUIStyle(GUI.skin.label) { fontSize = 18 };
-            smallStyle = new GUIStyle(GUI.skin.label) { fontSize = 14 };
+            if (stylesReady)
+                return;
+
+            titleStyle = new GUIStyle(GUI.skin.label)
+            {
+                fontSize = 24,
+                fontStyle = FontStyle.Bold
+            };
+            bodyStyle = new GUIStyle(GUI.skin.label)
+            {
+                fontSize = 18
+            };
+            smallStyle = new GUIStyle(GUI.skin.label)
+            {
+                fontSize = 14
+            };
+            stylesReady = true;
         }
 
         private void OnGUI()
         {
+            EnsureStyles();
+
             if (simulatorController == null)
                 return;
 
