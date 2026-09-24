@@ -12,7 +12,7 @@ namespace GolfSimZA.Editor
 {
     public static class CreatePrototypeScene
     {
-        [MenuItem("GolfSimZA/Create 0.1.1 Driving Range")]
+        [MenuItem("GolfSimZA/Create 0.1.2 Driving Range")]
         public static void Create()
         {
             Scene scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
@@ -43,7 +43,6 @@ namespace GolfSimZA.Editor
             SimulatorHUD hud = range.AddComponent<SimulatorHUD>();
             SerializedObject hudSo = new SerializedObject(hud);
             hudSo.FindProperty("simulatorController").objectReferenceValue = controller;
-            hudSo.FindProperty("launchMonitorBehaviour").objectReferenceValue = provider;
             hudSo.ApplyModifiedPropertiesWithoutUndo();
 
             GameObject cameraObject = new GameObject("Main Camera");
@@ -63,15 +62,15 @@ namespace GolfSimZA.Editor
             if (!AssetDatabase.IsValidFolder(directory))
                 AssetDatabase.CreateFolder("Assets", "Scenes");
 
-            EditorSceneManager.SaveScene(scene, "Assets/Scenes/GolfSimZA_0_1_1_DrivingRange.unity");
+            EditorSceneManager.SaveScene(scene, "Assets/Scenes/GolfSimZA_0_1_2_DrivingRange.unity");
             EditorBuildSettings.scenes = new[]
             {
-                new EditorBuildSettingsScene("Assets/Scenes/GolfSimZA_0_1_1_DrivingRange.unity", true)
+                new EditorBuildSettingsScene("Assets/Scenes/GolfSimZA_0_1_2_DrivingRange.unity", true)
             };
 
             AssetDatabase.SaveAssets();
             AssetDatabase.Refresh();
-            Debug.Log("[GolfSimZA] Prototype driving range created. Press Play, then Space to test a driver shot.");
+            Debug.Log("[GolfSimZA] Phase 0.1.2 driving range created. Press Play, select a club with 1-8, then press Space.");
         }
     }
 }
