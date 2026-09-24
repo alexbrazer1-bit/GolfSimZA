@@ -16,6 +16,8 @@ namespace GolfSimZA.Physics
         [SerializeField] private float cameraDistance = 8.5f;
         [SerializeField] private float cameraFollowSpeed = 5f;
         [SerializeField] private float cameraLookHeight = 1.0f;
+        [SerializeField] private float maximumFollowDistance = 300f;
+        [SerializeField] private float maximumSideOffset = 45f;
 
         [Header("Landing marker")]
         [SerializeField] private float markerRadius = 1.5f;
@@ -24,6 +26,7 @@ namespace GolfSimZA.Physics
         private GameObject landingMarker;
         private Vector3 homeCameraPosition;
         private Quaternion homeCameraRotation;
+        private Vector3 followDirection = Vector3.forward;
         private bool cameraMoved;
 
         private void Awake()
@@ -65,7 +68,22 @@ namespace GolfSimZA.Physics
             if (flight.IsInFlight)
             {
                 cameraMoved = true;
-                Vector3 target = ball.position + Vector3.up * cameraHeight - followCamera.transform.forward * cameraDistance;
+
+                // Keep the camera on the range instead of chasing the ball's changing
+                // forward direction. This prevents the camera from pitching into the sky.
+                Vector3 flatBall = new Vector3(ball.position.x, 0f, ball.position.z);
+                Vector3 flatHome = new Vector3(homeCameraPosition.x, 0f, homeCameraPosition.z);
+                Vector3 travel = flatBall - flatHome;
+                float travelDistance = Mathf.Min(travel.magnitude, maximumFollowDistance);
+
+                if (travel.sqrMagnitude > 0.01f)
+                    followDirection = travel.normalized;
+
+                Vector3 desiredCenter = flatHome + followDirection * travelDistance;
+                desiredCenter.x = Mathf.Clamp(desiredCenter.x, -maximumSideOffset, maximumSideOffset);
+                desiredCenter.z = Mathf.Clamp(desiredCenter.z, -10f, maximumFollowDistance + 10f);
+
+                Vector3 target = desiredCenter + Vector3.up * cameraHeight - followDirection * cameraDistance;
                 followCamera.transform.position = Vector3.Lerp(
                     followCamera.transform.position,
                     target,
@@ -94,6 +112,7 @@ namespace GolfSimZA.Physics
                     followCamera.transform.position = homeCameraPosition;
                     followCamera.transform.rotation = homeCameraRotation;
                     cameraMoved = false;
+                    followDirection = Vector3.forward;
                 }
             }
         }
