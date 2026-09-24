@@ -161,9 +161,13 @@ namespace GolfSimZA.Editor
             if (renderer == null)
                 return;
 
-            Material material = new Material(Shader.Find("Universal Render Pipeline/Lit"));
-            if (material.shader == null)
-                material = new Material(Shader.Find("Standard"));
+            Shader shader = Shader.Find("Universal Render Pipeline/Lit");
+            if (shader == null)
+                shader = Shader.Find("Standard");
+            if (shader == null)
+                return;
+
+            Material material = new Material(shader);
             material.color = color;
             renderer.sharedMaterial = material;
         }
