@@ -89,7 +89,11 @@ namespace GolfSimZA.UI
             GUILayout.BeginVertical(GUILayout.Width(width * 0.72f));
             GUILayout.BeginHorizontal();
             GUILayout.Label("COURSE LIBRARY", labelStyle, GUILayout.Width(150));
-            searchText = GUILayout.TextField(searchText, "Search courses...", buttonStyle);
+            // Unity's GUILayout.TextField overload accepts a GUIStyle as its second
+            // argument. The previous version passed a placeholder string followed
+            // by a GUIStyle, which Unity interpreted as a GUILayoutOption and caused
+            // CS1503 during compilation.
+            searchText = GUILayout.TextField(searchText, buttonStyle);
             GUILayout.EndHorizontal();
             GUILayout.Space(10);
 
