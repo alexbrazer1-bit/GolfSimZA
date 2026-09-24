@@ -13,21 +13,43 @@ namespace GolfSimZA.Editor
     public static class CreatePrototypeScene
     {
         [MenuItem("GolfSimZA/Create 0.1.2 Driving Range")]
-        public static void Create()
-        {
-            CreateScene(false, false);
-        }
+        public static void Create() { CreateScene(false, false); }
 
         [MenuItem("GolfSimZA/Create 0.2 Visual Driving Range")]
-        public static void CreateVisualDrivingRange()
-        {
-            CreateScene(true, false);
-        }
+        public static void CreateVisualDrivingRange() { CreateScene(true, false); }
 
         [MenuItem("GolfSimZA/Create 0.4 Simulator Presentation Range")]
-        public static void CreatePresentationDrivingRange()
+        public static void CreatePresentationDrivingRange() { CreateScene(true, true); }
+
+        [MenuItem("GolfSimZA/Create 0.5 Course Selection")]
+        public static void CreateCourseSelection()
         {
-            CreateScene(true, true);
+            Scene scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+
+            GameObject cameraObject = new GameObject("Main Camera");
+            Camera camera = cameraObject.AddComponent<Camera>();
+            cameraObject.tag = "MainCamera";
+            camera.clearFlags = CameraClearFlags.SolidColor;
+            camera.backgroundColor = new Color(0.10f, 0.24f, 0.34f);
+            camera.transform.position = new Vector3(0f, 0f, -10f);
+
+            GameObject menu = new GameObject("CourseSelection");
+            menu.AddComponent<CourseSelectionUI>();
+
+            string directory = "Assets/Scenes";
+            if (!AssetDatabase.IsValidFolder(directory)) AssetDatabase.CreateFolder("Assets", "Scenes");
+
+            string scenePath = "Assets/Scenes/GolfSimZA_0_5_CourseSelection.unity";
+            EditorSceneManager.SaveScene(scene, scenePath);
+            EditorBuildSettings.scenes = new[]
+            {
+                new EditorBuildSettingsScene(scenePath, true),
+                new EditorBuildSettingsScene("Assets/Scenes/GolfSimZA_0_4_SimulatorPresentationRange.unity", true)
+            };
+
+            AssetDatabase.SaveAssets();
+            AssetDatabase.Refresh();
+            Debug.Log("[GolfSimZA] Phase 0.5 course selection created. Choose a demo course, tee and 9/18 holes, then start the simulator.");
         }
 
         private static void CreateScene(bool visual, bool presentation)
@@ -37,8 +59,7 @@ namespace GolfSimZA.Editor
             GameObject ground = GameObject.CreatePrimitive(PrimitiveType.Plane);
             ground.name = "DrivingRange_Ground";
             ground.transform.localScale = visual ? new Vector3(60f, 1f, 60f) : new Vector3(20f, 1f, 20f);
-            if (visual)
-                ApplyMaterial(ground, new Color(0.12f, 0.42f, 0.16f));
+            if (visual) ApplyMaterial(ground, new Color(0.12f, 0.42f, 0.16f));
 
             GameObject ball = GameObject.CreatePrimitive(PrimitiveType.Sphere);
             ball.name = "GolfBall";
@@ -48,7 +69,6 @@ namespace GolfSimZA.Editor
 
             GameObject range = new GameObject("GolfSimZA_Range");
             TestShotProvider provider = range.AddComponent<TestShotProvider>();
-
             BallFlightSimulator flight = range.AddComponent<BallFlightSimulator>();
             SerializedObject flightSo = new SerializedObject(flight);
             flightSo.FindProperty("ball").objectReferenceValue = ball.transform;
@@ -103,28 +123,13 @@ namespace GolfSimZA.Editor
             lightObject.transform.rotation = Quaternion.Euler(50f, -30f, 0f);
 
             string directory = "Assets/Scenes";
-            if (!AssetDatabase.IsValidFolder(directory))
-                AssetDatabase.CreateFolder("Assets", "Scenes");
-
-            string scenePath = presentation
-                ? "Assets/Scenes/GolfSimZA_0_4_SimulatorPresentationRange.unity"
-                : visual
-                    ? "Assets/Scenes/GolfSimZA_0_2_VisualDrivingRange.unity"
-                    : "Assets/Scenes/GolfSimZA_0_1_2_DrivingRange.unity";
-
+            if (!AssetDatabase.IsValidFolder(directory)) AssetDatabase.CreateFolder("Assets", "Scenes");
+            string scenePath = presentation ? "Assets/Scenes/GolfSimZA_0_4_SimulatorPresentationRange.unity" : visual ? "Assets/Scenes/GolfSimZA_0_2_VisualDrivingRange.unity" : "Assets/Scenes/GolfSimZA_0_1_2_DrivingRange.unity";
             EditorSceneManager.SaveScene(scene, scenePath);
-            EditorBuildSettings.scenes = new[]
-            {
-                new EditorBuildSettingsScene(scenePath, true)
-            };
-
+            EditorBuildSettings.scenes = new[] { new EditorBuildSettingsScene(scenePath, true) };
             AssetDatabase.SaveAssets();
             AssetDatabase.Refresh();
-            Debug.Log(presentation
-                ? "[GolfSimZA] Phase 0.4 simulator presentation range created. Press Play, select a club with 1-8, then press Space."
-                : visual
-                    ? "[GolfSimZA] Phase 0.2 visual driving range created. Press Play, select a club with 1-8, then press Space."
-                    : "[GolfSimZA] Phase 0.1.2 driving range created. Press Play, select a club with 1-8, then press Space.");
+            Debug.Log(presentation ? "[GolfSimZA] Phase 0.4 simulator presentation range created. Press Play, select a club with 1-8, then press Space." : visual ? "[GolfSimZA] Phase 0.2 visual driving range created. Press Play, select a club with 1-8, then press Space." : "[GolfSimZA] Phase 0.1.2 driving range created. Press Play, select a club with 1-8, then press Space.");
         }
 
         private static void BuildVisualRange()
@@ -134,10 +139,7 @@ namespace GolfSimZA.Editor
             CreateStrip("TargetGreen_100m", new Vector3(0f, 0.025f, 100f), new Vector3(13f, 0.04f, 8f), new Color(0.25f, 0.62f, 0.24f));
             CreateStrip("TargetGreen_150m", new Vector3(0f, 0.025f, 150f), new Vector3(15f, 0.04f, 9f), new Color(0.25f, 0.62f, 0.24f));
             CreateStrip("TargetGreen_200m", new Vector3(0f, 0.025f, 200f), new Vector3(17f, 0.04f, 10f), new Color(0.25f, 0.62f, 0.24f));
-
-            for (int distance = 25; distance <= 200; distance += 25)
-                CreateDistanceMarker(distance);
-
+            for (int distance = 25; distance <= 200; distance += 25) CreateDistanceMarker(distance);
             CreateFlag("Flag_100m", new Vector3(0f, 0.05f, 100f));
             CreateFlag("Flag_200m", new Vector3(0f, 0.05f, 200f));
         }
@@ -158,7 +160,6 @@ namespace GolfSimZA.Editor
             pole.transform.position = position + Vector3.up * 1.25f;
             pole.transform.localScale = new Vector3(0.035f, 1.25f, 0.035f);
             ApplyMaterial(pole, Color.white);
-
             GameObject flag = GameObject.CreatePrimitive(PrimitiveType.Cube);
             flag.name = name + "_Flag";
             flag.transform.position = position + new Vector3(0.45f, 2.1f, 0f);
@@ -178,15 +179,10 @@ namespace GolfSimZA.Editor
         private static void ApplyMaterial(GameObject obj, Color color)
         {
             Renderer renderer = obj.GetComponent<Renderer>();
-            if (renderer == null)
-                return;
-
+            if (renderer == null) return;
             Shader shader = Shader.Find("Universal Render Pipeline/Lit");
-            if (shader == null)
-                shader = Shader.Find("Standard");
-            if (shader == null)
-                return;
-
+            if (shader == null) shader = Shader.Find("Standard");
+            if (shader == null) return;
             Material material = new Material(shader);
             material.color = color;
             renderer.sharedMaterial = material;
