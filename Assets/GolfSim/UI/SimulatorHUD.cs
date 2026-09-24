@@ -49,7 +49,7 @@ namespace GolfSimZA.UI
             ShotData shot = simulatorController.LastShot;
             bool hasShot = shot.IsValid;
 
-            GUILayout.BeginArea(new Rect(18, 18, 430, 330), GUI.skin.box);
+            GUILayout.BeginArea(new Rect(18, 18, 430, 370), GUI.skin.box);
             GUILayout.Label("GOLFSIM ZA", titleStyle);
             GUILayout.Label($"Launch monitor: {simulatorController.LaunchMonitorName}", smallStyle);
             GUILayout.Label(
@@ -64,6 +64,8 @@ namespace GolfSimZA.UI
                 GUILayout.Label($"Ball {shot.BallSpeedKph:F1} km/h   |   Club {shot.ClubSpeedKph:F1} km/h", bodyStyle);
                 GUILayout.Label($"Launch {shot.LaunchAngleDeg:F1}°   |   Direction {shot.LaunchDirectionDeg:F1}°", bodyStyle);
                 GUILayout.Label($"Backspin {shot.BackSpinRpm:F0} rpm   |   Spin axis {shot.SpinAxisDeg:F1}°", bodyStyle);
+                GUILayout.Space(4);
+                GUILayout.Label($"Carry {shot.CarryMeters:F1} m   |   Total {shot.TotalMeters:F1} m", bodyStyle);
             }
             else
             {
@@ -86,7 +88,7 @@ namespace GolfSimZA.UI
                 {
                     ShotData historyShot = simulatorController.History.Shots[i];
                     GUILayout.Label(
-                        $"• {historyShot.ClubName}: {historyShot.BallSpeedKph:F0} km/h | {historyShot.LaunchAngleDeg:F1}° | {historyShot.BackSpinRpm:F0} rpm",
+                        $"• {historyShot.ClubName}: {historyShot.TotalMeters:F0} m | {historyShot.BallSpeedKph:F0} km/h",
                         smallStyle);
                 }
             }
