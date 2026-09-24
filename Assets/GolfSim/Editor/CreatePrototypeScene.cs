@@ -2,6 +2,7 @@
 using GolfSimZA.Core;
 using GolfSimZA.LaunchMonitors;
 using GolfSimZA.Physics;
+using GolfSimZA.UI;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
@@ -38,6 +39,12 @@ namespace GolfSimZA.Editor
             controllerSo.FindProperty("launchMonitorBehaviour").objectReferenceValue = provider;
             controllerSo.FindProperty("ballFlightSimulator").objectReferenceValue = flight;
             controllerSo.ApplyModifiedPropertiesWithoutUndo();
+
+            SimulatorHUD hud = range.AddComponent<SimulatorHUD>();
+            SerializedObject hudSo = new SerializedObject(hud);
+            hudSo.FindProperty("simulatorController").objectReferenceValue = controller;
+            hudSo.FindProperty("launchMonitorBehaviour").objectReferenceValue = provider;
+            hudSo.ApplyModifiedPropertiesWithoutUndo();
 
             GameObject cameraObject = new GameObject("Main Camera");
             Camera camera = cameraObject.AddComponent<Camera>();
