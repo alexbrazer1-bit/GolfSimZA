@@ -25,11 +25,17 @@ namespace GolfSimZA.Physics
         [SerializeField] private float maxRollMeters = 35.0f;
         [SerializeField] private float stopSpeed = 0.15f;
 
+        [Header("Spin / roll tuning")]
+        [SerializeField] private float referenceSpinRpm = 2400.0f;
+        [SerializeField] private float spinRollInfluence = 0.45f;
+        [SerializeField] private float rollSpinDecayPerSecond = 0.65f;
+
         private Vector3 velocity;
         private bool airborne;
         private bool rolling;
         private bool hasLanded;
         private float currentSpinRpm;
+        private float landingRollDeceleration;
         private Vector3 launchPosition;
         private Vector3 landingPosition;
         private float maxHeight;
@@ -61,6 +67,7 @@ namespace GolfSimZA.Physics
             velocity.y = speed * Mathf.Sin(elevation);
 
             currentSpinRpm = Mathf.Max(0f, shot.BackSpinRpm);
+            landingRollDeceleration = rollDeceleration;
             ball.position = new Vector3(ball.position.x, Mathf.Max(ball.position.y, groundY + 0.03f), ball.position.z);
             launchPosition = ball.position;
             landingPosition = ball.position;
@@ -127,10 +134,21 @@ namespace GolfSimZA.Physics
             carryMeters = HorizontalDistanceFromLaunch();
             totalMeters = carryMeters;
 
+            // More backspin means more friction on landing and therefore a
+            // shorter release/roll. Low-spin shots retain more forward speed.
+            float normalizedSpin = Mathf.Clamp01(currentSpinRpm / Mathf.Max(1f, referenceSpinRpm));
+            float spinFriction = Mathf.Lerp(1f - spinRollInfluence, 1f + spinRollInfluence, normalizedSpin);
+            landingRollDeceleration = rollDeceleration * spinFriction;
+
             float verticalImpactSpeed = Mathf.Abs(velocity.y);
             velocity.y = -verticalImpactSpeed * bounceRetention;
-            velocity.x *= horizontalBounceRetention;
-            velocity.z *= horizontalBounceRetention;
+
+            float horizontalRetention = Mathf.Lerp(
+                horizontalBounceRetention,
+                horizontalBounceRetention * 0.88f,
+                normalizedSpin);
+            velocity.x *= horizontalRetention;
+            velocity.z *= horizontalRetention;
 
             airborne = false;
             rolling = new Vector3(velocity.x, 0f, velocity.z).magnitude > stopSpeed;
@@ -158,11 +176,18 @@ namespace GolfSimZA.Physics
                 return;
             }
 
-            float newSpeed = Mathf.Max(0f, speed - rollDeceleration * dt);
+            float spinFactor = Mathf.Clamp01(currentSpinRpm / Mathf.Max(1f, referenceSpinRpm));
+            float currentDeceleration = landingRollDeceleration * Mathf.Lerp(1f, 1.12f, spinFactor);
+            float newSpeed = Mathf.Max(0f, speed - currentDeceleration * dt);
             velocity = horizontalVelocity.normalized * newSpeed;
             ball.position += velocity * dt;
             ball.position = new Vector3(ball.position.x, groundY, ball.position.z);
             totalMeters = HorizontalDistanceFromLaunch();
+
+            currentSpinRpm = Mathf.MoveTowards(
+                currentSpinRpm,
+                0f,
+                Mathf.Max(1f, currentSpinRpm) * rollSpinDecayPerSecond * dt);
         }
 
         private float HorizontalDistanceFromLaunch()
