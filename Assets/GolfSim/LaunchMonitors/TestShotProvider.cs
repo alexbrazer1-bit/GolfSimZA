@@ -1,5 +1,7 @@
 using System;
+using System.Reflection;
 using GolfSimZA.Core;
+using GolfSimZA.UI;
 using UnityEngine;
 using UnityEngine.InputSystem;
 
@@ -47,7 +49,13 @@ namespace GolfSimZA.LaunchMonitors
         public string DeviceName => "Development Test Shot";
         public bool IsConnected { get; private set; }
         public string SelectedClubName => clubs[Mathf.Clamp(selectedClubIndex, 0, clubs.Length - 1)].name;
+        public int SelectedClubSlot => Mathf.Clamp(selectedClubIndex + 1, 1, clubs.Length);
         public event Action<ShotData> ShotReceived;
+
+        private RoundGameplayUI roundGameplayUI;
+        private FieldInfo roundSelectedClubField;
+        private float lastShotTime = -10f;
+        private int lastShotSlot;
 
         public bool TryConnect()
         {
@@ -63,12 +71,17 @@ namespace GolfSimZA.LaunchMonitors
         private void Awake()
         {
             TryConnect();
+            roundGameplayUI = FindFirstObjectByType<RoundGameplayUI>();
+            if (roundGameplayUI != null)
+                roundSelectedClubField = typeof(RoundGameplayUI).GetField("selectedClubNumber", BindingFlags.Instance | BindingFlags.NonPublic);
         }
 
         private void Update()
         {
             if (!IsConnected || Keyboard.current == null)
                 return;
+
+            SyncFromRoundUI();
 
             for (int i = 0; i < clubs.Length; i++)
             {
@@ -82,15 +95,50 @@ namespace GolfSimZA.LaunchMonitors
             if (Keyboard.current.spaceKey.wasPressedThisFrame)
             {
                 ClubPreset club = clubs[Mathf.Clamp(selectedClubIndex, 0, clubs.Length - 1)];
-                ShotReceived?.Invoke(ShotData.CreateTestShot(
-                    club.name,
-                    club.number,
-                    club.loft,
-                    club.ballSpeed,
-                    club.clubSpeed,
-                    club.launch,
-                    club.spin));
+                lastShotSlot = selectedClubIndex + 1;
+                lastShotTime = Time.unscaledTime;
+                ShotReceived?.Invoke(ShotData.CreateTestShot(club.name, club.number, club.loft, club.ballSpeed, club.clubSpeed, club.launch, club.spin));
             }
+        }
+
+        private void LateUpdate()
+        {
+            if (roundGameplayUI == null || roundSelectedClubField == null)
+                return;
+
+            int uiSlot = GetRoundUISlot();
+            if (Time.unscaledTime - lastShotTime < 0.35f)
+            {
+                if (uiSlot != lastShotSlot)
+                    roundSelectedClubField.SetValue(roundGameplayUI, lastShotSlot);
+                return;
+            }
+
+            if (uiSlot >= 1 && uiSlot <= clubs.Length && uiSlot != selectedClubIndex + 1)
+                selectedClubIndex = uiSlot - 1;
+        }
+
+        private void SyncFromRoundUI()
+        {
+            if (roundGameplayUI == null || roundSelectedClubField == null)
+            {
+                roundGameplayUI = FindFirstObjectByType<RoundGameplayUI>();
+                if (roundGameplayUI != null)
+                    roundSelectedClubField = typeof(RoundGameplayUI).GetField("selectedClubNumber", BindingFlags.Instance | BindingFlags.NonPublic);
+            }
+
+            if (roundGameplayUI == null || roundSelectedClubField == null)
+                return;
+
+            int uiSlot = GetRoundUISlot();
+            if (uiSlot >= 1 && uiSlot <= clubs.Length && Time.unscaledTime - lastShotTime >= 0.35f)
+                selectedClubIndex = uiSlot - 1;
+        }
+
+        private int GetRoundUISlot()
+        {
+            object value = roundSelectedClubField.GetValue(roundGameplayUI);
+            return value is int ? (int)value : 1;
         }
 
         private static bool IsNumberKeyPressed(Keyboard keyboard, int number)
