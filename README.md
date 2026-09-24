@@ -22,7 +22,7 @@ We will not bundle Garmin proprietary SDKs or reverse-engineered proprietary mat
 
 Unity 6 / 6000.x. The initial target is Windows Standalone 64-bit.
 
-## Current milestone: 0.4
+## Current milestone: 0.5
 
 ### 0.1.1 foundation
 
@@ -73,19 +73,28 @@ Unity 6 / 6000.x. The initial target is Windows Standalone 64-bit.
 - Persistent landing marker for the latest completed shot
 - Existing tracer retained for the full ball-flight path
 - Presentation layer kept separate from launch-monitor transport and physics
-- Foundation ready for course selection and R10 integration work
+- Ground-roll tuning validated so shots stop after a realistic roll distance
+
+### 0.5 course and round foundation
+
+- Course/tee/round selection scene
+- Session state persists the selected course, tee and 9/18-hole round
+- Three placeholder demo courses for UI testing
+- Course selection launches the validated 0.4 presentation simulator
+- Real course content remains gated behind appropriate licensing/original-content requirements
+- Build settings include the course-selection and simulator scenes
 
 ## Prototype controls
 
 1. Open the project in Unity 6.
-2. Run `GolfSimZA > Create 0.4 Simulator Presentation Range` for the current presentation test scene.
-3. Open the generated `GolfSimZA_0_4_SimulatorPresentationRange` scene.
+2. Run `GolfSimZA > Create 0.5 Course Selection` for the new course-selection scene.
+3. Open `GolfSimZA_0_5_CourseSelection`.
 4. Press Play.
-5. Press **1-8** to select a development club.
-6. Press **Space** to fire a test shot.
-7. Watch the ball flight, tracer, camera follow, landing marker and calculated carry/total distance.
+5. Choose a demo course, tee and 9/18 holes.
+6. Select **START PRACTICE / ROUND**.
+7. In the simulator, press **1-8** to select a development club and **Space** to fire a test shot.
 
-The development shot provider is intentionally separate from the Garmin R10 adapter. This lets us validate the simulator physics and UI before enabling an approved R10 transport.
+The development shot provider is intentionally separate from the Garmin R10 adapter. This lets us validate the simulator physics, course/session flow and UI before enabling an approved R10 transport.
 
 ## R10 development target
 
