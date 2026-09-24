@@ -16,6 +16,7 @@ namespace GolfSimZA.Core
 
         public ShotData LastShot => lastShot;
         public ShotHistory History => shotHistory;
+        public BallFlightSimulator BallFlight => ballFlightSimulator;
         public string LaunchMonitorName => launchMonitor?.DeviceName ?? "Not configured";
         public bool IsLaunchMonitorConnected => launchMonitor != null && launchMonitor.IsConnected;
 
@@ -30,16 +31,22 @@ namespace GolfSimZA.Core
             }
 
             launchMonitor.ShotReceived += OnShotReceived;
+            if (ballFlightSimulator != null)
+                ballFlightSimulator.ShotCompleted += OnShotCompleted;
+
             launchMonitor.TryConnect();
         }
 
         private void OnDestroy()
         {
-            if (launchMonitor == null)
-                return;
+            if (launchMonitor != null)
+            {
+                launchMonitor.ShotReceived -= OnShotReceived;
+                launchMonitor.Disconnect();
+            }
 
-            launchMonitor.ShotReceived -= OnShotReceived;
-            launchMonitor.Disconnect();
+            if (ballFlightSimulator != null)
+                ballFlightSimulator.ShotCompleted -= OnShotCompleted;
         }
 
         private void OnShotReceived(ShotData shot)
@@ -51,6 +58,17 @@ namespace GolfSimZA.Core
             shotHistory.Add(shot);
             ballFlightSimulator?.Launch(shot);
             Debug.Log($"[GolfSimZA] Shot: {shot.ClubName}, ball {shot.BallSpeedMps:F1} m/s, launch {shot.LaunchAngleDeg:F1}°, spin {shot.BackSpinRpm:F0} rpm");
+        }
+
+        private void OnShotCompleted(ShotData shot, float carryMeters, float totalMeters, float maxHeightMeters, float flightTimeSeconds)
+        {
+            ShotData completed = shot;
+            completed.CarryMeters = carryMeters;
+            completed.TotalMeters = totalMeters;
+            lastShot = completed;
+            shotHistory.ReplaceLast(completed);
+
+            Debug.Log($"[GolfSimZA] Landing: carry {carryMeters:F1} m, total {totalMeters:F1} m, apex {maxHeightMeters:F1} m, flight {flightTimeSeconds:F2} s");
         }
     }
 }
