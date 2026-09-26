@@ -9,6 +9,7 @@ namespace GolfSimZA.Players
         public const int ClubCount = 36;
         public const int MaxBagClubs = 18;
         public const int DefaultBagClubCount = 18;
+        private const int DefaultBagSetupVersion = 2;
 
         // Default 18-club setup requested for GolfSimZA.
         // The Putter remains available in the club library but is not included in the default bag.
@@ -62,6 +63,33 @@ namespace GolfSimZA.Players
                 profile.CarryMeters[i] = PlayerPrefs.GetFloat(key + ".Carry." + i, 0f);
                 profile.TotalMeters[i] = PlayerPrefs.GetFloat(key + ".Total." + i, 0f);
                 profile.InBag[i] = PlayerPrefs.GetInt(key + ".InBag." + i, i < DefaultBagClubCount ? 1 : 0) == 1;
+            }
+
+            // One-time migration so an existing default/test profile receives the new requested bag.
+            // Carry/total values are reset for the reordered default slots because the previous setup
+            // used different club indices. Future mapped measurements are then stored against the correct club.
+            int savedVersion = PlayerPrefs.GetInt(key + ".SetupVersion", 0);
+            if (savedVersion < DefaultBagSetupVersion)
+            {
+                for (int i = 0; i < DefaultBagClubCount; i++)
+                {
+                    profile.ClubNames[i] = DefaultClubNames[i];
+                    profile.Lofts[i] = DefaultLofts[i];
+                    profile.InBag[i] = true;
+                    profile.CarryMeters[i] = 0f;
+                    profile.TotalMeters[i] = 0f;
+                }
+
+                // Putter is retained in the library at index 18 but removed from the default bag.
+                profile.InBag[18] = false;
+                profile.ClubNames[18] = "Putter";
+                profile.Lofts[18] = 3f;
+                profile.CarryMeters[18] = 0f;
+                profile.TotalMeters[18] = 0f;
+
+                profile.Save(playerName);
+                PlayerPrefs.SetInt(key + ".SetupVersion", DefaultBagSetupVersion);
+                PlayerPrefs.Save();
             }
 
             return profile;
