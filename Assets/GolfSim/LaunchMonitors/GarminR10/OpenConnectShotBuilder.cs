@@ -1,6 +1,5 @@
 using System;
-using System.Text.Json;
-using System.Text.Json.Serialization;
+using UnityEngine;
 
 namespace GolfSimZA.LaunchMonitors.GarminR10
 {
@@ -10,55 +9,54 @@ namespace GolfSimZA.LaunchMonitors.GarminR10
     /// </summary>
     public static class OpenConnectShotBuilder
     {
-        private static readonly JsonSerializerOptions JsonOptions = new JsonSerializerOptions
-        {
-            DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
-        };
-
+        [Serializable]
         public sealed class OpenConnectShot
         {
-            public string DeviceID { get; set; } = "GSPRO-R10";
-            public string Units { get; set; } = "Yards";
-            public int ShotNumber { get; set; }
-            public string APIVersion { get; set; } = "1";
-            public BallData BallData { get; set; }
-            public ClubData ClubData { get; set; }
-            public ShotDataOptions ShotDataOptions { get; set; }
+            public string DeviceID = "GSPRO-R10";
+            public string Units = "Yards";
+            public int ShotNumber;
+            public string APIVersion = "1";
+            public BallData BallData;
+            public ClubData ClubData;
+            public ShotDataOptions ShotDataOptions;
         }
 
+        [Serializable]
         public sealed class BallData
         {
-            public double Speed { get; set; }
-            public double SpinAxis { get; set; }
-            public double TotalSpin { get; set; }
-            public double BackSpin { get; set; }
-            public double SideSpin { get; set; }
-            public double HLA { get; set; }
-            public double VLA { get; set; }
-            public double CarryDistance { get; set; }
+            public double Speed;
+            public double SpinAxis;
+            public double TotalSpin;
+            public double BackSpin;
+            public double SideSpin;
+            public double HLA;
+            public double VLA;
+            public double CarryDistance;
         }
 
+        [Serializable]
         public sealed class ClubData
         {
-            public double Speed { get; set; }
-            public double AngleOfAttack { get; set; }
-            public double FaceToTarget { get; set; }
-            public double Lie { get; set; }
-            public double Loft { get; set; }
-            public double Path { get; set; }
-            public double SpeedAtImpact { get; set; }
-            public double VerticalFaceImpact { get; set; }
-            public double HorizontalFaceImpact { get; set; }
-            public double ClosureRate { get; set; }
+            public double Speed;
+            public double AngleOfAttack;
+            public double FaceToTarget;
+            public double Lie;
+            public double Loft;
+            public double Path;
+            public double SpeedAtImpact;
+            public double VerticalFaceImpact;
+            public double HorizontalFaceImpact;
+            public double ClosureRate;
         }
 
+        [Serializable]
         public sealed class ShotDataOptions
         {
-            public bool ContainsBallData { get; set; }
-            public bool ContainsClubData { get; set; }
-            public bool LaunchMonitorIsReady { get; set; }
-            public bool LaunchMonitorBallDetected { get; set; }
-            public bool IsHeartBeat { get; set; }
+            public bool ContainsBallData;
+            public bool ContainsClubData;
+            public bool LaunchMonitorIsReady;
+            public bool LaunchMonitorBallDetected;
+            public bool IsHeartBeat;
         }
 
         /// <summary>
@@ -117,7 +115,7 @@ namespace GolfSimZA.LaunchMonitors.GarminR10
                 }
             };
 
-            return JsonSerializer.Serialize(payload, JsonOptions);
+            return JsonUtility.ToJson(payload);
         }
     }
 }
