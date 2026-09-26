@@ -6,30 +6,28 @@ using UnityEngine;
 
 namespace GolfSimZA.UI
 {
-    /// <summary>
-    /// Presentation layer for the simulator. It replaces the older fixed-layout
-    /// RoundGameplayUI at runtime without changing the R10 data pipeline.
-    /// </summary>
     public sealed class ModernGolfSimUI : MonoBehaviour
     {
-        private SimulatorController simulator;
-        private BallFlightSimulator flight;
-        private RoundGameplayUI legacyUi;
-        private GUIStyle panel, panelStrong, title, label, value, bigValue, button, center;
-        private Texture2D darkTexture, strongTexture, accentTexture, greenTexture, whiteTexture;
+        [SerializeField] private SimulatorController simulator;
+        [SerializeField] private BallFlightSimulator flight;
+
+        private GUIStyle panel, panelStrong, title, section, label, value, bigValue, button, center, tiny;
+        private Texture2D darkTex, strongTex, accentTex, accentSoftTex, greenTex, whiteTex;
         private bool stylesReady;
-        private bool rangeBuilt;
         private bool isRange;
         private int lastShotCount;
+        private int selectedClub = 1;
         private string status = "READY";
-        private float rangeDistance = 300f;
+        private readonly string[] clubs = { "Driver", "3W", "5i", "7i", "9i", "PW", "SW", "Putter" };
 
         private void Awake()
         {
-            simulator = GetComponent<SimulatorController>();
-            flight = simulator != null ? simulator.BallFlight : FindFirstObjectByType<BallFlightSimulator>();
-            legacyUi = FindFirstObjectByType<RoundGameplayUI>();
-            if (legacyUi != null) legacyUi.enabled = false;
+            simulator = simulator != null ? simulator : GetComponent<SimulatorController>();
+            flight = flight != null ? flight : (simulator != null ? simulator.BallFlight : FindFirstObjectByType<BallFlightSimulator>());
+
+            RoundGameplayUI legacy = FindFirstObjectByType<RoundGameplayUI>();
+            if (legacy != null) legacy.enabled = false;
+
             isRange = IsDrivingRange();
             if (isRange) BuildDrivingRange();
         }
@@ -37,14 +35,20 @@ namespace GolfSimZA.UI
         private void Update()
         {
             if (simulator == null) return;
+
             int count = simulator.History != null ? simulator.History.Count : 0;
             if (count > lastShotCount)
             {
                 lastShotCount = count;
                 status = "SHOT RECEIVED";
+                ShotData shot = simulator.LastShot;
+                if (shot.IsValid) selectedClub = Mathf.Clamp(shot.ClubNumber, 1, clubs.Length);
             }
-            if (flight != null && flight.IsInFlight) status = "BALL IN FLIGHT";
-            else if (status == "BALL IN FLIGHT") status = "SHOT COMPLETE";
+
+            if (flight != null && flight.IsInFlight)
+                status = "BALL IN FLIGHT";
+            else if (status == "BALL IN FLIGHT")
+                status = "SHOT COMPLETE";
         }
 
         private bool IsDrivingRange()
@@ -57,35 +61,43 @@ namespace GolfSimZA.UI
         private void EnsureStyles()
         {
             if (stylesReady) return;
-            darkTexture = MakeTexture(new Color(0.025f, 0.055f, 0.065f, 0.94f));
-            strongTexture = MakeTexture(new Color(0.008f, 0.025f, 0.032f, 0.97f));
-            accentTexture = MakeTexture(new Color(0.03f, 0.55f, 0.86f, 1f));
-            greenTexture = MakeTexture(new Color(0.08f, 0.38f, 0.16f, 1f));
-            whiteTexture = MakeTexture(Color.white);
-            panel = Panel(darkTexture);
-            panelStrong = Panel(strongTexture);
-            title = Label(14, FontStyle.Bold, Color.white, TextAnchor.MiddleLeft);
-            label = Label(10, FontStyle.Normal, new Color(0.72f, 0.80f, 0.83f), TextAnchor.MiddleLeft);
-            value = Label(14, FontStyle.Bold, Color.white, TextAnchor.MiddleRight);
-            bigValue = Label(24, FontStyle.Bold, Color.white, TextAnchor.MiddleRight);
-            button = Button(12);
+
+            darkTex = MakeTexture(new Color(0.025f, 0.045f, 0.055f, 0.94f));
+            strongTex = MakeTexture(new Color(0.008f, 0.016f, 0.021f, 0.97f));
+            accentTex = MakeTexture(new Color(0.03f, 0.52f, 0.86f, 1f));
+            accentSoftTex = MakeTexture(new Color(0.03f, 0.52f, 0.86f, 0.28f));
+            greenTex = MakeTexture(new Color(0.16f, 0.62f, 0.28f, 1f));
+            whiteTex = MakeTexture(new Color(1f, 1f, 1f, 0.96f));
+
+            panel = Panel(darkTex, 8);
+            panelStrong = Panel(strongTex, 8);
+            title = Label(15, FontStyle.Bold, Color.white, TextAnchor.MiddleLeft);
+            section = Label(12, FontStyle.Bold, new Color(0.70f, 0.82f, 0.86f), TextAnchor.MiddleLeft);
+            label = Label(9, FontStyle.Normal, new Color(0.58f, 0.69f, 0.73f), TextAnchor.MiddleLeft);
+            value = Label(13, FontStyle.Bold, Color.white, TextAnchor.MiddleRight);
+            bigValue = Label(23, FontStyle.Bold, Color.white, TextAnchor.MiddleRight);
+            button = Button(10);
             center = Label(11, FontStyle.Bold, Color.white, TextAnchor.MiddleCenter);
+            tiny = Label(8, FontStyle.Bold, new Color(0.62f, 0.72f, 0.75f), TextAnchor.MiddleCenter);
             stylesReady = true;
         }
 
-        private GUIStyle Panel(Texture2D texture)
+        private GUIStyle Panel(Texture2D texture, int border)
         {
             GUIStyle s = new GUIStyle(GUI.skin.box);
             s.normal.background = texture;
-            s.border = new RectOffset(7, 7, 7, 7);
-            s.padding = new RectOffset(10, 10, 7, 7);
+            s.border = new RectOffset(border, border, border, border);
+            s.padding = new RectOffset(8, 8, 6, 6);
             return s;
         }
 
         private GUIStyle Label(int size, FontStyle style, Color color, TextAnchor align)
         {
             GUIStyle s = new GUIStyle(GUI.skin.label);
-            s.fontSize = size; s.fontStyle = style; s.alignment = align; s.normal.textColor = color;
+            s.fontSize = size;
+            s.fontStyle = style;
+            s.alignment = align;
+            s.normal.textColor = color;
             s.padding = new RectOffset(0, 0, 0, 0);
             return s;
         }
@@ -93,17 +105,25 @@ namespace GolfSimZA.UI
         private GUIStyle Button(int size)
         {
             GUIStyle s = new GUIStyle(GUI.skin.button);
-            s.fontSize = size; s.fontStyle = FontStyle.Bold; s.alignment = TextAnchor.MiddleCenter;
-            s.normal.textColor = Color.white; s.normal.background = accentTexture;
-            s.hover.textColor = Color.white; s.hover.background = accentTexture;
-            s.active.textColor = Color.white; s.active.background = accentTexture;
+            s.fontSize = size;
+            s.fontStyle = FontStyle.Bold;
+            s.alignment = TextAnchor.MiddleCenter;
+            s.normal.textColor = Color.white;
+            s.normal.background = accentTex;
+            s.hover.textColor = Color.white;
+            s.hover.background = accentTex;
+            s.active.textColor = Color.white;
+            s.active.background = accentTex;
+            s.border = new RectOffset(5, 5, 5, 5);
             return s;
         }
 
         private Texture2D MakeTexture(Color color)
         {
             Texture2D t = new Texture2D(1, 1);
-            t.SetPixel(0, 0, color); t.Apply(); return t;
+            t.SetPixel(0, 0, color);
+            t.Apply();
+            return t;
         }
 
         private void OnGUI()
@@ -111,50 +131,69 @@ namespace GolfSimZA.UI
             EnsureStyles();
             ShotData shot = simulator != null ? simulator.LastShot : default(ShotData);
             bool hasShot = shot.IsValid;
-            if (isRange) DrawRange(shot, hasShot); else DrawRound(shot, hasShot);
+
+            if (isRange) DrawDrivingRangeHUD(shot, hasShot);
+            else DrawRoundHUD(shot, hasShot);
         }
 
-        private void DrawRange(ShotData shot, bool hasShot)
+        private void DrawDrivingRangeHUD(ShotData shot, bool hasShot)
         {
-            float margin = 16f;
-            float w = Screen.width - margin * 2f;
-            GUI.Box(new Rect(margin, 10f, w, 48f), GUIContent.none, panelStrong);
-            GUI.Label(new Rect(margin + 14f, 10f, 150f, 48f), "GOLFSIM ZA", title);
-            GUI.Label(new Rect(margin + 160f, 10f, 260f, 48f), "DRIVING RANGE", title);
-            GUI.Label(new Rect(margin + w - 180f, 10f, 165f, 48f), "R10  •  " + status, center);
+            float margin = Mathf.Clamp(Screen.width * 0.018f, 10f, 20f);
+            float gap = Mathf.Clamp(Screen.width * 0.012f, 8f, 14f);
+            float contentW = Screen.width - margin * 2f;
 
-            float cardW = Mathf.Clamp(Screen.width * 0.23f, 275f, 340f);
-            DrawMetricsCard(16f, 72f, cardW, 300f, shot, hasShot);
+            DrawHeader(margin, 10f, contentW, 48f, "DRIVING RANGE", "PRACTICE  •  " + status);
 
-            float targetW = Mathf.Clamp(Screen.width * 0.38f, 390f, 560f);
-            float targetX = (Screen.width - targetW) * 0.5f;
-            GUI.Box(new Rect(targetX, 72f, targetW, 126f), GUIContent.none, panel);
-            GUI.Label(new Rect(targetX + 12f, 82f, targetW - 24f, 20f), "RANGE TARGETS", title);
-            GUI.Label(new Rect(targetX + 12f, 113f, targetW - 24f, 28f), "50 m    100 m    150 m    200 m    250 m    300 m", center);
-            GUI.Label(new Rect(targetX + 12f, 151f, targetW - 24f, 22f), hasShot ? "LAST CARRY  " + shot.CarryMeters.ToString("F1") + " m" : "HIT A BALL TO START", center);
+            float y = 68f;
+            float h = Mathf.Min(286f, Mathf.Max(210f, Screen.height - 155f));
+            float leftW = contentW * 0.29f;
+            float centerW = contentW - leftW * 2f - gap * 2f;
+            float rightW = leftW;
 
-            float resultW = Mathf.Clamp(Screen.width * 0.22f, 270f, 320f);
-            float resultX = Screen.width - resultW - 16f;
-            GUI.Box(new Rect(resultX, 72f, resultW, 300f), GUIContent.none, panel);
-            GUI.Label(new Rect(resultX + 12f, 82f, resultW - 24f, 22f), "LAST SHOT", title);
-            RangeResult(resultX, 112f, resultW, "CARRY", hasShot ? shot.CarryMeters.ToString("F1") + " m" : "—", true);
-            RangeResult(resultX, 165f, resultW, "TOTAL", hasShot ? shot.TotalMeters.ToString("F1") + " m" : "—", false);
-            RangeResult(resultX, 218f, resultW, "BALL SPEED", hasShot ? shot.BallSpeedKph.ToString("F1") + " km/h" : "—", false);
-            RangeResult(resultX, 257f, resultW, "CLUB SPEED", hasShot && shot.HasClubData ? shot.ClubSpeedKph.ToString("F1") + " km/h" : "—", false);
-            GUI.Label(new Rect(resultX + 12f, 294f, resultW - 24f, 22f), hasShot && shot.HasClubData && shot.ClubSpeedMps > 0.1f ? "SMASH  " + (shot.BallSpeedMps / shot.ClubSpeedMps).ToString("F2") : "SMASH  —", center);
+            DrawShotDataCard(margin, y, leftW, h, shot, hasShot);
+            DrawRangeTargets(margin + leftW + gap, y, centerW, h, shot, hasShot);
+            DrawLastShotCard(margin + leftW + gap + centerW + gap, y, rightW, h, shot, hasShot);
 
-            DrawClubBar();
+            DrawClubSelector(margin, Screen.height - 62f, contentW);
         }
 
-        private void DrawMetricsCard(float x, float y, float w, float h, ShotData shot, bool hasShot)
+        private void DrawRoundHUD(ShotData shot, bool hasShot)
+        {
+            float margin = Mathf.Clamp(Screen.width * 0.018f, 10f, 20f);
+            float gap = Mathf.Clamp(Screen.width * 0.012f, 8f, 14f);
+            float contentW = Screen.width - margin * 2f;
+
+            string hole = "HOLE " + Mathf.Clamp(CourseSession.RoundLength, 1, 18);
+            DrawHeader(margin, 10f, contentW, 48f, CourseSession.CourseName, hole + "  •  " + status);
+
+            float y = 68f;
+            float h = Mathf.Min(286f, Mathf.Max(210f, Screen.height - 155f));
+            float leftW = contentW * 0.29f;
+            DrawShotDataCard(margin, y, leftW, h, shot, hasShot);
+            DrawRoundCenter(margin + leftW + gap, y, contentW - leftW - gap, h, shot, hasShot);
+
+            DrawClubSelector(margin, Screen.height - 62f, contentW);
+        }
+
+        private void DrawHeader(float x, float y, float w, float h, string titleText, string rightText)
+        {
+            GUI.Box(new Rect(x, y, w, h), GUIContent.none, panelStrong);
+            GUI.Label(new Rect(x + 12f, y, 155f, h), "GOLFSIM ZA", title);
+            GUI.Label(new Rect(x + 160f, y, Mathf.Max(100f, w - 345f), h), titleText, section);
+            GUI.Label(new Rect(x + w - 175f, y, 163f, h), rightText, center);
+        }
+
+        private void DrawShotDataCard(float x, float y, float w, float h, ShotData shot, bool hasShot)
         {
             GUI.Box(new Rect(x, y, w, h), GUIContent.none, panel);
-            GUI.Label(new Rect(x + 12f, y + 10f, w - 24f, 22f), "SHOT DATA", title);
-            float row = y + 43f;
-            Metric("CLUB", hasShot ? shot.ClubName : "Driver", ref row, x, w);
-            Metric("CLUB SPEED", hasShot && shot.HasClubData ? shot.ClubSpeedKph.ToString("F1") + " km/h" : "—", ref row, x, w);
-            Metric("BALL SPEED", hasShot ? shot.BallSpeedKph.ToString("F1") + " km/h" : "—", ref row, x, w);
-            Metric("SMASH", hasShot && shot.HasClubData && shot.ClubSpeedMps > 0.1f ? (shot.BallSpeedMps / shot.ClubSpeedMps).ToString("F2") : "—", ref row, x, w);
+            GUI.Label(new Rect(x + 10f, y + 8f, w - 20f, 20f), "SHOT DATA", title);
+            GUI.Label(new Rect(x + 10f, y + 29f, w - 20f, 14f), hasShot ? "LATEST MEASURED SHOT" : "WAITING FOR SHOT", label);
+
+            float row = y + 48f;
+            Metric("CLUB", hasShot ? shot.ClubName : ClubName(selectedClub), ref row, x, w);
+            Metric("CLUB SPEED", hasShot && shot.HasClubData ? Mph(shot.ClubSpeedMps) : "—", ref row, x, w);
+            Metric("BALL SPEED", hasShot ? Mph(shot.BallSpeedMps) : "—", ref row, x, w);
+            Metric("SMASH", Smash(shot, hasShot), ref row, x, w);
             Metric("LAUNCH", hasShot ? shot.LaunchAngleDeg.ToString("F1") + "°" : "—", ref row, x, w);
             Metric("HLA", hasShot ? shot.LaunchDirectionDeg.ToString("F1") + "°" : "—", ref row, x, w);
             Metric("BACKSPIN", hasShot ? shot.BackSpinRpm.ToString("F0") + " rpm" : "—", ref row, x, w);
@@ -164,79 +203,186 @@ namespace GolfSimZA.UI
 
         private void Metric(string name, string text, ref float y, float x, float w)
         {
-            GUI.Label(new Rect(x + 12f, y, w * 0.48f, 21f), name, label);
-            GUI.Label(new Rect(x + w * 0.42f, y, w * 0.53f, 21f), text, value);
-            y += 27f;
+            const float rowH = 24f;
+            GUI.Label(new Rect(x + 10f, y, w * 0.50f, rowH), name, label);
+            GUI.Label(new Rect(x + w * 0.43f, y, w * 0.52f, rowH), text, value);
+            y += rowH;
         }
 
-        private void RangeResult(float x, float y, float w, string name, string text, bool big)
+        private void DrawRangeTargets(float x, float y, float w, float h, ShotData shot, bool hasShot)
         {
-            GUI.Label(new Rect(x + 12f, y, w - 24f, 18f), name, label);
-            GUI.Label(new Rect(x + 12f, y + 16f, w - 24f, big ? 32f : 24f), text, big ? bigValue : value);
+            GUI.Box(new Rect(x, y, w, h), GUIContent.none, panel);
+            GUI.Label(new Rect(x + 10f, y + 8f, w - 20f, 20f), "RANGE TARGETS", title);
+            GUI.Label(new Rect(x + 10f, y + 29f, w - 20f, 14f), "DISTANCE BOARD", label);
+
+            float cx = x + w * 0.5f;
+            float top = y + 55f;
+            float boardW = Mathf.Max(120f, w - 24f);
+            float boardH = Mathf.Max(110f, h - 78f);
+            float boardX = cx - boardW * 0.5f;
+            GUI.Box(new Rect(boardX, top, boardW, boardH), GUIContent.none, panelStrong);
+
+            int[] distances = { 50, 100, 150, 200, 250, 300 };
+            for (int i = 0; i < distances.Length; i++)
+            {
+                float px = boardX + boardW * ((i + 1f) / 7f);
+                GUI.DrawTexture(new Rect(px - 1f, top + 25f, 2f, Mathf.Max(40f, boardH - 50f)), accentSoftTex);
+                GUI.Label(new Rect(px - 28f, top + 5f, 56f, 18f), distances[i] + " m", tiny);
+            }
+
+            GUI.DrawTexture(new Rect(boardX + boardW * 0.5f - 1f, top + 25f, 2f, Mathf.Max(40f, boardH - 50f)), greenTex);
+            string result = hasShot
+                ? "CARRY  " + shot.CarryMeters.ToString("F1") + " m  •  TOTAL  " + shot.TotalMeters.ToString("F1") + " m"
+                : "HIT A BALL TO START";
+            GUI.Label(new Rect(boardX + 8f, top + boardH - 27f, boardW - 16f, 20f), result, center);
+            GUI.Label(new Rect(x + 12f, y + h - 36f, w - 24f, 22f), status, center);
         }
 
-        private void DrawRound(ShotData shot, bool hasShot)
+        private void DrawLastShotCard(float x, float y, float w, float h, ShotData shot, bool hasShot)
         {
-            float margin = 16f;
-            float w = Screen.width - margin * 2f;
-            GUI.Box(new Rect(margin, 10f, w, 48f), GUIContent.none, panelStrong);
-            GUI.Label(new Rect(margin + 14f, 10f, 150f, 48f), "GOLFSIM ZA", title);
-            GUI.Label(new Rect(margin + 165f, 10f, w - 470f, 48f), CourseSession.CourseName, center);
-            GUI.Label(new Rect(margin + w - 290f, 10f, 130f, 48f), "HOLE " + (CourseSession.RoundLength > 0 ? CourseSession.RoundLength : 1), center);
-            GUI.Label(new Rect(margin + w - 155f, 10f, 140f, 48f), status, center);
+            GUI.Box(new Rect(x, y, w, h), GUIContent.none, panel);
+            GUI.Label(new Rect(x + 10f, y + 8f, w - 20f, 20f), "LAST SHOT", title);
+            GUI.Label(new Rect(x + 10f, y + 29f, w - 20f, 14f), hasShot ? "RESULT" : "NO SHOT YET", label);
 
-            float cardW = Mathf.Clamp(Screen.width * 0.24f, 290f, 350f);
-            DrawMetricsCard(16f, 72f, cardW, 300f, shot, hasShot);
-            DrawClubBar();
+            float row = y + 51f;
+            ResultMetric("CARRY", hasShot ? shot.CarryMeters.ToString("F1") + " m" : "—", ref row, x, w, true);
+            ResultMetric("TOTAL", hasShot ? shot.TotalMeters.ToString("F1") + " m" : "—", ref row, x, w, false);
+            ResultMetric("BALL SPEED", hasShot ? Mph(shot.BallSpeedMps) : "—", ref row, x, w, false);
+            ResultMetric("CLUB SPEED", hasShot && shot.HasClubData ? Mph(shot.ClubSpeedMps) : "—", ref row, x, w, false);
+            ResultMetric("SMASH", Smash(shot, hasShot), ref row, x, w, false);
+            ResultMetric("SPIN", hasShot ? shot.BackSpinRpm.ToString("F0") + " rpm" : "—", ref row, x, w, false);
         }
 
-        private void DrawClubBar()
+        private void ResultMetric(string name, string text, ref float y, float x, float w, bool big)
         {
-            float width = Mathf.Clamp(Screen.width * 0.44f, 440f, 650f);
-            float x = 16f, y = Screen.height - 66f;
-            GUI.Box(new Rect(x, y, width, 50f), GUIContent.none, panelStrong);
-            string[] clubs = { "Driver", "3W", "5i", "7i", "9i", "PW", "SW", "Putter" };
-            float bw = (width - 52f) / clubs.Length;
+            GUI.Label(new Rect(x + 10f, y, w - 20f, 15f), name, label);
+            GUI.Label(new Rect(x + 10f, y + 12f, w - 20f, big ? 31f : 24f), text, big ? bigValue : value);
+            y += big ? 53f : 42f;
+        }
+
+        private void DrawRoundCenter(float x, float y, float w, float h, ShotData shot, bool hasShot)
+        {
+            GUI.Box(new Rect(x, y, w, h), GUIContent.none, panel);
+            GUI.Label(new Rect(x + 12f, y + 8f, w - 24f, 20f), CourseSession.CourseName, title);
+            GUI.Label(new Rect(x + 12f, y + 31f, w - 24f, 18f), "LIVE SHOT VIEW", label);
+            GUI.Label(new Rect(x + 12f, y + 72f, w - 24f, 30f), hasShot ? "LAST CARRY  " + shot.CarryMeters.ToString("F1") + " m" : "READY", center);
+            GUI.Label(new Rect(x + 12f, y + 110f, w - 24f, 18f), status, center);
+        }
+
+        private void DrawClubSelector(float x, float y, float w)
+        {
+            GUI.Box(new Rect(x, y, w, 48f), GUIContent.none, panelStrong);
+            GUI.Label(new Rect(x + 9f, y + 7f, 40f, 32f), "CLUB", label);
+
+            float start = x + 53f;
+            float bw = (w - 62f) / clubs.Length;
             for (int i = 0; i < clubs.Length; i++)
             {
-                Rect r = new Rect(x + 46f + i * bw, y + 8f, bw - 3f, 32f);
-                if (GUI.Button(r, clubs[i], button)) { }
+                Rect r = new Rect(start + i * bw, y + 8f, bw - 3f, 30f);
+                if (GUI.Button(r, clubs[i], button)) selectedClub = i + 1;
+                if (i + 1 == selectedClub)
+                    GUI.DrawTexture(new Rect(r.x + 4f, r.yMax - 3f, r.width - 8f, 3f), accentTex);
             }
-            GUI.Label(new Rect(x + 8f, y + 8f, 35f, 32f), "CLUB", label);
+        }
+
+        private string ClubName(int number)
+        {
+            return clubs[Mathf.Clamp(number - 1, 0, clubs.Length - 1)];
+        }
+
+        private string Smash(ShotData shot, bool hasShot)
+        {
+            return hasShot && shot.HasClubData && shot.ClubSpeedMps > 0.1f
+                ? (shot.BallSpeedMps / shot.ClubSpeedMps).ToString("F2")
+                : "—";
+        }
+
+        private string Mph(float mps)
+        {
+            return (mps * 2.2369363f).ToString("F1") + " mph";
         }
 
         private void BuildDrivingRange()
         {
-            if (rangeBuilt) return;
-            rangeBuilt = true;
-            GameObject root = GameObject.Find("GolfSimZA_DrivingRange");
-            if (root != null) return;
-            root = new GameObject("GolfSimZA_DrivingRange");
+            GameObject oldGround = GameObject.Find("CourseGround");
+            if (oldGround != null) oldGround.SetActive(false);
+            GameObject oldGreen = GameObject.Find("HoleGreen");
+            if (oldGreen != null) oldGreen.SetActive(false);
+            GameObject oldPin = GameObject.Find("HolePin");
+            if (oldPin != null) oldPin.SetActive(false);
 
-            for (int i = 0; i < 7; i++)
+            GameObject root = GameObject.Find("GolfSimZA_DrivingRange");
+            if (root == null) root = new GameObject("GolfSimZA_DrivingRange");
+
+            if (root.transform.Find("RangeGround") == null)
+            {
+                GameObject ground = GameObject.CreatePrimitive(PrimitiveType.Plane);
+                ground.name = "RangeGround";
+                ground.transform.SetParent(root.transform);
+                ground.transform.position = Vector3.zero;
+                ground.transform.localScale = new Vector3(14f, 1f, 34f);
+                ground.GetComponent<Renderer>().material = MaterialFor(new Color(0.12f, 0.42f, 0.18f));
+            }
+
+            Material targetMaterial = MaterialFor(new Color(0.18f, 0.60f, 0.26f));
+            Material markerMaterial = MaterialFor(new Color(0.86f, 0.87f, 0.85f));
+
+            for (int i = 1; i <= 6; i++)
             {
                 float z = i * 50f;
-                GameObject marker = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
-                marker.name = "RangeTarget_" + z.ToString("0") + "m";
-                marker.transform.SetParent(root.transform);
-                marker.transform.position = new Vector3(0f, 0.02f, z);
-                marker.transform.localScale = new Vector3(5f, 0.03f, 5f);
-                Renderer r = marker.GetComponent<Renderer>();
-                if (r != null)
+                string targetName = "RangeTarget_" + z.ToString("0") + "m";
+                if (root.transform.Find(targetName) == null)
                 {
-                    r.material = new Material(Shader.Find("Standard"));
-                    r.material.color = i == 0 ? new Color(0.12f, 0.42f, 0.18f) : new Color(0.16f, 0.50f, 0.20f);
+                    GameObject ring = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+                    ring.name = targetName;
+                    ring.transform.SetParent(root.transform);
+                    ring.transform.position = new Vector3(0f, 0.025f, z);
+                    ring.transform.localScale = new Vector3(5f, 0.04f, 5f);
+                    ring.GetComponent<Renderer>().material = targetMaterial;
+                    Collider c = ring.GetComponent<Collider>();
+                    if (c != null) Destroy(c);
                 }
-                Collider c = marker.GetComponent<Collider>();
-                if (c != null) Destroy(c);
+
+                string markerName = "DistanceMarker_" + z.ToString("0") + "m";
+                if (root.transform.Find(markerName) == null)
+                {
+                    GameObject marker = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                    marker.name = markerName;
+                    marker.transform.SetParent(root.transform);
+                    marker.transform.position = new Vector3(7.5f, 0.03f, z);
+                    marker.transform.localScale = new Vector3(0.25f, 0.05f, 3.5f);
+                    marker.GetComponent<Renderer>().material = markerMaterial;
+                    Collider c = marker.GetComponent<Collider>();
+                    if (c != null) Destroy(c);
+                }
+            }
+
+            if (root.transform.Find("RangeTeeBox") == null)
+            {
+                GameObject tee = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                tee.name = "RangeTeeBox";
+                tee.transform.SetParent(root.transform);
+                tee.transform.position = new Vector3(0f, 0.06f, -3f);
+                tee.transform.localScale = new Vector3(6f, 0.12f, 4f);
+                tee.GetComponent<Renderer>().material = MaterialFor(new Color(0.05f, 0.22f, 0.10f));
             }
 
             Camera cam = Camera.main;
             if (cam != null)
             {
-                cam.transform.position = new Vector3(0f, 4.2f, -8f);
-                cam.transform.rotation = Quaternion.LookRotation(new Vector3(0f, 0.7f, 145f) - cam.transform.position, Vector3.up);
+                cam.transform.position = new Vector3(0f, 5.2f, -9f);
+                cam.transform.rotation = Quaternion.LookRotation(new Vector3(0f, 1.0f, 150f) - cam.transform.position, Vector3.up);
+                cam.fieldOfView = 55f;
             }
+        }
+
+        private Material MaterialFor(Color color)
+        {
+            Shader shader = Shader.Find("Universal Render Pipeline/Lit");
+            if (shader == null) shader = Shader.Find("Standard");
+            Material m = new Material(shader);
+            m.color = color;
+            return m;
         }
     }
 }
