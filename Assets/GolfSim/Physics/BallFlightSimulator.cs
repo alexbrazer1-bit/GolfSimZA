@@ -11,17 +11,17 @@ namespace GolfSimZA.Physics
 
         [Header("Flight physics")]
         [SerializeField] private float gravity = 9.81f;
-        [SerializeField] private float airDrag = 0.00075f;
-        [SerializeField] private float spinLift = 0.000018f;
+        [SerializeField] private float airDrag = 0.00055f;
+        [SerializeField] private float spinLift = 0.000015f;
         [SerializeField] private float spinDecayPerSecond = 0.08f;
         [SerializeField] private float metersToUnity = 1.0f;
         [SerializeField] private float maximumFlightTime = 12.0f;
 
         [Header("Ground physics")]
         [SerializeField] private float groundY = 0.0f;
-        [SerializeField, Range(0.05f, 0.9f)] private float bounceRetention = 0.28f;
-        [SerializeField, Range(0.5f, 1f)] private float horizontalBounceRetention = 0.86f;
-        [SerializeField] private float rollDeceleration = 12.0f;
+        [SerializeField, Range(0.05f, 0.9f)] private float bounceRetention = 0.18f;
+        [SerializeField, Range(0.5f, 1f)] private float horizontalBounceRetention = 0.90f;
+        [SerializeField] private float rollDeceleration = 7.5f;
         [SerializeField] private float maxRollMeters = 35.0f;
         [SerializeField] private float stopSpeed = 0.15f;
 
@@ -29,6 +29,10 @@ namespace GolfSimZA.Physics
         [SerializeField] private float referenceSpinRpm = 2400.0f;
         [SerializeField] private float spinRollInfluence = 0.45f;
         [SerializeField] private float rollSpinDecayPerSecond = 0.65f;
+
+        [Header("R10 measurement")]
+        [SerializeField] private bool useMeasuredR10Carry = true;
+        [SerializeField] private bool useMeasuredR10CarryAsTotalWhenNoRoll = true;
 
         private Vector3 velocity;
         private bool airborne;
@@ -42,6 +46,7 @@ namespace GolfSimZA.Physics
         private float carryMeters;
         private float totalMeters;
         private float flightTime;
+        private float measuredCarryMeters;
         private ShotData activeShot;
 
         public bool IsInFlight => airborne || rolling;
@@ -57,6 +62,8 @@ namespace GolfSimZA.Physics
                 return;
 
             activeShot = shot;
+            measuredCarryMeters = useMeasuredR10Carry && shot.CarryMeters > 0.1f ? shot.CarryMeters : 0f;
+
             float scale = Mathf.Max(0.0001f, metersToUnity);
             float speed = Mathf.Max(0f, shot.BallSpeedMps) * scale;
             float elevation = Mathf.Clamp(shot.LaunchAngleDeg, -10f, 70f) * Mathf.Deg2Rad;
@@ -107,15 +114,12 @@ namespace GolfSimZA.Physics
             maxHeight = Mathf.Max(maxHeight, ball.position.y);
             totalMeters = HorizontalDistanceFromLaunch();
 
-            // First ground contact is the carry distance.
             if (ball.position.y <= groundY)
             {
                 LandBall();
                 return;
             }
 
-            // Safety fallback so a bad scene surface can never leave the camera
-            // following an airborne ball forever.
             if (flightTime >= maximumFlightTime)
             {
                 ball.position = new Vector3(ball.position.x, groundY, ball.position.z);
@@ -130,12 +134,29 @@ namespace GolfSimZA.Physics
 
             hasLanded = true;
             ball.position = new Vector3(ball.position.x, groundY, ball.position.z);
-            landingPosition = ball.position;
-            carryMeters = HorizontalDistanceFromLaunch();
-            totalMeters = carryMeters;
 
-            // More backspin means more friction on landing and therefore a
-            // shorter release/roll. Low-spin shots retain more forward speed.
+            // Garmin R10 carry is the authoritative measured carry. The old
+            // simulator replaced it with a simplified aerodynamic estimate,
+            // which caused large discrepancies between the R10 and GolfSimZA.
+            // We retain the visual flight but report the measured carry when it
+            // is available, then add a controlled ground-roll estimate.
+            float visualCarry = HorizontalDistanceFromLaunch();
+            carryMeters = measuredCarryMeters > 0.1f ? measuredCarryMeters : visualCarry;
+
+            if (measuredCarryMeters > 0.1f && visualCarry > 0.1f)
+            {
+                Vector3 direction = ball.position - launchPosition;
+                direction.y = 0f;
+                if (direction.sqrMagnitude > 0.0001f)
+                {
+                    direction.Normalize();
+                    ball.position = launchPosition + direction * measuredCarryMeters * metersToUnity;
+                    ball.position = new Vector3(ball.position.x, groundY, ball.position.z);
+                }
+            }
+
+            landingPosition = ball.position;
+
             float normalizedSpin = Mathf.Clamp01(currentSpinRpm / Mathf.Max(1f, referenceSpinRpm));
             float spinFriction = Mathf.Lerp(1f - spinRollInfluence, 1f + spinRollInfluence, normalizedSpin);
             landingRollDeceleration = rollDeceleration * spinFriction;
@@ -164,8 +185,6 @@ namespace GolfSimZA.Physics
             float speed = horizontalVelocity.magnitude;
             float rollDistance = HorizontalDistanceFromLanding();
 
-            // Stop the ball naturally once it has slowed down, and also prevent
-            // an exaggerated roll from carrying the ball hundreds of metres.
             if (speed <= stopSpeed || rollDistance >= maxRollMeters)
             {
                 velocity = Vector3.zero;
@@ -184,9 +203,7 @@ namespace GolfSimZA.Physics
             ball.position = new Vector3(ball.position.x, groundY, ball.position.z);
             totalMeters = HorizontalDistanceFromLaunch();
 
-            currentSpinRpm = Mathf.MoveTowards(
-                currentSpinRpm,
-                0f,
+            currentSpinRpm = Mathf.MoveTowards(currentSpinRpm, 0f,
                 Mathf.Max(1f, currentSpinRpm) * rollSpinDecayPerSecond * dt);
         }
 
@@ -206,7 +223,13 @@ namespace GolfSimZA.Physics
 
         private void CompleteShot()
         {
-            totalMeters = Mathf.Max(totalMeters, HorizontalDistanceFromLaunch());
+            if (measuredCarryMeters > 0.1f)
+                carryMeters = measuredCarryMeters;
+
+            totalMeters = Mathf.Max(totalMeters, carryMeters);
+            if (useMeasuredR10CarryAsTotalWhenNoRoll && totalMeters <= carryMeters + 0.01f)
+                totalMeters = carryMeters;
+
             carryMeters = Mathf.Clamp(carryMeters, 0f, totalMeters);
 
             ShotCompleted?.Invoke(
