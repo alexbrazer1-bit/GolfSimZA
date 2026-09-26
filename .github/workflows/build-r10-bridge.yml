@@ -1,0 +1,57 @@
+name: Build GolfSimZA R10 Bridge
+
+on:
+  push:
+    paths:
+      - 'R10Bridge/**'
+      - '.github/workflows/build-r10-bridge.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout GolfSimZA
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 7
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '7.0.x'
+
+      - name: Checkout direct R10 transport source
+        uses: actions/checkout@v4
+        with:
+          repository: mholow/gsp-r10-adapter
+          ref: main
+          path: R10Bridge/_upstream
+
+      - name: Apply GolfSimZA bridge settings
+        shell: pwsh
+        run: |
+          Copy-Item R10Bridge/settings.json R10Bridge/_upstream/settings.json -Force
+
+      - name: Publish self-contained Windows bridge
+        shell: pwsh
+        run: |
+          dotnet publish R10Bridge/_upstream/gspro-r10.csproj `
+            -c Release `
+            -r win-x64 `
+            --self-contained true `
+            -p:PublishSingleFile=true `
+            -p:IncludeNativeLibrariesForSelfExtract=true `
+            -o R10Bridge/publish
+
+      - name: Package bridge
+        shell: pwsh
+        run: |
+          Copy-Item R10Bridge/README.md R10Bridge/publish/README.md -Force
+          Copy-Item R10Bridge/LICENSE-THIRD-PARTY.txt R10Bridge/publish/LICENSE-THIRD-PARTY.txt -Force
+          Compress-Archive -Path R10Bridge/publish/* -DestinationPath GolfSimZA-R10-Bridge-win-x64.zip -Force
+
+      - name: Upload bridge artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: GolfSimZA-R10-Bridge-win-x64
+          path: GolfSimZA-R10-Bridge-win-x64.zip
+          if-no-files-found: error
