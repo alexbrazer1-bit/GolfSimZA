@@ -1,0 +1,37 @@
+{
+  "openConnect": {
+    "ip": "127.0.0.1",
+    "port": 921
+  },
+  "r10E6Server": {
+    "enabled": false,
+    "port": 2483
+  },
+  "bluetooth": {
+    "enabled": true,
+    "bluetoothDeviceName": "Approach R10",
+    "reconnectInterval": 5,
+    "sendStatusChangesToGSP": false,
+    "autoWake": true,
+    "calibrateTiltOnConnect": true,
+    "debugLogging": false,
+    "altitude": 0,
+    "humidity": 0.5,
+    "temperature": 60,
+    "airDensity": 1.225,
+    "teeDistanceInFeet": 7
+  },
+  "putting": {
+    "enabled": false,
+    "port": 8888,
+    "launchBallTracker": false,
+    "onlyLaunchWhenPutting": true,
+    "keepPuttingCamOnTop": true,
+    "webcamIndex": 0,
+    "ballColor": "white",
+    "camPreviewWidth": 300,
+    "exePath": "./ball_tracking/ball_tracking.exe",
+    "additionalExeArgs": "",
+    "hideExeLogs": false
+  }
+}
