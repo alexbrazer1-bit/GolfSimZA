@@ -40,6 +40,9 @@ namespace GolfSimZA.Editor
             GarminR10Adapter r10 = host.GetComponent<GarminR10Adapter>();
             if (r10 == null) r10 = host.AddComponent<GarminR10Adapter>();
 
+            R10BridgeLauncher bridgeLauncher = host.GetComponent<R10BridgeLauncher>();
+            if (bridgeLauncher == null) bridgeLauncher = host.AddComponent<R10BridgeLauncher>();
+
             LaunchMonitorRouter router = host.GetComponent<LaunchMonitorRouter>();
             if (router == null) router = host.AddComponent<LaunchMonitorRouter>();
 
@@ -63,7 +66,7 @@ namespace GolfSimZA.Editor
             EditorSceneManager.SaveScene(scene);
             AssetDatabase.SaveAssets();
             AssetDatabase.Refresh();
-            Debug.Log("[GolfSimZA] 1.0 Playable Garmin R10 Simulator ready. R10 OpenConnect receiver: 127.0.0.1:921. Keyboard test mode remains available with 1-8 + SPACE.");
+            Debug.Log("[GolfSimZA] 1.0 Playable Garmin R10 Simulator ready. Native GolfSimZA receiver: 127.0.0.1:921. Packaged direct-Bluetooth bridge will auto-start when installed in StreamingAssets/GolfSimZA-R10-Bridge. Keyboard test mode remains available with 1-8 + SPACE.");
         }
     }
 }
