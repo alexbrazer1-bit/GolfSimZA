@@ -48,6 +48,7 @@ namespace GolfSimZA.LaunchMonitors.GarminR10
             public string Units;
             public int ShotNumber;
             public string APIVersion;
+            public string APIversion;
             public BallData BallData;
             public ClubData ClubData;
             public ShotDataOptions ShotDataOptions;
@@ -244,28 +245,76 @@ namespace GolfSimZA.LaunchMonitors.GarminR10
                     OpenConnectMessage message = JsonUtility.FromJson<OpenConnectMessage>(json);
                     if (message == null) continue;
 
-                    bool hasBall = message.BallData != null && message.ShotDataOptions != null && message.ShotDataOptions.ContainsBallData;
-                    bool hasClub = message.ClubData != null && message.ShotDataOptions != null && message.ShotDataOptions.ContainsClubData;
+                    bool optionSaysBall = message.ShotDataOptions != null && message.ShotDataOptions.ContainsBallData;
+                    bool optionSaysClub = message.ShotDataOptions != null && message.ShotDataOptions.ContainsClubData;
+                    bool hasBallObject = message.BallData != null;
+                    bool hasClubObject = message.ClubData != null;
+                    bool hasBall = hasBallObject && message.BallData.Speed > 0.01;
+                    bool hasClub = hasClubObject && message.ClubData.Speed > 0.01;
                     bool heartbeat = message.ShotDataOptions != null && message.ShotDataOptions.IsHeartBeat;
 
+                    // Some R10 bridge builds can emit a club-data packet before the
+                    // final ball-data packet. Do not mistake that intermediate packet
+                    // for a complete shot, but expose it in the diagnostics so the
+                    // exact transport state is visible while testing.
                     lastPacketSummary = heartbeat
                         ? "Heartbeat received"
-                        : $"Shot {message.ShotNumber}: ball={hasBall}, club={hasClub}";
+                        : $"Shot {message.ShotNumber}: ball={hasBall}, club={hasClub}, flags=ball:{optionSaysBall}/club:{optionSaysClub}";
 
+                    if (heartbeat)
+                    {
+                        continue;
+                    }
+
+                    if (message.ShotNumber > 0)
+                        SendShotAcknowledgement(message.ShotNumber, hasBall);
+
+                    // Presence of valid BallData is authoritative. This deliberately
+                    // does not require ContainsBallData to be true because a few bridge
+                    // paths have been observed to populate BallData while leaving the
+                    // option flag false during the transition from club metrics to the
+                    // completed shot.
                     if (hasBall)
                     {
                         ShotData shot = ConvertShot(message);
                         if (shot.IsValid)
                         {
                             shots.Enqueue(shot);
-                            Debug.Log($"[GolfSimZA] R10 shot received: {shot.ClubName}, ball {shot.BallSpeedMps:0.00} m/s, launch {shot.LaunchAngleDeg:0.0}°, spin {shot.BackSpinRpm:0} rpm, carry {shot.CarryMeters:0.0} m.");
+                            Debug.Log($"[GolfSimZA] R10 shot received: shot #{message.ShotNumber}, {shot.ClubName}, ball {shot.BallSpeedMps:0.00} m/s, launch {shot.LaunchAngleDeg:0.0}°, HLA {shot.LaunchDirectionDeg:0.0}°, spin {shot.BackSpinRpm:0} rpm, carry {shot.CarryMeters:0.0} m.");
                         }
+                    }
+                    else if (hasClub)
+                    {
+                        Debug.Log($"[GolfSimZA] R10 club packet received for shot #{message.ShotNumber}; waiting for BallData.");
+                    }
+                    else
+                    {
+                        Debug.Log($"[GolfSimZA] R10 OpenConnect packet received for shot #{message.ShotNumber}, but it contains no usable BallData or ClubData.");
                     }
                 }
                 catch (Exception ex)
                 {
+                    lastPacketSummary = "Invalid OpenConnect JSON";
                     Debug.LogWarning("[GolfSimZA] Ignored invalid R10 OpenConnect message: " + ex.Message);
                 }
+            }
+        }
+
+        private void SendShotAcknowledgement(int shotNumber, bool containsBallData)
+        {
+            try
+            {
+                if (client == null || !client.Connected) return;
+                string message = containsBallData
+                    ? "{\"Code\":200,\"Message\":\"Ball Data received\"}"
+                    : "{\"Code\":200,\"Message\":\"Shot data received\"}";
+                byte[] data = Encoding.UTF8.GetBytes(message);
+                client.GetStream().Write(data, 0, data.Length);
+                Debug.Log($"[GolfSimZA] OpenConnect ACK sent for shot #{shotNumber}.");
+            }
+            catch
+            {
+                HandleClientDisconnected(client);
             }
         }
 
