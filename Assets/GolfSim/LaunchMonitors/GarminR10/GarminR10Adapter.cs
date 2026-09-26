@@ -13,16 +13,17 @@ namespace GolfSimZA.LaunchMonitors.GarminR10
     /// <summary>
     /// Garmin Approach R10 OpenConnect receiver.
     ///
-    /// The R10's Bluetooth transport remains outside GolfSimZA. A Windows R10
-    /// bridge (for example an OpenConnect-compatible bridge) pairs to the R10
-    /// and forwards its shot messages to this receiver on TCP port 921.
-    /// GolfSimZA then owns the complete gameplay/physics/UI path.
+    /// The Windows R10 bridge is the Bluetooth transport. It connects as a TCP
+    /// client to GolfSimZA's OpenConnect-compatible server on port 921.
+    /// GolfSimZA then owns the gameplay/physics/UI path.
     /// </summary>
     public sealed class GarminR10Adapter : MonoBehaviour, ILaunchMonitorAdapter
     {
         [SerializeField] private int listenPort = 921;
+        [SerializeField] private bool listenOnAllInterfaces = true;
         [SerializeField] private bool autoStart = true;
         [SerializeField] private bool sendReadyHeartbeat = true;
+        [SerializeField] private float heartbeatIntervalSeconds = 2f;
 
         private TcpListener listener;
         private TcpClient client;
@@ -31,10 +32,13 @@ namespace GolfSimZA.LaunchMonitors.GarminR10
         private readonly StringBuilder streamBuffer = new StringBuilder();
         private volatile bool stopping;
         private float nextHeartbeat;
+        private string lastPacketSummary = "None";
 
         public string DeviceName => "Garmin Approach R10";
         public bool IsConnected { get; private set; }
+        public bool IsListening { get; private set; }
         public int ListenPort => listenPort;
+        public string LastPacketSummary => lastPacketSummary;
         public event Action<ShotData> ShotReceived;
 
         [Serializable]
@@ -96,22 +100,26 @@ namespace GolfSimZA.LaunchMonitors.GarminR10
         public bool TryConnect()
         {
             if (listener != null)
-                return true;
+                return IsListening;
 
             try
             {
                 stopping = false;
-                listener = new TcpListener(IPAddress.Loopback, Mathf.Clamp(listenPort, 1, 65535));
+                IPAddress bindAddress = listenOnAllInterfaces ? IPAddress.Any : IPAddress.Loopback;
+                listener = new TcpListener(bindAddress, Mathf.Clamp(listenPort, 1, 65535));
+                listener.Server.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
                 listener.Start();
                 listener.BeginAcceptTcpClient(OnClientAccepted, null);
-                IsConnected = true;
-                Debug.Log($"[GolfSimZA] Garmin R10 receiver listening on 127.0.0.1:{listenPort}. Waiting for R10 bridge...");
+                IsListening = true;
+                IsConnected = false;
+                Debug.Log($"[GolfSimZA] Garmin R10 OpenConnect server listening on {bindAddress}:{listenPort}. Waiting for bridge connection...");
                 return true;
             }
             catch (Exception ex)
             {
+                IsListening = false;
                 IsConnected = false;
-                Debug.LogError("[GolfSimZA] Could not start Garmin R10 receiver: " + ex.Message);
+                Debug.LogError("[GolfSimZA] Could not start Garmin R10 receiver on port " + listenPort + ": " + ex.Message);
                 return false;
             }
         }
@@ -119,17 +127,22 @@ namespace GolfSimZA.LaunchMonitors.GarminR10
         private void OnClientAccepted(IAsyncResult result)
         {
             if (stopping || listener == null) return;
+
             try
             {
                 TcpClient next = listener.EndAcceptTcpClient(result);
                 try { client?.Close(); } catch { }
                 client = next;
-                incoming.Enqueue(string.Empty);
+                client.NoDelay = true;
+                IsConnected = true;
+                lastPacketSummary = "TCP client connected";
+                Debug.Log($"[GolfSimZA] Garmin R10 bridge connected from {client.Client.RemoteEndPoint}.");
                 BeginRead(client);
             }
             catch (Exception ex)
             {
-                if (!stopping) Debug.LogWarning("[GolfSimZA] R10 receiver accept error: " + ex.Message);
+                if (!stopping)
+                    Debug.LogWarning("[GolfSimZA] R10 receiver accept error: " + ex.Message);
             }
             finally
             {
@@ -164,13 +177,33 @@ namespace GolfSimZA.LaunchMonitors.GarminR10
             try
             {
                 int count = state.Stream.EndRead(result);
-                if (count <= 0) return;
-                incoming.Enqueue(Encoding.UTF8.GetString(state.Buffer, 0, count));
+                if (count <= 0)
+                {
+                    HandleClientDisconnected(state.Client);
+                    return;
+                }
+
+                string chunk = Encoding.UTF8.GetString(state.Buffer, 0, count);
+                lastPacketSummary = $"Received {count} bytes";
+                incoming.Enqueue(chunk);
                 state.Stream.BeginRead(state.Buffer, 0, state.Buffer.Length, OnRead, state);
             }
             catch
             {
-                if (!stopping) IsConnected = listener != null;
+                HandleClientDisconnected(state.Client);
+            }
+        }
+
+        private void HandleClientDisconnected(TcpClient disconnectedClient)
+        {
+            if (ReferenceEquals(client, disconnectedClient))
+            {
+                IsConnected = false;
+                lastPacketSummary = "TCP client disconnected";
+                try { client?.Close(); } catch { }
+                client = null;
+                if (!stopping)
+                    Debug.Log("[GolfSimZA] Garmin R10 bridge disconnected; server remains ready for reconnect.");
             }
         }
 
@@ -191,10 +224,10 @@ namespace GolfSimZA.LaunchMonitors.GarminR10
             while (shots.TryDequeue(out ShotData shot))
                 ShotReceived?.Invoke(shot);
 
-            if (sendReadyHeartbeat && client != null && client.Connected && Time.unscaledTime >= nextHeartbeat)
+            if (sendReadyHeartbeat && IsConnected && client != null && client.Connected && Time.unscaledTime >= nextHeartbeat)
             {
                 SendHeartbeat();
-                nextHeartbeat = Time.unscaledTime + 2f;
+                nextHeartbeat = Time.unscaledTime + Mathf.Max(0.25f, heartbeatIntervalSeconds);
             }
         }
 
@@ -209,10 +242,24 @@ namespace GolfSimZA.LaunchMonitors.GarminR10
                 try
                 {
                     OpenConnectMessage message = JsonUtility.FromJson<OpenConnectMessage>(json);
-                    if (message != null && message.BallData != null && message.ShotDataOptions != null && message.ShotDataOptions.ContainsBallData)
+                    if (message == null) continue;
+
+                    bool hasBall = message.BallData != null && message.ShotDataOptions != null && message.ShotDataOptions.ContainsBallData;
+                    bool hasClub = message.ClubData != null && message.ShotDataOptions != null && message.ShotDataOptions.ContainsClubData;
+                    bool heartbeat = message.ShotDataOptions != null && message.ShotDataOptions.IsHeartBeat;
+
+                    lastPacketSummary = heartbeat
+                        ? "Heartbeat received"
+                        : $"Shot {message.ShotNumber}: ball={hasBall}, club={hasClub}";
+
+                    if (hasBall)
                     {
                         ShotData shot = ConvertShot(message);
-                        if (shot.IsValid) shots.Enqueue(shot);
+                        if (shot.IsValid)
+                        {
+                            shots.Enqueue(shot);
+                            Debug.Log($"[GolfSimZA] R10 shot received: {shot.ClubName}, ball {shot.BallSpeedMps:0.00} m/s, launch {shot.LaunchAngleDeg:0.0}°, spin {shot.BackSpinRpm:0} rpm, carry {shot.CarryMeters:0.0} m.");
+                        }
                     }
                 }
                 catch (Exception ex)
@@ -267,14 +314,12 @@ namespace GolfSimZA.LaunchMonitors.GarminR10
             BallData b = message.BallData;
             ClubData c = message.ClubData;
 
-            // OpenConnect uses yards for distance and mph for speed. GolfSimZA
-            // internally uses SI units for its physics engine.
             float ballSpeedMps = (float)(Math.Max(0.0, b.Speed) * 0.44704);
             float clubSpeedMps = c != null ? (float)(Math.Max(0.0, c.Speed) * 0.44704) : 0f;
             float carryMeters = (float)(Math.Max(0.0, b.CarryDistance) * 0.9144);
             float loft = c != null ? (float)c.Loft : 0f;
-            string clubName = MapClubName(c, message);
-            int clubNumber = MapClubNumber(c, message);
+            string clubName = MapClubName(c);
+            int clubNumber = MapClubNumber(c);
 
             return new ShotData
             {
@@ -295,7 +340,7 @@ namespace GolfSimZA.LaunchMonitors.GarminR10
             };
         }
 
-        private static string MapClubName(ClubData club, OpenConnectMessage message)
+        private static string MapClubName(ClubData club)
         {
             if (club == null) return "Garmin R10";
             float loft = (float)club.Loft;
@@ -313,7 +358,7 @@ namespace GolfSimZA.LaunchMonitors.GarminR10
             return "Lob Wedge";
         }
 
-        private static int MapClubNumber(ClubData club, OpenConnectMessage message)
+        private static int MapClubNumber(ClubData club)
         {
             if (club == null) return 0;
             float loft = (float)club.Loft;
@@ -340,13 +385,17 @@ namespace GolfSimZA.LaunchMonitors.GarminR10
                 byte[] data = Encoding.UTF8.GetBytes(heartbeat);
                 client.GetStream().Write(data, 0, data.Length);
             }
-            catch { }
+            catch
+            {
+                HandleClientDisconnected(client);
+            }
         }
 
         public void Disconnect()
         {
             stopping = true;
             IsConnected = false;
+            IsListening = false;
             try { client?.Close(); } catch { }
             try { listener?.Stop(); } catch { }
             client = null;
