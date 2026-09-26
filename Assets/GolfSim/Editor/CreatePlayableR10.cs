@@ -12,7 +12,9 @@ namespace GolfSimZA.Editor
     {
         private const string ScenePath = "Assets/Scenes/GolfSimZA_0_6_PlayRound.unity";
 
-        [MenuItem("GolfSimZA/Create 1.0 Playable Garmin R10 Simulator")]
+        // The 1.0 menu item is registered by GolfSimStageMenu.Create10().
+        // Keeping the creation method here without a second MenuItem attribute
+        // prevents Unity from registering the same menu command twice.
         public static void Create()
         {
             if (!System.IO.File.Exists(ScenePath))
