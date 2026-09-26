@@ -7,30 +7,28 @@ namespace GolfSimZA.Players
     public sealed class GolfBagProfile
     {
         public const int ClubCount = 36;
-        public const int MaxBagClubs = 14;
-        public const int DefaultBagClubCount = 13;
+        public const int MaxBagClubs = 18;
+        public const int DefaultBagClubCount = 18;
 
-        // Default 13-club setup requested for GolfSimZA.
-        // The 14th bag slot remains available for a future club.
+        // Default 18-club setup requested for GolfSimZA.
+        // The Putter remains available in the club library but is not included in the default bag.
         public static readonly string[] DefaultClubNames =
         {
-            "Driver", "3 Wood", "4 Hybrid", "5 Iron", "6 Iron", "7 Iron", "8 Iron", "9 Iron",
-            "Pitching Wedge", "52°", "56°", "60°", "Putter",
-            "2 Wood", "4 Wood", "5 Wood", "7 Wood", "9 Wood",
-            "2 Hybrid", "3 Hybrid", "5 Hybrid", "6 Hybrid",
-            "2 Iron", "3 Iron", "4 Iron",
-            "Gap Wedge", "Approach Wedge", "48°", "50°", "54°", "58°", "62°",
+            "Driver", "3 Wood", "5 Wood", "7 Wood", "3 Hybrid", "4 Hybrid",
+            "3 Iron", "4 Iron", "5 Iron", "6 Iron", "7 Iron", "8 Iron", "9 Iron",
+            "Pitching Wedge", "52°", "56°", "58°", "60°",
+            "Putter", "2 Wood", "4 Wood", "9 Wood", "2 Hybrid", "5 Hybrid", "6 Hybrid",
+            "2 Iron", "Gap Wedge", "Approach Wedge", "48°", "50°", "54°", "62°",
             "Chipper", "Driving Iron", "Utility Iron", "Bump & Run"
         };
 
         public static readonly float[] DefaultLofts =
         {
-            10.5f, 15f, 22f, 27f, 30f, 34f, 38f, 42f,
-            46f, 52f, 56f, 60f, 3f,
-            13.5f, 16.5f, 18f, 21f, 24f,
-            18f, 19f, 25f, 28f,
-            18f, 21f, 24f,
-            50f, 52f, 48f, 50f, 54f, 58f, 62f,
+            10.5f, 15f, 18f, 21f, 19f, 22f,
+            21f, 24f, 27f, 30f, 34f, 38f, 42f,
+            46f, 52f, 56f, 58f, 60f,
+            3f, 13.5f, 16.5f, 24f, 18f, 25f, 28f,
+            18f, 50f, 52f, 48f, 50f, 54f, 62f,
             35f, 20f, 23f, 34f
         };
 
