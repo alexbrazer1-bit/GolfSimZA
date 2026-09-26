@@ -1,5 +1,6 @@
 using GolfSimZA.LaunchMonitors;
 using GolfSimZA.Physics;
+using GolfSimZA.UI;
 using UnityEngine;
 
 namespace GolfSimZA.Core
@@ -34,7 +35,15 @@ namespace GolfSimZA.Core
             if (ballFlightSimulator != null)
                 ballFlightSimulator.ShotCompleted += OnShotCompleted;
 
+            EnsureModernPresentation();
             launchMonitor.TryConnect();
+        }
+
+        private void EnsureModernPresentation()
+        {
+            ModernGolfSimUI modern = GetComponent<ModernGolfSimUI>();
+            if (modern == null)
+                gameObject.AddComponent<ModernGolfSimUI>();
         }
 
         private void Update()
@@ -66,16 +75,13 @@ namespace GolfSimZA.Core
             if (!shot.IsValid)
                 return;
 
-            // A new input cannot interrupt an active flight. This prevents a
-            // second SPACE press or monitor packet from resetting the ball while
-            // it is airborne or rolling toward its landing point.
             if (ballFlightSimulator != null && ballFlightSimulator.IsInFlight)
                 return;
 
             lastShot = shot;
             shotHistory.Add(shot);
             ballFlightSimulator?.Launch(shot);
-            Debug.Log($"[GolfSimZA] Shot: {shot.ClubName}, ball {shot.BallSpeedMps:F1} m/s, launch {shot.LaunchAngleDeg:F1}°, spin {shot.BackSpinRpm:F0} rpm");
+            Debug.Log($"[GolfSimZA] Shot: {shot.ClubName}, ball {shot.BallSpeedMps:F1} m/s, club {shot.ClubSpeedMps:F1} m/s, launch {shot.LaunchAngleDeg:F1}°, spin {shot.BackSpinRpm:F0} rpm, R10 carry {shot.CarryMeters:F1} m");
         }
 
         private void OnShotCompleted(ShotData shot, float carryMeters, float totalMeters, float maxHeightMeters, float flightTimeSeconds)
