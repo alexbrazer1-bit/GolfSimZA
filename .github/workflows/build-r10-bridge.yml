@@ -23,7 +23,9 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: mholow/gsp-r10-adapter
-          ref: main
+          # Pinned to a reviewed commit so a change upstream can never silently alter the bridge.
+          # To update: review the upstream changes, then replace this commit id.
+          ref: d337671b996766889202ccc9fe87a5b34ffebcd3
           path: R10Bridge/_upstream
 
       - name: Apply GolfSimZA bridge settings

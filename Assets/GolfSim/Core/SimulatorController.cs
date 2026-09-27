@@ -78,6 +78,13 @@ namespace GolfSimZA.Core
             if (ballFlightSimulator != null && ballFlightSimulator.IsInFlight)
                 return;
 
+            // Launch monitors like the R10 do not know which club was hit.
+            if (string.IsNullOrWhiteSpace(shot.ClubName))
+            {
+                shot.ClubName = ActiveClub.Resolve();
+                shot.ClubNumber = ActiveClub.SlotFor(shot.ClubName);
+            }
+
             lastShot = shot;
             shotHistory.Add(shot);
             ballFlightSimulator?.Launch(shot);

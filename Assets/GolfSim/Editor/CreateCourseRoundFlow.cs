@@ -70,14 +70,7 @@ namespace GolfSimZA.Editor
 
         private static void ConfigureBuildSettings()
         {
-            EditorBuildSettings.scenes = new[]
-            {
-                new EditorBuildSettingsScene(CourseScene, true),
-                new EditorBuildSettingsScene(RoundScene, true),
-                new EditorBuildSettingsScene(PlayersScene, true),
-                new EditorBuildSettingsScene(PlayScene, true),
-                new EditorBuildSettingsScene("Assets/Scenes/GolfSimZA_0_4_SimulatorPresentationRange.unity", true)
-            };
+            GolfSimBuildScenes.Apply();
         }
     }
 }

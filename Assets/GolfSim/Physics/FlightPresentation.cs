@@ -27,7 +27,46 @@ namespace GolfSimZA.Physics
         private Vector3 homeCameraPosition;
         private Quaternion homeCameraRotation;
         private Vector3 followDirection = Vector3.forward;
+        private Vector3 homeAimDirection = Vector3.forward;
         private bool cameraMoved;
+
+        [Header("Address view (behind the ball)")]
+        [SerializeField] private float addressBackDistance = 6.5f;
+        [SerializeField] private float addressHeight = 2.2f;
+        [SerializeField] private float addressLookAhead = 60f;
+
+        /// <summary>
+        /// Moves the resting camera behind the ball, looking along the aim line.
+        /// Called by the round whenever the ball is placed or the aim changes.
+        /// </summary>
+        public void SetAddress(Vector3 ballPosition, Vector3 aimDirection, bool snap)
+        {
+            if (followCamera == null) return;
+            aimDirection.y = 0f;
+            if (aimDirection.sqrMagnitude < 0.0001f) aimDirection = Vector3.forward;
+            aimDirection.Normalize();
+
+            homeCameraPosition = ballPosition - aimDirection * addressBackDistance + Vector3.up * addressHeight;
+            Vector3 lookTarget = ballPosition + aimDirection * addressLookAhead + Vector3.up * 1.5f;
+            homeCameraRotation = Quaternion.LookRotation(lookTarget - homeCameraPosition, Vector3.up);
+            followDirection = aimDirection;
+            homeAimDirection = aimDirection;
+
+            if (snap || flight == null || !flight.IsInFlight)
+            {
+                cameraMoved = !snap;
+                if (snap)
+                {
+                    followCamera.transform.position = homeCameraPosition;
+                    followCamera.transform.rotation = homeCameraRotation;
+                }
+            }
+        }
+
+        public void HideLandingMarker()
+        {
+            if (landingMarker != null) landingMarker.SetActive(false);
+        }
 
         private void Awake()
         {
@@ -46,6 +85,7 @@ namespace GolfSimZA.Physics
 
             if (followCamera != null)
             {
+                followCamera.farClipPlane = Mathf.Max(followCamera.farClipPlane, 4000f);
                 homeCameraPosition = followCamera.transform.position;
                 homeCameraRotation = followCamera.transform.rotation;
             }
@@ -80,10 +120,11 @@ namespace GolfSimZA.Physics
                     followDirection = travel.normalized;
 
                 Vector3 desiredCenter = flatHome + followDirection * travelDistance;
-                desiredCenter.x = Mathf.Clamp(desiredCenter.x, -maximumSideOffset, maximumSideOffset);
-                desiredCenter.z = Mathf.Clamp(desiredCenter.z, -10f, maximumFollowDistance + 10f);
+                desiredCenter.y = ball.position.y;
 
                 Vector3 target = desiredCenter + Vector3.up * cameraHeight - followDirection * cameraDistance;
+                float groundUnderCamera = GroundProbe.HeightAt(target);
+                if (target.y < groundUnderCamera + 1.5f) target.y = groundUnderCamera + 1.5f;
                 followCamera.transform.position = Vector3.Lerp(
                     followCamera.transform.position,
                     target,
@@ -112,7 +153,7 @@ namespace GolfSimZA.Physics
                     followCamera.transform.position = homeCameraPosition;
                     followCamera.transform.rotation = homeCameraRotation;
                     cameraMoved = false;
-                    followDirection = Vector3.forward;
+                    followDirection = homeAimDirection;
                 }
             }
         }
@@ -122,7 +163,7 @@ namespace GolfSimZA.Physics
             if (ball == null)
                 return;
 
-            CreateOrMoveLandingMarker(ball.position);
+            CreateOrMoveLandingMarker(flight != null ? flight.LandingPosition : ball.position);
         }
 
         private void CreateOrMoveLandingMarker(Vector3 position)
@@ -132,6 +173,9 @@ namespace GolfSimZA.Physics
                 landingMarker = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
                 landingMarker.name = "LastShot_LandingMarker";
                 landingMarker.transform.localScale = new Vector3(markerRadius, markerHeight, markerRadius);
+                landingMarker.layer = GroundProbe.IgnoreRaycastLayer;
+                Collider markerCollider = landingMarker.GetComponent<Collider>();
+                if (markerCollider != null) Destroy(markerCollider);
 
                 Renderer renderer = landingMarker.GetComponent<Renderer>();
                 if (renderer != null)
@@ -148,7 +192,7 @@ namespace GolfSimZA.Physics
                 }
             }
 
-            landingMarker.transform.position = new Vector3(position.x, 0.02f, position.z);
+            landingMarker.transform.position = new Vector3(position.x, GroundProbe.HeightAt(position) + 0.02f, position.z);
             landingMarker.SetActive(true);
         }
     }

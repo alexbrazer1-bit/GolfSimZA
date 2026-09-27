@@ -21,7 +21,8 @@ namespace GolfSimZA.LaunchMonitors.GarminR10
     public sealed class GarminR10Adapter : MonoBehaviour, ILaunchMonitorAdapter
     {
         [SerializeField] private int listenPort = 921;
-        [SerializeField] private bool listenOnAllInterfaces = true;
+        [Tooltip("Off = only programs on this PC can connect (recommended). On = any device on the network can send shots.")]
+        [SerializeField] private bool allowNetworkConnections = false;
         [SerializeField] private bool autoStart = true;
         [SerializeField] private bool sendReadyHeartbeat = true;
         [SerializeField] private float heartbeatIntervalSeconds = 2f;
@@ -34,6 +35,8 @@ namespace GolfSimZA.LaunchMonitors.GarminR10
         private readonly Dictionary<int, PendingShot> pendingShots = new Dictionary<int, PendingShot>();
         private readonly HashSet<int> publishedShots = new HashSet<int>();
         private volatile bool stopping;
+        // Set from socket threads, applied on the main thread (the shot dictionaries are not thread safe).
+        private volatile bool resetShotStateRequested;
         private float nextHeartbeat;
         private string lastPacketSummary = "None";
 
@@ -130,7 +133,7 @@ namespace GolfSimZA.LaunchMonitors.GarminR10
             try
             {
                 stopping = false;
-                IPAddress bindAddress = listenOnAllInterfaces ? IPAddress.Any : IPAddress.Loopback;
+                IPAddress bindAddress = allowNetworkConnections ? IPAddress.Any : IPAddress.Loopback;
                 listener = new TcpListener(bindAddress, Mathf.Clamp(listenPort, 1, 65535));
                 listener.Server.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
                 listener.Start();
@@ -162,8 +165,7 @@ namespace GolfSimZA.LaunchMonitors.GarminR10
                 client.NoDelay = true;
                 IsConnected = true;
                 lastPacketSummary = "TCP client connected";
-                pendingShots.Clear();
-                publishedShots.Clear();
+                resetShotStateRequested = true;
                 Debug.Log($"[GolfSimZA] Garmin R10 bridge connected from {client.Client.RemoteEndPoint}.");
                 BeginRead(client);
             }
@@ -235,13 +237,20 @@ namespace GolfSimZA.LaunchMonitors.GarminR10
             lastPacketSummary = "TCP client disconnected";
             try { client?.Close(); } catch { }
             client = null;
-            pendingShots.Clear();
+            resetShotStateRequested = true;
             if (!stopping)
                 Debug.Log("[GolfSimZA] Garmin R10 bridge disconnected; server remains ready for reconnect.");
         }
 
         private void Update()
         {
+            if (resetShotStateRequested)
+            {
+                resetShotStateRequested = false;
+                pendingShots.Clear();
+                publishedShots.Clear();
+            }
+
             while (incoming.TryDequeue(out string chunk))
             {
                 if (string.IsNullOrEmpty(chunk))
@@ -345,7 +354,7 @@ namespace GolfSimZA.LaunchMonitors.GarminR10
 
                             Debug.Log(
                                 $"[GolfSimZA] R10 COMPLETE SHOT #{message.ShotNumber}: " +
-                                $"{shot.ClubName}, ball {shot.BallSpeedMps:0.00} m/s, " +
+                                $"ball {shot.BallSpeedMps:0.00} m/s, " +
                                 $"launch {shot.LaunchAngleDeg:0.0}°, HLA {shot.LaunchDirectionDeg:0.0}°, " +
                                 $"spin {shot.BackSpinRpm:0} rpm, carry {shot.CarryMeters:0.0} m, " +
                                 $"club {(shot.HasClubData ? shot.ClubSpeedMps.ToString("0.00") : "n/a")} m/s.");
@@ -451,8 +460,10 @@ namespace GolfSimZA.LaunchMonitors.GarminR10
             return new ShotData
             {
                 TimestampUtc = DateTime.UtcNow,
-                ClubName = MapClubName(c),
-                ClubNumber = MapClubNumber(c),
+                // The R10 cannot tell which club was used; SimulatorController stamps
+                // the club the player selected on screen (see ActiveClub).
+                ClubName = string.Empty,
+                ClubNumber = 0,
                 ClubLoftDeg = loft,
                 BallSpeedMps = ballSpeedMps,
                 ClubSpeedMps = clubSpeedMps,
@@ -465,46 +476,6 @@ namespace GolfSimZA.LaunchMonitors.GarminR10
                 HasClubData = c != null && c.Speed > 0,
                 IsValid = ballSpeedMps > 0.5f
             };
-        }
-
-        private static string MapClubName(ClubData club)
-        {
-            if (club == null || club.Loft <= 0.1)
-                return "R10 Club";
-
-            float loft = (float)club.Loft;
-            if (loft <= 11.5f) return "Driver";
-            if (loft <= 17f) return "3 Wood";
-            if (loft <= 22f) return "Hybrid";
-            if (loft <= 27f) return "5 Iron";
-            if (loft <= 31f) return "6 Iron";
-            if (loft <= 35f) return "7 Iron";
-            if (loft <= 39f) return "8 Iron";
-            if (loft <= 44f) return "9 Iron";
-            if (loft <= 49f) return "Pitching Wedge";
-            if (loft <= 54f) return "Gap Wedge";
-            if (loft <= 58f) return "Sand Wedge";
-            return "Lob Wedge";
-        }
-
-        private static int MapClubNumber(ClubData club)
-        {
-            if (club == null || club.Loft <= 0.1)
-                return 0;
-
-            float loft = (float)club.Loft;
-            if (loft <= 11.5f) return 1;
-            if (loft <= 17f) return 3;
-            if (loft <= 22f) return 4;
-            if (loft <= 27f) return 5;
-            if (loft <= 31f) return 6;
-            if (loft <= 35f) return 7;
-            if (loft <= 39f) return 8;
-            if (loft <= 44f) return 9;
-            if (loft <= 49f) return 10;
-            if (loft <= 54f) return 11;
-            if (loft <= 58f) return 12;
-            return 13;
         }
 
         private void SendHeartbeat()

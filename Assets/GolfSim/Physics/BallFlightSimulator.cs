@@ -4,26 +4,51 @@ using UnityEngine;
 
 namespace GolfSimZA.Physics
 {
+    /// <summary>
+    /// Ball flight, bounce and roll.
+    ///
+    /// * Fixed 100 Hz integration so the live flight matches the carry prediction.
+    /// * Spin axis curves the ball (positive axis = curve right / fade, negative = draw).
+    /// * When the launch monitor supplies a measured carry, the horizontal flight is
+    ///   scaled so the ball lands at that carry on flat ground - no jump on landing.
+    /// * Landing, bounce and roll follow the real ground (terrain or demo floor),
+    ///   including slopes, and greens roll faster than fairways.
+    /// * Putter shots skip the flight and roll along the ground.
+    /// </summary>
     public sealed class BallFlightSimulator : MonoBehaviour
     {
+        private const float Step = 0.01f;
+        private const float BallRadius = 0.02135f;
+        private const float BallMass = 0.04593f;
+        private const float BallArea = Mathf.PI * BallRadius * BallRadius;
+        private const float SeaLevelAirDensity = 1.225f;
+
         [Header("References")]
         [SerializeField] private Transform ball;
 
-        [Header("Flight physics")]
+        [Header("Flight physics (aerodynamic model, fitted to tour launch data)")]
         [SerializeField] private float gravity = 9.81f;
-        [SerializeField] private float airDrag = 0.00055f;
-        [SerializeField] private float spinLift = 0.000015f;
-        [SerializeField] private float spinDecayPerSecond = 0.08f;
+        [SerializeField] private float dragBase = 0.2066f;
+        [SerializeField] private float dragPerSpinFactor = 0.2679f;
+        [SerializeField] private float liftScale = 0.3937f;
+        [SerializeField] private float liftExponent = 0.3543f;
+        [SerializeField] private float liftMaximum = 0.3223f;
+        [SerializeField] private float spinDecayRate = 0.0519f;
         [SerializeField] private float metersToUnity = 1.0f;
-        [SerializeField] private float maximumFlightTime = 12.0f;
+        [SerializeField] private float maximumFlightTime = 15.0f;
 
         [Header("Ground physics")]
         [SerializeField] private float groundY = 0.0f;
         [SerializeField, Range(0.05f, 0.9f)] private float bounceRetention = 0.18f;
         [SerializeField, Range(0.5f, 1f)] private float horizontalBounceRetention = 0.90f;
         [SerializeField] private float rollDeceleration = 7.5f;
-        [SerializeField] private float maxRollMeters = 35.0f;
+        [SerializeField] private float greenRollDeceleration = 0.65f;
+        [SerializeField] private float fairwayPuttDeceleration = 1.6f;
+        [SerializeField] private float maxRollMeters = 60.0f;
         [SerializeField] private float stopSpeed = 0.15f;
+        [SerializeField] private float minBounceSpeed = 1.2f;
+        [SerializeField] private float slopeRollFactor = 0.71f;
+        [SerializeField] private float maximumRollTime = 25f;
 
         [Header("Spin / roll tuning")]
         [SerializeField] private float referenceSpinRpm = 2400.0f;
@@ -32,13 +57,18 @@ namespace GolfSimZA.Physics
 
         [Header("R10 measurement")]
         [SerializeField] private bool useMeasuredR10Carry = true;
-        [SerializeField] private bool useMeasuredR10CarryAsTotalWhenNoRoll = true;
+
+        [Header("Hole")]
+        [SerializeField] private float cupRadius = 0.054f;
+        [SerializeField] private float maxCupEntrySpeed = 1.6f;
 
         private Vector3 velocity;
         private bool airborne;
         private bool rolling;
-        private bool hasLanded;
+        private bool puttMode;
         private float currentSpinRpm;
+        private float spinAxisRad;
+        private float horizontalScale = 1f;
         private float landingRollDeceleration;
         private Vector3 launchPosition;
         private Vector3 landingPosition;
@@ -46,15 +76,79 @@ namespace GolfSimZA.Physics
         private float carryMeters;
         private float totalMeters;
         private float flightTime;
-        private float measuredCarryMeters;
+        private float rollTime;
+        private float stepAccumulator;
+        private bool landedOnce;
         private ShotData activeShot;
 
+        private bool hasHole;
+        private Vector3 holePosition;
+        private float greenRadius = 14f;
+
         public bool IsInFlight => airborne || rolling;
+        public bool IsAirborne => airborne;
         public float CarryMeters => carryMeters;
         public float TotalMeters => totalMeters;
         public float MaxHeightMeters => maxHeight;
         public float FlightTimeSeconds => flightTime;
+        public bool WasHoled { get; private set; }
+        public Vector3 LandingPosition => landingPosition;
+        public Vector3 LaunchPosition => launchPosition;
+        public Transform Ball => ball;
+
+        /// <summary>Aim direction in degrees clockwise from world +Z (0 = straight down the range).</summary>
+        public float AimYawDegrees { get; set; }
+
+        /// <summary>Altitude of the course (or home range) in metres; thinner air flies further.</summary>
+        public float AltitudeMeters { get; set; }
+
+        private float AirDensity => SeaLevelAirDensity * Mathf.Exp(-Mathf.Max(-500f, AltitudeMeters) / 8434f);
+
+        public event Action<ShotData> Launched;
         public event Action<ShotData, float, float, float, float> ShotCompleted;
+        public event Action BallHoled;
+
+        private void Awake()
+        {
+            AltitudeMeters = AppSettings.Current.homeAltitudeMeters;
+            if (ball != null)
+            {
+                // Keep the ball out of ground ray casts.
+                ball.gameObject.layer = GroundProbe.IgnoreRaycastLayer;
+                GroundProbe.FallbackHeight = groundY;
+            }
+        }
+
+        /// <summary>Sets the current hole so greens roll faster and the ball can drop in the cup.</summary>
+        public void SetHole(Vector3 pinPosition, float greenRadiusMeters)
+        {
+            hasHole = true;
+            holePosition = pinPosition;
+            greenRadius = Mathf.Max(4f, greenRadiusMeters);
+        }
+
+        public void ClearHole() => hasHole = false;
+
+        /// <summary>Places the ball at rest on the ground at the given point.</summary>
+        public void PlaceBall(Vector3 worldPosition)
+        {
+            if (ball == null) return;
+            ball.gameObject.layer = GroundProbe.IgnoreRaycastLayer;
+            airborne = false;
+            rolling = false;
+            velocity = Vector3.zero;
+            WasHoled = false;
+            float h = GroundProbe.HeightAt(worldPosition);
+            ball.position = new Vector3(worldPosition.x, h + BallRadius, worldPosition.z);
+        }
+
+        public bool IsOnGreen(Vector3 position)
+        {
+            if (!hasHole) return false;
+            Vector3 d = position - holePosition;
+            d.y = 0f;
+            return d.magnitude <= greenRadius;
+        }
 
         public void Launch(ShotData shot)
         {
@@ -62,29 +156,58 @@ namespace GolfSimZA.Physics
                 return;
 
             activeShot = shot;
-            measuredCarryMeters = useMeasuredR10Carry && shot.CarryMeters > 0.1f ? shot.CarryMeters : 0f;
+            WasHoled = false;
+            stepAccumulator = 0f;
+            rollTime = 0f;
+            flightTime = 0f;
+            landedOnce = false;
+            carryMeters = 0f;
+            totalMeters = 0f;
 
             float scale = Mathf.Max(0.0001f, metersToUnity);
             float speed = Mathf.Max(0f, shot.BallSpeedMps) * scale;
-            float elevation = Mathf.Clamp(shot.LaunchAngleDeg, -10f, 70f) * Mathf.Deg2Rad;
-            float azimuth = shot.LaunchDirectionDeg * Mathf.Deg2Rad;
+            float yaw = (AimYawDegrees + shot.LaunchDirectionDeg) * Mathf.Deg2Rad;
+            Vector3 horizontal = new Vector3(Mathf.Sin(yaw), 0f, Mathf.Cos(yaw));
 
-            Vector3 horizontal = new Vector3(Mathf.Sin(azimuth), 0f, Mathf.Cos(azimuth));
-            velocity = horizontal * (speed * Mathf.Cos(elevation));
-            velocity.y = speed * Mathf.Sin(elevation);
-
-            currentSpinRpm = Mathf.Max(0f, shot.BackSpinRpm);
-            landingRollDeceleration = rollDeceleration;
-            ball.position = new Vector3(ball.position.x, Mathf.Max(ball.position.y, groundY + 0.03f), ball.position.z);
+            float groundHeight = GroundProbe.HeightAt(ball.position);
+            ball.position = new Vector3(ball.position.x, Mathf.Max(ball.position.y, groundHeight + BallRadius), ball.position.z);
             launchPosition = ball.position;
             landingPosition = ball.position;
             maxHeight = ball.position.y;
-            carryMeters = 0f;
-            totalMeters = 0f;
-            flightTime = 0f;
+
+            puttMode = ActiveClub.IsPutter(shot.ClubName) || shot.LaunchAngleDeg < 1.5f && shot.BallSpeedMps < 12f;
+            if (puttMode)
+            {
+                velocity = horizontal * speed;
+                currentSpinRpm = 0f;
+                spinAxisRad = 0f;
+                horizontalScale = 1f;
+                airborne = false;
+                rolling = true;
+                landingPosition = launchPosition;
+                landingRollDeceleration = IsOnGreen(launchPosition) ? greenRollDeceleration : fairwayPuttDeceleration;
+                Launched?.Invoke(shot);
+                return;
+            }
+
+            float elevation = Mathf.Clamp(shot.LaunchAngleDeg, -10f, 70f) * Mathf.Deg2Rad;
+            velocity = horizontal * (speed * Mathf.Cos(elevation));
+            velocity.y = speed * Mathf.Sin(elevation);
+            currentSpinRpm = Mathf.Max(0f, shot.BackSpinRpm);
+            spinAxisRad = Mathf.Clamp(shot.SpinAxisDeg, -60f, 60f) * Mathf.Deg2Rad;
+            landingRollDeceleration = rollDeceleration;
+
+            horizontalScale = 1f;
+            if (useMeasuredR10Carry && shot.CarryMeters > 0.5f)
+            {
+                float predicted = PredictFlatCarry(velocity, currentSpinRpm, spinAxisRad);
+                if (predicted > 0.5f)
+                    horizontalScale = Mathf.Clamp(shot.CarryMeters / predicted, 0.5f, 2.0f);
+            }
+
             airborne = true;
             rolling = false;
-            hasLanded = false;
+            Launched?.Invoke(shot);
         }
 
         private void Update()
@@ -92,151 +215,215 @@ namespace GolfSimZA.Physics
             if (ball == null || !IsInFlight)
                 return;
 
-            if (airborne)
-                SimulateAirborne();
-            else if (rolling)
-                SimulateRoll();
+            stepAccumulator += Mathf.Min(Time.deltaTime, 0.1f);
+            while (stepAccumulator >= Step && IsInFlight)
+            {
+                stepAccumulator -= Step;
+                if (airborne) StepAirborne(Step);
+                else if (rolling) StepRoll(Step);
+            }
         }
 
-        private void SimulateAirborne()
+        // ---------------- Flight ----------------
+
+        /// <summary>
+        /// One integration step. Spin is in rpm. Drag and lift coefficients depend on the
+        /// spin factor S = r*omega/v. Lift acts at right angles to the velocity, tilted
+        /// sideways by the spin axis (positive axis curves the ball right).
+        /// </summary>
+        private void Accelerate(ref Vector3 v, ref float spinRpm, float axis, float dt)
         {
-            float dt = Mathf.Min(Time.deltaTime, 0.05f);
-            flightTime += dt;
-
-            Vector3 horizontalVelocity = new Vector3(velocity.x, 0f, velocity.z);
-            float horizontalSpeed = horizontalVelocity.magnitude;
-            Vector3 dragForce = -velocity * (airDrag * velocity.magnitude);
-            float lift = currentSpinRpm * horizontalSpeed * spinLift;
-
-            velocity += (Vector3.down * gravity + dragForce + Vector3.up * lift) * dt;
-            currentSpinRpm = Mathf.MoveTowards(currentSpinRpm, 0f, currentSpinRpm * spinDecayPerSecond * dt);
-            ball.position += velocity * dt;
-            maxHeight = Mathf.Max(maxHeight, ball.position.y);
-            totalMeters = HorizontalDistanceFromLaunch();
-
-            if (ball.position.y <= groundY)
+            float speed = v.magnitude;
+            if (speed < 0.01f)
             {
-                LandBall();
+                v += Vector3.down * gravity * dt;
+                return;
+            }
+
+            float omega = spinRpm * (2f * Mathf.PI / 60f);
+            float spinFactor = BallRadius * omega / speed;
+            float cd = dragBase + dragPerSpinFactor * spinFactor;
+            float cl = spinFactor > 0f ? Mathf.Min(liftMaximum, liftScale * Mathf.Pow(spinFactor, liftExponent)) : 0f;
+            float k = 0.5f * AirDensity * BallArea / BallMass;
+
+            Vector3 direction = v / speed;
+            Vector3 horizontal = new Vector3(v.x, 0f, v.z);
+            Vector3 right = horizontal.sqrMagnitude > 0.000001f ? Vector3.Cross(Vector3.up, horizontal.normalized) : Vector3.right;
+            Vector3 up = Vector3.Cross(direction, right);
+            if (up.y < 0f) up = -up;
+            Vector3 liftDirection = up * Mathf.Cos(axis) + right * Mathf.Sin(axis);
+
+            Vector3 acceleration = -k * cd * speed * v + k * cl * speed * speed * liftDirection + Vector3.down * gravity;
+            v += acceleration * dt;
+            spinRpm *= Mathf.Exp(-spinDecayRate * dt);
+        }
+
+        private float PredictFlatCarry(Vector3 v, float spin, float axis)
+        {
+            Vector3 p = Vector3.zero;
+            float t = 0f;
+            while (t < maximumFlightTime)
+            {
+                Accelerate(ref v, ref spin, axis, Step);
+                p += v * Step;
+                t += Step;
+                if (p.y <= 0f && t > 0.05f) break;
+            }
+            p.y = 0f;
+            return p.magnitude / Mathf.Max(0.0001f, metersToUnity);
+        }
+
+        private void StepAirborne(float dt)
+        {
+            flightTime += dt;
+            Accelerate(ref velocity, ref currentSpinRpm, spinAxisRad, dt);
+
+            Vector3 move = new Vector3(velocity.x * horizontalScale, velocity.y, velocity.z * horizontalScale) * dt;
+            ball.position += move;
+            maxHeight = Mathf.Max(maxHeight, ball.position.y);
+            totalMeters = HorizontalDistance(ball.position, launchPosition);
+            if (!landedOnce) carryMeters = totalMeters;
+
+            GroundProbe.TrySample(ball.position, out float groundHeight, out Vector3 normal);
+            if (ball.position.y - BallRadius <= groundHeight && velocity.y < 0f)
+            {
+                ball.position = new Vector3(ball.position.x, groundHeight + BallRadius, ball.position.z);
+                Impact(normal);
                 return;
             }
 
             if (flightTime >= maximumFlightTime)
             {
-                ball.position = new Vector3(ball.position.x, groundY, ball.position.z);
-                LandBall();
+                ball.position = new Vector3(ball.position.x, groundHeight + BallRadius, ball.position.z);
+                Impact(normal);
             }
         }
 
-        private void LandBall()
+        private void Impact(Vector3 normal)
         {
-            if (hasLanded)
-                return;
+            // The horizontal scale only shapes the flight; after landing use real motion.
+            velocity = new Vector3(velocity.x * horizontalScale, velocity.y, velocity.z * horizontalScale);
+            horizontalScale = 1f;
 
-            hasLanded = true;
-            ball.position = new Vector3(ball.position.x, groundY, ball.position.z);
-
-            // Garmin R10 carry is the authoritative measured carry. The old
-            // simulator replaced it with a simplified aerodynamic estimate,
-            // which caused large discrepancies between the R10 and GolfSimZA.
-            // We retain the visual flight but report the measured carry when it
-            // is available, then add a controlled ground-roll estimate.
-            float visualCarry = HorizontalDistanceFromLaunch();
-            carryMeters = measuredCarryMeters > 0.1f ? measuredCarryMeters : visualCarry;
-
-            if (measuredCarryMeters > 0.1f && visualCarry > 0.1f)
+            if (!landedOnce)
             {
-                Vector3 direction = ball.position - launchPosition;
-                direction.y = 0f;
-                if (direction.sqrMagnitude > 0.0001f)
-                {
-                    direction.Normalize();
-                    ball.position = launchPosition + direction * measuredCarryMeters * metersToUnity;
-                    ball.position = new Vector3(ball.position.x, groundY, ball.position.z);
-                }
+                landedOnce = true;
+                landingPosition = ball.position;
+                carryMeters = HorizontalDistance(landingPosition, launchPosition);
+
+                float normalizedSpin = Mathf.Clamp01(currentSpinRpm / Mathf.Max(1f, referenceSpinRpm));
+                float spinFriction = Mathf.Lerp(1f - spinRollInfluence, 1f + spinRollInfluence, normalizedSpin);
+                bool onGreen = IsOnGreen(landingPosition);
+                landingRollDeceleration = (onGreen ? rollDeceleration * 0.55f : rollDeceleration) * spinFriction;
             }
 
-            landingPosition = ball.position;
+            // Split velocity into the part into the ground and the part along it.
+            float intoGround = Vector3.Dot(velocity, normal);
+            Vector3 along = velocity - normal * intoGround;
+            float normalizedSpinNow = Mathf.Clamp01(currentSpinRpm / Mathf.Max(1f, referenceSpinRpm));
+            float alongRetention = Mathf.Lerp(horizontalBounceRetention, horizontalBounceRetention * 0.88f, normalizedSpinNow);
 
-            float normalizedSpin = Mathf.Clamp01(currentSpinRpm / Mathf.Max(1f, referenceSpinRpm));
-            float spinFriction = Mathf.Lerp(1f - spinRollInfluence, 1f + spinRollInfluence, normalizedSpin);
-            landingRollDeceleration = rollDeceleration * spinFriction;
+            along *= alongRetention;
+            float bounceSpeed = Mathf.Abs(intoGround) * bounceRetention;
+            currentSpinRpm *= 0.6f;
 
-            float verticalImpactSpeed = Mathf.Abs(velocity.y);
-            velocity.y = -verticalImpactSpeed * bounceRetention;
+            if (bounceSpeed > minBounceSpeed)
+            {
+                velocity = along + normal * bounceSpeed;
+                airborne = true;
+                rolling = false;
+                return;
+            }
 
-            float horizontalRetention = Mathf.Lerp(
-                horizontalBounceRetention,
-                horizontalBounceRetention * 0.88f,
-                normalizedSpin);
-            velocity.x *= horizontalRetention;
-            velocity.z *= horizontalRetention;
-
+            velocity = new Vector3(along.x, 0f, along.z);
             airborne = false;
-            rolling = new Vector3(velocity.x, 0f, velocity.z).magnitude > stopSpeed;
-
+            rolling = velocity.magnitude > stopSpeed;
             if (!rolling)
                 CompleteShot();
         }
 
-        private void SimulateRoll()
+        // ---------------- Roll ----------------
+
+        private void StepRoll(float dt)
         {
-            float dt = Mathf.Min(Time.deltaTime, 0.05f);
+            rollTime += dt;
+            GroundProbe.TrySample(ball.position, out float groundHeight, out Vector3 normal);
+
             Vector3 horizontalVelocity = new Vector3(velocity.x, 0f, velocity.z);
             float speed = horizontalVelocity.magnitude;
-            float rollDistance = HorizontalDistanceFromLanding();
 
-            if (speed <= stopSpeed || rollDistance >= maxRollMeters)
+            float deceleration = landingRollDeceleration;
+            if (hasHole && IsOnGreen(ball.position))
+            {
+                // Putts roll on green speed. A full shot keeps its landing "check" while it
+                // is fast, then releases onto green speed as it slows down.
+                deceleration = puttMode
+                    ? greenRollDeceleration
+                    : speed > 2.5f ? deceleration : Mathf.Lerp(greenRollDeceleration * 1.5f, deceleration, speed / 2.5f);
+            }
+
+            // Gravity along the slope (a rolling ball feels about 5/7 of it).
+            Vector3 slopeAcceleration = new Vector3(normal.x, 0f, normal.z) * (gravity * normal.y * slopeRollFactor);
+
+            float rolledSoFar = HorizontalDistance(ball.position, landingPosition);
+            bool slopeHolds = slopeAcceleration.magnitude <= deceleration * 0.9f;
+            if ((speed <= stopSpeed && slopeHolds) || (!puttMode && rolledSoFar >= maxRollMeters) || rollTime >= maximumRollTime)
             {
                 velocity = Vector3.zero;
-                ball.position = new Vector3(ball.position.x, groundY, ball.position.z);
-                totalMeters = HorizontalDistanceFromLaunch();
+                ball.position = new Vector3(ball.position.x, groundHeight + BallRadius, ball.position.z);
+                totalMeters = HorizontalDistance(ball.position, launchPosition);
                 rolling = false;
                 CompleteShot();
                 return;
             }
 
             float spinFactor = Mathf.Clamp01(currentSpinRpm / Mathf.Max(1f, referenceSpinRpm));
-            float currentDeceleration = landingRollDeceleration * Mathf.Lerp(1f, 1.12f, spinFactor);
-            float newSpeed = Mathf.Max(0f, speed - currentDeceleration * dt);
-            velocity = horizontalVelocity.normalized * newSpeed;
-            ball.position += velocity * dt;
-            ball.position = new Vector3(ball.position.x, groundY, ball.position.z);
-            totalMeters = HorizontalDistanceFromLaunch();
+            float currentDeceleration = deceleration * Mathf.Lerp(1f, 1.12f, spinFactor);
+            Vector3 direction = speed > 0.0001f ? horizontalVelocity / speed : Vector3.zero;
 
-            currentSpinRpm = Mathf.MoveTowards(currentSpinRpm, 0f,
-                Mathf.Max(1f, currentSpinRpm) * rollSpinDecayPerSecond * dt);
+            horizontalVelocity += slopeAcceleration * dt;
+            float newSpeed = Mathf.Max(0f, horizontalVelocity.magnitude - currentDeceleration * dt);
+            horizontalVelocity = horizontalVelocity.sqrMagnitude > 0.000001f ? horizontalVelocity.normalized * newSpeed : direction * newSpeed;
+            velocity = horizontalVelocity;
+
+            Vector3 next = ball.position + velocity * dt;
+            float nextHeight = GroundProbe.HeightAt(next);
+            ball.position = new Vector3(next.x, nextHeight + BallRadius, next.z);
+            totalMeters = HorizontalDistance(ball.position, launchPosition);
+            currentSpinRpm = Mathf.MoveTowards(currentSpinRpm, 0f, Mathf.Max(1f, currentSpinRpm) * rollSpinDecayPerSecond * dt);
+
+            if (hasHole && HorizontalDistance(ball.position, holePosition) <= cupRadius && newSpeed <= maxCupEntrySpeed)
+            {
+                ball.position = new Vector3(holePosition.x, nextHeight - 0.06f, holePosition.z);
+                velocity = Vector3.zero;
+                rolling = false;
+                WasHoled = true;
+                totalMeters = HorizontalDistance(ball.position, launchPosition);
+                CompleteShot();
+                BallHoled?.Invoke();
+            }
         }
 
-        private float HorizontalDistanceFromLaunch()
+        private float HorizontalDistance(Vector3 a, Vector3 b)
         {
-            Vector3 delta = ball.position - launchPosition;
-            delta.y = 0f;
-            return delta.magnitude / Mathf.Max(0.0001f, metersToUnity);
-        }
-
-        private float HorizontalDistanceFromLanding()
-        {
-            Vector3 delta = ball.position - landingPosition;
+            Vector3 delta = a - b;
             delta.y = 0f;
             return delta.magnitude / Mathf.Max(0.0001f, metersToUnity);
         }
 
         private void CompleteShot()
         {
-            if (measuredCarryMeters > 0.1f)
-                carryMeters = measuredCarryMeters;
+            if (puttMode)
+                carryMeters = 0f;
 
             totalMeters = Mathf.Max(totalMeters, carryMeters);
-            if (useMeasuredR10CarryAsTotalWhenNoRoll && totalMeters <= carryMeters + 0.01f)
-                totalMeters = carryMeters;
-
             carryMeters = Mathf.Clamp(carryMeters, 0f, totalMeters);
 
             ShotCompleted?.Invoke(
                 activeShot,
                 carryMeters,
                 totalMeters,
-                maxHeight / Mathf.Max(0.0001f, metersToUnity),
+                (maxHeight - launchPosition.y) / Mathf.Max(0.0001f, metersToUnity),
                 flightTime);
         }
     }

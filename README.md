@@ -22,7 +22,20 @@ We will not bundle Garmin proprietary SDKs or reverse-engineered proprietary mat
 
 Unity 6 / 6000.x. The initial target is Windows Standalone 64-bit.
 
-## Current milestone: 0.9.5
+## Current version: 1.1.0
+
+### 1.1 course import, real physics and updates
+
+- **Course importer** (IMPORT COURSES on the main menu): scans a folder of course folders, imports every course that has a standard Unity course file (`.unity3d`) and readable hole data (`.GKD`). Encrypted `.gspcrse` packages are detected and reported, never decoded. See `Documentation/COURSE-IMPORT.md`.
+- **Playing imported courses**: real tees, pins (Easy/Standard/Tournament = Thursday/Friday/Sunday), aim points for doglegs, out of bounds and penalty areas, holing out, gimmes, pick-up, multi-player order (furthest from the hole plays), scorecard.
+- **New ball-flight model**: drag and lift from spin, fitted to tour launch data (carry within about 5 m); spin axis now curves the ball; course and home altitude change carry; landing, bounce and roll follow the terrain and slopes; greens roll at green speed; putter shots roll.
+- **Garmin R10 club**: the R10 cannot identify the club, so every R10 shot uses the club selected on screen (club bar, 1-8 keys, distance advisor or Map My Bag). Map My Bag now works with real R10 shots.
+- **Aim**: ← / → adjusts aim (Shift = 5°), ↑ resets.
+- **Local updater**: UPDATES & SETTINGS on the main menu checks your update folder, verifies the installer checksum, installs and restarts. Roll back by installing an older version. See `Documentation/UPDATES.md`.
+- **Desktop installer**: `GolfSimZA-Setup-x.y.z.exe` with desktop and Start-menu shortcuts and an uninstaller.
+- **Fixes**: all menu scenes stay in the build list; the round HUD is no longer disabled by the range HUD; the R10 receiver only accepts connections from this PC; thread-safe R10 packet handling; the R10 bridge build is pinned to a reviewed upstream commit.
+
+## Earlier milestones
 
 ### 0.5 course and round foundation
 
@@ -45,7 +58,7 @@ Unity 6 / 6000.x. The initial target is Windows Standalone 64-bit.
 
 - Player must be selected before Map My Bag is available
 - Expanded golf-club library covering woods, hybrids, irons, wedges, putter, utility/driving irons and short-game clubs
-- Individual player golf bags with a 14-club limit
+- Individual player golf bags (default 18-club bag as requested; the 36-club library stays available)
 - TrackMan-inspired Map My Bag workflow
 - Six required shots for every club mapping session
 - Carry and total distance are calculated from the average of all six shots
@@ -61,6 +74,16 @@ Unity 6 / 6000.x. The initial target is Windows Standalone 64-bit.
 - Mapping result is associated with the player and club
 - Repeat mappings can produce a new result summary without permanently blocking future club mappings
 - Existing mapping and round-play logic remains unchanged
+
+## Controls
+
+| Key / button | Action |
+|---|---|
+| Club bar or `1`-`8` | Choose the club (used for R10 and test shots) |
+| `SPACE` | Keyboard test shot (development shot provider) |
+| `←` / `→` (`Shift` = 5°) | Aim left / right, `↑` resets aim |
+| PICK UP | Pick the ball up (+1 stroke) |
+| NEXT PLAYER / NEXT HOLE | Continue the round |
 
 ## Prototype controls
 
@@ -94,8 +117,12 @@ Real-world course representations will only be distributed when the project has 
 ```text
 Packages/
 ProjectSettings/
+Installer/            installer script + publish scripts (local updates)
+R10Bridge/            R10 Bluetooth bridge settings and build notes
 Assets/
-  GolfSim/Core/
+  GolfSim/Core/       shot data, active club, settings, version
+  GolfSim/Courses/    course library, importer, loader, shader repair
+  GolfSim/Updates/    local update service
   GolfSim/Physics/
   GolfSim/LaunchMonitors/
     GarminR10/

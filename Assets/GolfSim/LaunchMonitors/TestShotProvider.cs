@@ -39,7 +39,7 @@ namespace GolfSimZA.LaunchMonitors
             new ClubPreset("9 Iron", 9, 42.0f, 45.0f, 32.0f, 21.0f, 8000.0f),
             new ClubPreset("Pitching Wedge", 10, 46.0f, 41.0f, 29.0f, 24.0f, 9000.0f),
             new ClubPreset("Sand Wedge", 11, 56.0f, 36.0f, 26.0f, 29.0f, 9500.0f),
-            new ClubPreset("Putter", 0, 3.0f, 8.0f, 5.0f, 3.0f, 1200.0f)
+            new ClubPreset("Putter", 0, 3.0f, 2.6f, 1.8f, 1.0f, 0.0f)
         };
 
         public string DeviceName => "Development Test Shot";
@@ -83,7 +83,7 @@ namespace GolfSimZA.LaunchMonitors
                 if (IsNumberKeyPressed(Keyboard.current, i + 1))
                 {
                     selectedClubIndex = i;
-                    PlayerPrefs.DeleteKey("GolfSimZA.RoundClubName");
+                    ActiveClub.Select(clubs[i].name);
                     Debug.Log($"[GolfSimZA] Selected club: {SelectedClubName}");
                 }
             }
@@ -154,7 +154,7 @@ namespace GolfSimZA.LaunchMonitors
         private ClubPreset BuildMappingPreset(string name, int index, float loft, int shotNumber)
         {
             if (string.Equals(name, "Putter", StringComparison.OrdinalIgnoreCase))
-                return new ClubPreset(name, index + 1, loft, 8.0f, 5.0f, 3.0f, 1200.0f);
+                return new ClubPreset(name, index + 1, loft, 2.6f * UnityEngine.Random.Range(0.95f, 1.05f), 1.8f, 1.0f, 0.0f);
             float speed = Mathf.Clamp(74f - loft * 0.72f, 26f, 69f);
             float clubSpeed = Mathf.Max(18f, speed / 1.48f);
             float launch = Mathf.Clamp(loft * 0.52f + 8f, 10f, 32f);

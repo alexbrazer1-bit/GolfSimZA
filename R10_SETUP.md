@@ -6,7 +6,7 @@ GolfSimZA has a native **OpenConnect receiver** for R10 shot data. The Windows R
 
 1. Pair the Garmin Approach R10 to the Windows PC over Bluetooth.
 2. Install the GolfSimZA R10 Bridge package produced by the repository's `Build GolfSimZA R10 Bridge` workflow.
-3. GolfSimZA listens on `127.0.0.1:921`.
+3. GolfSimZA listens on `127.0.0.1:921` (only programs on this PC can connect).
 4. The packaged bridge connects directly to the R10 and forwards OpenConnect shot data to GolfSimZA.
 5. A real shot enters the normal GolfSimZA physics engine.
 6. The Play Round HUD updates club, ball speed, launch, spin, carry and remaining distance.
@@ -37,6 +37,17 @@ The legacy R10/E6 TCP server is disabled because GolfSimZA does not need it.
 8. Hit a real ball.
 
 Keyboard test mode remains available with `1-8` to choose a club and `SPACE` to simulate a shot.
+
+## Choosing the club (important)
+
+The R10 does not know which club you hit. GolfSimZA stamps every R10 shot with the club selected on screen:
+the club bar, the `1`-`8` keys, the distance advisor's SELECT button, or the club being mapped in Map My Bag.
+Select the club before each shot, the same way as in other simulator software.
+
+## Release build
+
+The release build (GolfSimZA → Release → Release Manager) copies the bridge into the player automatically from
+`R10Bridge/publish/` or `R10Bridge/GolfSimZA-R10-Bridge-win-x64.zip` (the GitHub Actions artifact).
 
 ## Practice swings vs real shots
 

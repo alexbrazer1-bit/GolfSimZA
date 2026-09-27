@@ -56,12 +56,7 @@ namespace GolfSimZA.Editor
             controllerSo.FindProperty("launchMonitorBehaviour").objectReferenceValue = router;
             controllerSo.ApplyModifiedPropertiesWithoutUndo();
 
-            EditorBuildSettings.scenes = new[]
-            {
-                new EditorBuildSettingsScene("Assets/Scenes/GolfSimZA_0_5_CourseSelection.unity", true),
-                new EditorBuildSettingsScene(ScenePath, true),
-                new EditorBuildSettingsScene("Assets/Scenes/GolfSimZA_0_4_SimulatorPresentationRange.unity", true)
-            };
+            GolfSimBuildScenes.Apply();
 
             EditorSceneManager.SaveScene(scene);
             AssetDatabase.SaveAssets();

@@ -6,7 +6,8 @@ namespace GolfSimZA.UI
 {
     public sealed class RoundSettingsUI : MonoBehaviour
     {
-        private readonly string[] tees = { "Red", "White", "Blue", "Black" };
+        // Tees come from the selected course (imported courses have their own tee boxes).
+        private string[] tees = { "Red", "White", "Blue", "Black" };
         private readonly string[] gameModes = { "Stroke Play", "Match Play" };
         private readonly string[] pins = { "Easy", "Standard", "Tournament" };
         private readonly string[] gimmies = { "Off", "3 m", "6 m" };
@@ -37,6 +38,7 @@ namespace GolfSimZA.UI
         private void Start()
         {
             roundLength = CourseSession.RoundLength;
+            tees = CourseSession.AvailableTees;
             for (int i = 0; i < tees.Length; i++)
                 if (tees[i] == CourseSession.TeeName) selectedTee = i;
         }

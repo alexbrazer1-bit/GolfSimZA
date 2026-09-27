@@ -25,11 +25,21 @@ namespace GolfSimZA.UI
             simulator = simulator != null ? simulator : GetComponent<SimulatorController>();
             flight = flight != null ? flight : (simulator != null ? simulator.BallFlight : FindFirstObjectByType<BallFlightSimulator>());
 
-            RoundGameplayUI legacy = FindFirstObjectByType<RoundGameplayUI>();
-            if (legacy != null) legacy.enabled = false;
-
             isRange = IsDrivingRange();
-            if (isRange) BuildDrivingRange();
+            RoundGameplayUI round = FindFirstObjectByType<RoundGameplayUI>();
+
+            if (isRange)
+            {
+                // Driving range: this HUD replaces the round HUD.
+                if (round != null) round.enabled = false;
+                BuildDrivingRange();
+            }
+            else if (round != null)
+            {
+                // Playing a course: the round HUD runs the hole, scoring and course.
+                // Previously this component disabled it, which stopped rounds progressing.
+                enabled = false;
+            }
         }
 
         private void Update()
@@ -51,8 +61,12 @@ namespace GolfSimZA.UI
                 status = "SHOT COMPLETE";
         }
 
-        private bool IsDrivingRange()
+        private bool IsDrivingRange() => IsRangeSession();
+
+        /// <summary>True when the selected "course" is the practice range (range HUD instead of a round).</summary>
+        public static bool IsRangeSession()
         {
+            if (CourseSession.IsImportedCourse) return false;
             string name = CourseSession.CourseName ?? string.Empty;
             return name.IndexOf("range", StringComparison.OrdinalIgnoreCase) >= 0 ||
                    name.IndexOf("practice", StringComparison.OrdinalIgnoreCase) >= 0;
@@ -279,7 +293,11 @@ namespace GolfSimZA.UI
             for (int i = 0; i < clubs.Length; i++)
             {
                 Rect r = new Rect(start + i * bw, y + 8f, bw - 3f, 30f);
-                if (GUI.Button(r, clubs[i], button)) selectedClub = i + 1;
+                if (GUI.Button(r, clubs[i], button))
+                {
+                    selectedClub = i + 1;
+                    ActiveClub.SelectSlot(selectedClub);
+                }
                 if (i + 1 == selectedClub)
                     GUI.DrawTexture(new Rect(r.x + 4f, r.yMax - 3f, r.width - 8f, 3f), accentTex);
             }

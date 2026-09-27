@@ -41,12 +41,7 @@ namespace GolfSimZA.Editor
 
             string scenePath = "Assets/Scenes/GolfSimZA_0_5_CourseSelection.unity";
             EditorSceneManager.SaveScene(scene, scenePath);
-            EditorBuildSettings.scenes = new[]
-            {
-                new EditorBuildSettingsScene(scenePath, true),
-                new EditorBuildSettingsScene("Assets/Scenes/GolfSimZA_0_6_PlayRound.unity", true),
-                new EditorBuildSettingsScene("Assets/Scenes/GolfSimZA_0_4_SimulatorPresentationRange.unity", true)
-            };
+            GolfSimBuildScenes.Apply();
 
             AssetDatabase.SaveAssets();
             AssetDatabase.Refresh();
@@ -128,12 +123,7 @@ namespace GolfSimZA.Editor
             if (!AssetDatabase.IsValidFolder(directory)) AssetDatabase.CreateFolder("Assets", "Scenes");
             string scenePath = "Assets/Scenes/GolfSimZA_0_6_PlayRound.unity";
             EditorSceneManager.SaveScene(scene, scenePath);
-            EditorBuildSettings.scenes = new[]
-            {
-                new EditorBuildSettingsScene("Assets/Scenes/GolfSimZA_0_5_CourseSelection.unity", true),
-                new EditorBuildSettingsScene(scenePath, true),
-                new EditorBuildSettingsScene("Assets/Scenes/GolfSimZA_0_4_SimulatorPresentationRange.unity", true)
-            };
+            GolfSimBuildScenes.Apply();
 
             AssetDatabase.SaveAssets();
             AssetDatabase.Refresh();
@@ -214,7 +204,7 @@ namespace GolfSimZA.Editor
             if (!AssetDatabase.IsValidFolder(directory)) AssetDatabase.CreateFolder("Assets", "Scenes");
             string scenePath = presentation ? "Assets/Scenes/GolfSimZA_0_4_SimulatorPresentationRange.unity" : visual ? "Assets/Scenes/GolfSimZA_0_2_VisualDrivingRange.unity" : "Assets/Scenes/GolfSimZA_0_1_2_DrivingRange.unity";
             EditorSceneManager.SaveScene(scene, scenePath);
-            EditorBuildSettings.scenes = new[] { new EditorBuildSettingsScene(scenePath, true) };
+            GolfSimBuildScenes.Apply();
             AssetDatabase.SaveAssets();
             AssetDatabase.Refresh();
             Debug.Log(presentation ? "[GolfSimZA] Phase 0.4 simulator presentation range created. Press Play, select a club with 1-8, then press Space." : visual ? "[GolfSimZA] Phase 0.2 visual driving range created. Press Play, select a club with 1-8, then press Space." : "[GolfSimZA] Phase 0.1.2 driving range created. Press Play, select a club with 1-8, then press Space.");

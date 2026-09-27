@@ -13,6 +13,11 @@ namespace GolfSimZA.Courses
         private const string MulliganKey = "GolfSimZA.MulliganSetting";
         private const string ResumeKey = "GolfSimZA.ResumeRound";
         private const string PlayersKey = "GolfSimZA.PlayerNames";
+        private const string CourseIdKey = "GolfSimZA.CourseId";
+        private const string CourseTeesKey = "GolfSimZA.CourseTees";
+
+        /// <summary>Tees used by the built-in demo courses.</summary>
+        public static readonly string[] DemoTees = { "Red", "White", "Blue", "Black" };
 
         public static string CourseName => PlayerPrefs.GetString(CourseKey, "GolfSim ZA Practice Range");
         public static string TeeName => PlayerPrefs.GetString(TeeKey, "Blue");
@@ -23,6 +28,28 @@ namespace GolfSimZA.Courses
         public static string MulliganSetting => PlayerPrefs.GetString(MulliganKey, "Off");
         public static bool ResumeRound => PlayerPrefs.GetInt(ResumeKey, 0) == 1;
         public static string PlayerNames => PlayerPrefs.GetString(PlayersKey, "Player 1");
+
+        /// <summary>Id of an imported course in the CourseLibrary, or empty for a demo course / range.</summary>
+        public static string CourseId => PlayerPrefs.GetString(CourseIdKey, "");
+        public static bool IsImportedCourse => !string.IsNullOrEmpty(CourseId);
+
+        /// <summary>Tee names available on the selected course.</summary>
+        public static string[] AvailableTees
+        {
+            get
+            {
+                string saved = PlayerPrefs.GetString(CourseTeesKey, "");
+                string[] tees = saved.Split(new[] { '|' }, System.StringSplitOptions.RemoveEmptyEntries);
+                return tees.Length > 0 ? tees : DemoTees;
+            }
+        }
+
+        public static void SetCourse(string courseId, string[] availableTees)
+        {
+            PlayerPrefs.SetString(CourseIdKey, courseId ?? "");
+            PlayerPrefs.SetString(CourseTeesKey, availableTees != null && availableTees.Length > 0 ? string.Join("|", availableTees) : "");
+            PlayerPrefs.Save();
+        }
 
         public static void SetSession(string courseName, string teeName, int roundLength)
         {
