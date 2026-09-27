@@ -33,3 +33,18 @@ sysinfo.txt
 # Large course/build assets - store via release/CDN pipeline
 CoursePackages/Installed/
 Builds/
+
+# GSPro reference material: do not publish the GSPro application or runtime binaries
+GSPro_Reference_Material/**/*.exe
+GSPro_Reference_Material/**/*.dll
+GSPro_Reference_Material/**/*.pdb
+GSPro_Reference_Material/**/*.lic
+GSPro_Reference_Material/**/*.dat
+GSPro_Reference_Material/**/*.ico
+GSPro_Reference_Material/**/TOS.html
+
+# GSPro reference course packages / proprietary course assets
+GSPro_Reference_Material/**/Courses/**/*.unity3d
+GSPro_Reference_Material/**/Courses/**/*.g3d
+GSPro_Reference_Material/**/Courses/**/*.gsp
+GSPro_Reference_Material/**/Courses/**/*.gkd
