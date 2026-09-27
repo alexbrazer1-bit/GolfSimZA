@@ -15,6 +15,14 @@ namespace GolfSimZA.Courses
         private const string PlayersKey = "GolfSimZA.PlayerNames";
         private const string CourseIdKey = "GolfSimZA.CourseId";
         private const string CourseTeesKey = "GolfSimZA.CourseTees";
+        private const string PracticeKey = "GolfSimZA.PracticeMode";
+
+        /// <summary>On-course practice: pick any hole, no scoring.</summary>
+        public static bool PracticeMode
+        {
+            get => PlayerPrefs.GetInt(PracticeKey, 0) == 1;
+            set { PlayerPrefs.SetInt(PracticeKey, value ? 1 : 0); PlayerPrefs.Save(); }
+        }
 
         /// <summary>Tees used by the built-in demo courses.</summary>
         public static readonly string[] DemoTees = { "Red", "White", "Blue", "Black" };
@@ -25,7 +33,7 @@ namespace GolfSimZA.Courses
         public static string GameMode => PlayerPrefs.GetString(ModeKey, "Stroke Play");
         public static string PinSetting => PlayerPrefs.GetString(PinsKey, "Standard");
         public static string GimmieSetting => PlayerPrefs.GetString(GimmieKey, "1 m");
-        public static string MulliganSetting => PlayerPrefs.GetString(MulliganKey, "Off");
+        public static string MulliganSetting => PlayerPrefs.GetString(MulliganKey, "Unlimited");
         public static bool ResumeRound => PlayerPrefs.GetInt(ResumeKey, 0) == 1;
         public static string PlayerNames => PlayerPrefs.GetString(PlayersKey, "Player 1");
 

@@ -1336,6 +1336,7 @@ MonoBehaviour:
   addressBackDistance: 6.5
   addressHeight: 2.2
   addressLookAhead: 60
+  addressLookHeight: 1.5
 --- !u!114 &1396048592
 MonoBehaviour:
   m_ObjectHideFlags: 0

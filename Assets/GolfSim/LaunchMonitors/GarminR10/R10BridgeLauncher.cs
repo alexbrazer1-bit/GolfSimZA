@@ -22,8 +22,17 @@ namespace GolfSimZA.LaunchMonitors.GarminR10
 
         private void Start()
         {
+#if UNITY_EDITOR
+            // A script reload in Play mode skips OnDestroy; stop the bridge first so it is not orphaned.
+            UnityEditor.AssemblyReloadEvents.beforeAssemblyReload += StopBridge;
+#endif
             if (autoStart)
                 StartBridge();
+        }
+
+        private void OnApplicationQuit()
+        {
+            StopBridge();
         }
 
         public bool StartBridge()
@@ -40,6 +49,8 @@ namespace GolfSimZA.LaunchMonitors.GarminR10
                     "The Unity receiver will still listen on TCP 921, but the R10 Bluetooth bridge must be started separately until the packaged bridge is installed.");
                 return false;
             }
+
+            StopOrphanedBridges(executablePath);
 
             try
             {
@@ -102,8 +113,38 @@ namespace GolfSimZA.LaunchMonitors.GarminR10
 
         private void OnDestroy()
         {
+#if UNITY_EDITOR
+            UnityEditor.AssemblyReloadEvents.beforeAssemblyReload -= StopBridge;
+#endif
             if (closeBridgeOnDestroy)
                 StopBridge();
+        }
+
+        /// <summary>
+        /// Stops bridges started from this same exe that are still running (e.g. after a crash),
+        /// so only one bridge talks to the R10 and the exe can be updated.
+        /// </summary>
+        private static void StopOrphanedBridges(string executablePath)
+        {
+            string full = Path.GetFullPath(executablePath);
+            foreach (Process p in Process.GetProcessesByName(Path.GetFileNameWithoutExtension(full)))
+            {
+                try
+                {
+                    if (p.MainModule == null || !string.Equals(Path.GetFullPath(p.MainModule.FileName), full, StringComparison.OrdinalIgnoreCase)) continue;
+                    p.Kill();
+                    p.WaitForExit(3000);
+                    UnityEngine.Debug.Log($"[GolfSimZA] Stopped an old R10 bridge (process {p.Id}) before starting a new one.");
+                }
+                catch (Exception ex)
+                {
+                    UnityEngine.Debug.LogWarning($"[GolfSimZA] Could not check R10 bridge process: {ex.Message}");
+                }
+                finally
+                {
+                    p.Dispose();
+                }
+            }
         }
     }
 }

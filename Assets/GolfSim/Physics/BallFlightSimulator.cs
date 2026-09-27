@@ -91,6 +91,12 @@ namespace GolfSimZA.Physics
         public float MaxHeightMeters => maxHeight;
         public float FlightTimeSeconds => flightTime;
         public bool WasHoled { get; private set; }
+        /// <summary>Angle the ball came down at on its first landing (degrees).</summary>
+        public float DescentAngleDeg { get; private set; }
+        /// <summary>Distance right (+) or left (-) of the aim line where the ball stopped, metres.</summary>
+        public float OfflineMeters { get; private set; }
+        /// <summary>Straight-line aim direction for the last shot.</summary>
+        public Vector3 AimDirection { get; private set; } = Vector3.forward;
         public Vector3 LandingPosition => landingPosition;
         public Vector3 LaunchPosition => launchPosition;
         public Transform Ball => ball;
@@ -165,6 +171,9 @@ namespace GolfSimZA.Physics
 
             float scale = Mathf.Max(0.0001f, metersToUnity);
             float speed = Mathf.Max(0f, shot.BallSpeedMps) * scale;
+            AimDirection = Quaternion.Euler(0f, AimYawDegrees, 0f) * Vector3.forward;
+            DescentAngleDeg = 0f;
+            OfflineMeters = 0f;
             float yaw = (AimYawDegrees + shot.LaunchDirectionDeg) * Mathf.Deg2Rad;
             Vector3 horizontal = new Vector3(Mathf.Sin(yaw), 0f, Mathf.Cos(yaw));
 
@@ -306,6 +315,8 @@ namespace GolfSimZA.Physics
 
             if (!landedOnce)
             {
+                float horizontalSpeed = new Vector2(velocity.x, velocity.z).magnitude;
+                DescentAngleDeg = Mathf.Atan2(Mathf.Max(0f, -velocity.y), Mathf.Max(0.001f, horizontalSpeed)) * Mathf.Rad2Deg;
                 landedOnce = true;
                 landingPosition = ball.position;
                 carryMeters = HorizontalDistance(landingPosition, launchPosition);
@@ -414,6 +425,11 @@ namespace GolfSimZA.Physics
 
         private void CompleteShot()
         {
+            Vector3 fromLaunch = ball.position - launchPosition;
+            fromLaunch.y = 0f;
+            Vector3 right = Vector3.Cross(Vector3.up, AimDirection);
+            OfflineMeters = Vector3.Dot(fromLaunch, right) / Mathf.Max(0.0001f, metersToUnity);
+
             if (puttMode)
                 carryMeters = 0f;
 

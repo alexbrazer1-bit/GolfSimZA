@@ -96,6 +96,13 @@ namespace GolfSimZA.Core
             ShotData completed = shot;
             completed.CarryMeters = carryMeters;
             completed.TotalMeters = totalMeters;
+            completed.PeakHeightMeters = maxHeightMeters;
+            completed.IsComplete = true;
+            if (ballFlightSimulator != null)
+            {
+                completed.DescentAngleDeg = ballFlightSimulator.DescentAngleDeg;
+                completed.OfflineMeters = ballFlightSimulator.OfflineMeters;
+            }
             lastShot = completed;
             shotHistory.ReplaceLast(completed);
 

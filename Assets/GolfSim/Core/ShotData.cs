@@ -21,6 +21,20 @@ namespace GolfSimZA.Core
         public bool HasClubData;
         public bool IsValid;
 
+        // Extra launch-monitor values (0 when the device does not report them).
+        public float SideSpinRpm;
+        public float ClubPathDeg;
+        public float FaceToTargetDeg;
+        public float AttackAngleDeg;
+        public float DynamicLoftDeg;
+        public bool HasClubPath;
+
+        // Filled in by the simulator when the ball comes to rest.
+        public float PeakHeightMeters;
+        public float DescentAngleDeg;
+        public float OfflineMeters;
+        public bool IsComplete;
+
         public static ShotData TestDriver(float ballSpeedMps = 67.0f)
         {
             return CreateTestShot("Driver", 1, 10.5f, ballSpeedMps, 45.0f, 13.5f, 2400.0f);

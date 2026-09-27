@@ -92,7 +92,7 @@ namespace GolfSimZA.Editor
 
             EditorGUILayout.Space();
             EditorGUILayout.LabelField("What changed (shown in the game)");
-            notes = EditorGUILayout.TextArea(notes, GUILayout.MinHeight(60));
+            notes = EditorGUILayout.TextArea(notes, new GUIStyle(EditorStyles.textArea) { wordWrap = true }, GUILayout.MinHeight(60), GUILayout.MaxWidth(position.width - 12f));
 
             EditorGUILayout.Space();
             EditorGUILayout.BeginHorizontal();
@@ -329,9 +329,10 @@ namespace GolfSimZA.Editor
                 }
                 else if (File.Exists(BridgeZip))
                 {
-                    if (Directory.Exists(target)) Directory.Delete(target, true);
-                    Directory.CreateDirectory(target);
-                    ZipFile.ExtractToDirectory(BridgeZip, target);
+                    string unpacked = Path.Combine(Path.GetTempPath(), "GolfSimZA-R10-Bridge-zip");
+                    if (Directory.Exists(unpacked)) Directory.Delete(unpacked, true);
+                    ZipFile.ExtractToDirectory(BridgeZip, unpacked);
+                    CopyFolder(unpacked, target);
                 }
                 else if (BuildBridge(out string bridgeError))
                 {
@@ -355,14 +356,77 @@ namespace GolfSimZA.Editor
             }
         }
 
+        /// <summary>
+        /// Copies changed files only (identical files - including a running bridge exe - are left alone),
+        /// so Unity's .meta files are kept and a locked exe does not break the build.
+        /// </summary>
         private static void CopyFolder(string source, string target)
         {
-            if (Directory.Exists(target)) Directory.Delete(target, true);
             Directory.CreateDirectory(target);
             foreach (string dir in Directory.GetDirectories(source, "*", SearchOption.AllDirectories))
                 Directory.CreateDirectory(dir.Replace(source, target));
             foreach (string file in Directory.GetFiles(source, "*", SearchOption.AllDirectories))
-                File.Copy(file, file.Replace(source, target), true);
+            {
+                string destination = file.Replace(source, target);
+                if (SameFile(file, destination)) continue;
+                try
+                {
+                    File.Copy(file, destination, true);
+                }
+                catch (IOException) when (StopBridgeProcesses(target) > 0)
+                {
+                    File.Copy(file, destination, true); // retry once the stale bridge has exited
+                }
+                catch (UnauthorizedAccessException) when (StopBridgeProcesses(target) > 0)
+                {
+                    File.Copy(file, destination, true);
+                }
+            }
+        }
+
+        private static bool SameFile(string a, string b)
+        {
+            if (!File.Exists(b)) return false;
+            var fa = new FileInfo(a);
+            var fb = new FileInfo(b);
+            if (fa.Length != fb.Length) return false;
+            using (var sha = System.Security.Cryptography.SHA256.Create())
+            using (FileStream sa = File.OpenRead(a))
+            using (FileStream sb = new FileStream(b, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+            {
+                byte[] ha = sha.ComputeHash(sa);
+                byte[] hb = sha.ComputeHash(sb);
+                for (int i = 0; i < ha.Length; i++) if (ha[i] != hb[i]) return false;
+                return true;
+            }
+        }
+
+        /// <summary>Stops bridge processes running from the given folder (left over from Play mode). Returns how many.</summary>
+        private static int StopBridgeProcesses(string folder)
+        {
+            int stopped = 0;
+            string full = Path.GetFullPath(folder).TrimEnd('\\', '/');
+            foreach (Process p in Process.GetProcessesByName(Path.GetFileNameWithoutExtension(BridgeExe)))
+            {
+                try
+                {
+                    string path = p.MainModule != null ? Path.GetDirectoryName(p.MainModule.FileName) : null;
+                    if (path == null || !string.Equals(Path.GetFullPath(path).TrimEnd('\\', '/'), full, StringComparison.OrdinalIgnoreCase)) continue;
+                    p.Kill();
+                    p.WaitForExit(5000);
+                    stopped++;
+                    Debug.Log("[GolfSimZA] Stopped a running R10 bridge (" + p.Id + ") so it can be updated.");
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogWarning("[GolfSimZA] Could not stop R10 bridge process: " + ex.Message);
+                }
+                finally
+                {
+                    p.Dispose();
+                }
+            }
+            return stopped;
         }
 
         // ------------------------------------------------------------ Publish

@@ -474,6 +474,12 @@ namespace GolfSimZA.LaunchMonitors.GarminR10
                 CarryMeters = carryMeters,
                 TotalMeters = carryMeters,
                 HasClubData = c != null && c.Speed > 0,
+                SideSpinRpm = (float)b.SideSpin,
+                ClubPathDeg = c != null ? (float)c.Path : 0f,
+                FaceToTargetDeg = c != null ? (float)c.FaceToTarget : 0f,
+                AttackAngleDeg = c != null ? (float)c.AngleOfAttack : 0f,
+                DynamicLoftDeg = c != null ? (float)c.Loft : 0f,
+                HasClubPath = c != null && (Math.Abs(c.Path) > 0.001 || Math.Abs(c.FaceToTarget) > 0.001),
                 IsValid = ballSpeedMps > 0.5f
             };
         }

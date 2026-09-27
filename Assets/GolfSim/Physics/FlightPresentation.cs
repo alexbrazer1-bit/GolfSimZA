@@ -33,6 +33,16 @@ namespace GolfSimZA.Physics
         [SerializeField] private float addressBackDistance = 6.5f;
         [SerializeField] private float addressHeight = 2.2f;
         [SerializeField] private float addressLookAhead = 60f;
+        [SerializeField] private float addressLookHeight = 1.5f;
+
+        /// <summary>Changes the behind-the-ball view (the range uses a higher view looking down the range).</summary>
+        public void ConfigureAddressView(float height, float backDistance, float lookAhead, float lookHeight)
+        {
+            addressHeight = Mathf.Max(0.5f, height);
+            addressBackDistance = Mathf.Max(1f, backDistance);
+            addressLookAhead = Mathf.Max(5f, lookAhead);
+            addressLookHeight = lookHeight;
+        }
 
         /// <summary>
         /// Moves the resting camera behind the ball, looking along the aim line.
@@ -46,7 +56,7 @@ namespace GolfSimZA.Physics
             aimDirection.Normalize();
 
             homeCameraPosition = ballPosition - aimDirection * addressBackDistance + Vector3.up * addressHeight;
-            Vector3 lookTarget = ballPosition + aimDirection * addressLookAhead + Vector3.up * 1.5f;
+            Vector3 lookTarget = ballPosition + aimDirection * addressLookAhead + Vector3.up * addressLookHeight;
             homeCameraRotation = Quaternion.LookRotation(lookTarget - homeCameraPosition, Vector3.up);
             followDirection = aimDirection;
             homeAimDirection = aimDirection;
@@ -60,6 +70,58 @@ namespace GolfSimZA.Physics
                     followCamera.transform.rotation = homeCameraRotation;
                 }
             }
+        }
+
+        private Coroutine flyover;
+
+        /// <summary>Flies the camera along the hole (tee → aim points → pin), then calls done.</summary>
+        public void PlayFlyover(System.Collections.Generic.List<Vector3> path, System.Action done)
+        {
+            if (followCamera == null || path == null || path.Count < 2) return;
+            if (flyover != null) StopCoroutine(flyover);
+            flyover = StartCoroutine(FlyoverRoutine(path, done));
+        }
+
+        public bool IsFlyingOver => flyover != null;
+
+        private System.Collections.IEnumerator FlyoverRoutine(System.Collections.Generic.List<Vector3> path, System.Action done)
+        {
+            float total = 0f;
+            for (int i = 1; i < path.Count; i++) total += Vector3.Distance(path[i - 1], path[i]);
+            float duration = Mathf.Clamp(total / 45f, 4f, 12f);
+            float t = 0f;
+            while (t < duration)
+            {
+                t += Time.deltaTime;
+                float along = Mathf.SmoothStep(0f, 1f, t / duration) * total;
+                Vector3 point = PointAlong(path, along, out Vector3 forward);
+                Vector3 camPos = point - forward * 25f + Vector3.up * 32f;
+                float ground = GroundProbe.HeightAt(camPos);
+                camPos.y = Mathf.Max(camPos.y, ground + 20f);
+                followCamera.transform.position = Vector3.Lerp(followCamera.transform.position, camPos, 1f - Mathf.Exp(-4f * Time.deltaTime));
+                Vector3 look = PointAlong(path, Mathf.Min(total, along + 60f), out _);
+                followCamera.transform.rotation = Quaternion.Slerp(followCamera.transform.rotation, Quaternion.LookRotation(look - followCamera.transform.position, Vector3.up), 1f - Mathf.Exp(-4f * Time.deltaTime));
+                yield return null;
+            }
+            flyover = null;
+            cameraMoved = true;
+            done?.Invoke();
+        }
+
+        private static Vector3 PointAlong(System.Collections.Generic.List<Vector3> path, float distance, out Vector3 forward)
+        {
+            forward = Vector3.forward;
+            for (int i = 1; i < path.Count; i++)
+            {
+                float segment = Vector3.Distance(path[i - 1], path[i]);
+                Vector3 dir = path[i] - path[i - 1];
+                dir.y = 0f;
+                if (dir.sqrMagnitude > 0.0001f) forward = dir.normalized;
+                if (distance <= segment || i == path.Count - 1)
+                    return Vector3.Lerp(path[i - 1], path[i], segment > 0.001f ? Mathf.Clamp01(distance / segment) : 1f);
+                distance -= segment;
+            }
+            return path[path.Count - 1];
         }
 
         public void HideLandingMarker()
@@ -101,6 +163,7 @@ namespace GolfSimZA.Physics
 
         private void Update()
         {
+            if (flyover != null) return;
             if (!followDuringFlight || flight == null || ball == null || followCamera == null)
                 return;
 

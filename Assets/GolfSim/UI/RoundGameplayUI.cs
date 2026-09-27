@@ -46,6 +46,11 @@ namespace GolfSimZA.UI
         private Vector3 pinPosition;
         private Vector3 teePosition;
         private string status = "READY";
+        private bool showScorecard;
+        private int lastShooterIndex;
+        private int lastShotStrokes;
+        private PuttGridRenderer puttGrid;
+        private bool PracticeMode => CourseSession.PracticeMode;
         private string banner;
         private float bannerUntil;
 
@@ -56,11 +61,17 @@ namespace GolfSimZA.UI
         private int[] playerHoleStrokes = { 0 };
         private bool[] playerHoled = { false };
         private List<int[]> scorecard = new List<int[]>();
+        private int[] mulligansUsed = { 0 };
+        private bool matchDecidedAnnounced;
+
+        /// <summary>Match play needs at least two players; practice has no scoring.</summary>
+        private bool MatchPlay => !PracticeMode && playerNames.Length >= 2 &&
+                                  string.Equals(CourseSession.GameMode, "Match Play", StringComparison.OrdinalIgnoreCase);
 
         private readonly Color dark = new Color(0.015f, 0.055f, 0.065f, 0.86f);
         private readonly Color darker = new Color(0.005f, 0.025f, 0.03f, 0.92f);
-        private readonly Color blue = new Color(0.03f, 0.48f, 0.82f, 0.95f);
-        private readonly Color blueBright = new Color(0.08f, 0.64f, 1f, 1f);
+        private readonly Color blue = new Color(0.07f, 0.55f, 0.37f, 0.95f);
+        private readonly Color blueBright = new Color(0.96f, 0.72f, 0.23f, 1f);
         private readonly Color muted = new Color(0.76f, 0.83f, 0.85f, 1f);
 
         private bool UsingCourse => course != null;
@@ -78,6 +89,7 @@ namespace GolfSimZA.UI
 
             LoadPlayers();
             holeIndex = 0;
+            TryResumeRound();
 
             if (ballFlightSimulator == null) ballFlightSimulator = GetComponent<BallFlightSimulator>();
             presentation = GetComponent<FlightPresentation>();
@@ -87,6 +99,13 @@ namespace GolfSimZA.UI
             if (courseLoader == null) courseLoader = gameObject.AddComponent<CourseLoader>();
             courseLoader.Loaded += OnCourseLoaded;
             courseLoader.Failed += OnCourseFailed;
+
+            puttGrid = gameObject.AddComponent<PuttGridRenderer>();
+            GameOptions.ScorecardRequested += ToggleScorecard;
+            GameOptions.MulliganRequested += Mulligan;
+            GameOptions.FlyoverRequested += Flyover;
+            GameOptions.ShowFlagChanged += ApplyFlagVisibility;
+            GameOptions.PuttGridChanged += UpdatePuttGrid;
 
             if (CourseSession.IsImportedCourse && !GolfSimZA.Players.ClubMappingSession.IsActive)
             {
@@ -101,6 +120,11 @@ namespace GolfSimZA.UI
 
         private void OnDestroy()
         {
+            GameOptions.ScorecardRequested -= ToggleScorecard;
+            GameOptions.MulliganRequested -= Mulligan;
+            GameOptions.FlyoverRequested -= Flyover;
+            GameOptions.ShowFlagChanged -= ApplyFlagVisibility;
+            GameOptions.PuttGridChanged -= UpdatePuttGrid;
             if (courseLoader != null)
             {
                 courseLoader.Loaded -= OnCourseLoaded;
@@ -147,6 +171,9 @@ namespace GolfSimZA.UI
             if (shotCount > lastObservedShotCount)
             {
                 int newShots = shotCount - lastObservedShotCount;
+                lastShooterIndex = activePlayerIndex;
+                lastShotStrokes = 0;
+                puttGrid?.Hide();
                 AddStrokes(activePlayerIndex, newShots);
                 lastObservedShotCount = shotCount;
                 shotFinished = false;
@@ -265,6 +292,73 @@ namespace GolfSimZA.UI
         {
             playerHoleStrokes[player] += strokes;
             playerTotalStrokes[player] += strokes;
+            if (player == lastShooterIndex) lastShotStrokes += strokes;
+        }
+
+        // ---------------------------------------------------------------- Game menu actions
+
+        private void ToggleScorecard() => showScorecard = !showScorecard;
+
+        /// <summary>Takes the last shot back: strokes (incl. penalties) removed, ball back where it was.</summary>
+        private void Mulligan()
+        {
+            if (ballFlightSimulator == null || ballFlightSimulator.IsInFlight || lastShotStrokes <= 0) return;
+            int p = lastShooterIndex;
+            int allowance = MulliganAllowance;
+            if (mulligansUsed[p] >= allowance)
+            {
+                ShowBanner(allowance == 0 ? "MULLIGANS ARE OFF FOR THIS ROUND" : "NO MULLIGANS LEFT  •  " + playerNames[p]);
+                return;
+            }
+            mulligansUsed[p]++;
+            playerHoleStrokes[p] = Mathf.Max(0, playerHoleStrokes[p] - lastShotStrokes);
+            playerTotalStrokes[p] = Mathf.Max(0, playerTotalStrokes[p] - lastShotStrokes);
+            lastShotStrokes = 0;
+            playerHoled[p] = false;
+            playerPositions[p] = playerPreviousPositions[p];
+            activePlayerIndex = p;
+            shotFinished = false;
+            waitingForNextPlayer = false;
+            aimOffsetDegrees = 0f;
+            presentation?.HideLandingMarker();
+            tracer?.Clear();
+            PrepareActivePlayer(true);
+            int left = allowance == int.MaxValue ? -1 : allowance - mulligansUsed[p];
+            ShowBanner("MULLIGAN  •  " + playerNames[p] + " hits again" + (left >= 0 ? "  •  " + left + " LEFT" : ""));
+        }
+
+        private void Flyover()
+        {
+            if (presentation == null || ballFlightSimulator == null || ballFlightSimulator.IsInFlight) return;
+            var path = new System.Collections.Generic.List<Vector3> { teePosition };
+            if (UsingCourse)
+            {
+                HoleDefinition hole = course.GetHole(holeIndex);
+                if (hole.aimPoints != null) path.AddRange(hole.aimPoints);
+            }
+            path.Add(pinPosition);
+            presentation.PlayFlyover(path, () => ApplyAim(ball != null ? ball.position : teePosition, true));
+        }
+
+        private void ApplyFlagVisibility()
+        {
+            if (pin != null) pin.gameObject.SetActive(GameOptions.ShowFlag);
+        }
+
+        private void UpdatePuttGrid()
+        {
+            if (puttGrid == null || ball == null || ballFlightSimulator == null) return;
+            if (GameOptions.PuttGrid && ballFlightSimulator.IsOnGreen(ball.position))
+                puttGrid.Show(pinPosition, ball.position);
+            else
+                puttGrid.Hide();
+        }
+
+        private void JumpToHole(int index)
+        {
+            if (ballFlightSimulator != null && ballFlightSimulator.IsInFlight) return;
+            holeIndex = ((index % HoleCount) + HoleCount) % HoleCount;
+            StartHole();
         }
 
         private bool AllHoled()
@@ -315,7 +409,114 @@ namespace GolfSimZA.UI
             playerTotalStrokes = new int[playerNames.Length];
             playerHoleStrokes = new int[playerNames.Length];
             playerHoled = new bool[playerNames.Length];
+            mulligansUsed = new int[playerNames.Length];
             activePlayerIndex = 0;
+        }
+
+        /// <summary>RESUME ROUND: continue the saved round on this course with the same players.</summary>
+        private void TryResumeRound()
+        {
+            if (PracticeMode || !CourseSession.ResumeRound) return;
+            RoundSave save = RoundSave.LoadFor(playerNames);
+            if (save == null)
+            {
+                resumedBanner = "NO SAVED ROUND FOR THESE PLAYERS ON THIS COURSE  •  NEW ROUND";
+                return;
+            }
+            scorecard = new List<int[]>(save.Scores);
+            for (int h = 0; h < scorecard.Count; h++)
+            {
+                if (scorecard[h] == null) continue;
+                for (int p = 0; p < playerNames.Length && p < scorecard[h].Length; p++) playerTotalStrokes[p] += scorecard[h][p];
+            }
+            for (int p = 0; p < playerNames.Length && p < save.MulligansUsed.Length; p++) mulligansUsed[p] = save.MulligansUsed[p];
+            holeIndex = Mathf.Max(0, save.NextHole);
+            resumedBanner = "ROUND RESUMED  •  HOLE " + (holeIndex + 1);
+        }
+
+        private string resumedBanner;
+        private string holeResultText;
+
+        private void SaveRoundProgress()
+        {
+            if (PracticeMode) return;
+            new RoundSave
+            {
+                CourseKey = RoundSave.CurrentCourseKey,
+                CourseName = UsingCourse ? course.name : CourseSession.CourseName,
+                Players = playerNames,
+                NextHole = holeIndex + 1,
+                RoundLength = HoleCount,
+                Scores = new List<int[]>(scorecard),
+                MulligansUsed = mulligansUsed
+            }.Save();
+        }
+
+        /// <summary>Mulligans allowed per player per round (Round Settings → MULLIGANS).</summary>
+        private int MulliganAllowance
+        {
+            get
+            {
+                if (PracticeMode) return int.MaxValue;
+                string setting = CourseSession.MulliganSetting ?? "Unlimited";
+                if (setting.StartsWith("Unlimited", StringComparison.OrdinalIgnoreCase)) return int.MaxValue;
+                if (setting.StartsWith("Off", StringComparison.OrdinalIgnoreCase)) return 0;
+                return int.TryParse(setting.Trim(), System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out int n) ? Mathf.Max(0, n) : int.MaxValue;
+            }
+        }
+
+        // ---------------------------------------------------------------- Match play
+
+        /// <summary>Index of the player who won the hole outright, -1 when halved or not played.</summary>
+        private int HoleWinner(int[] scores)
+        {
+            if (scores == null) return -1;
+            int best = int.MaxValue, winner = -1;
+            bool tie = false;
+            for (int p = 0; p < scores.Length; p++)
+            {
+                if (scores[p] <= 0) return -1;
+                if (scores[p] < best) { best = scores[p]; winner = p; tie = false; }
+                else if (scores[p] == best) tie = true;
+            }
+            return tie ? -1 : winner;
+        }
+
+        private int[] HolesWon()
+        {
+            var won = new int[playerNames.Length];
+            foreach (int[] scores in scorecard)
+            {
+                int w = HoleWinner(scores);
+                if (w >= 0 && w < won.Length) won[w]++;
+            }
+            return won;
+        }
+
+        private int HolesPlayed()
+        {
+            int n = 0;
+            foreach (int[] scores in scorecard) if (scores != null) n++;
+            return n;
+        }
+
+        /// <summary>"JANLIE 2 UP", "ALL SQUARE", "JANLIE WINS 3&2" (two players) or holes won (3-4 players).</summary>
+        private string MatchStatusText()
+        {
+            int[] won = HolesWon();
+            if (playerNames.Length == 2)
+            {
+                int diff = won[0] - won[1];
+                int remaining = HoleCount - HolesPlayed();
+                if (diff == 0) return remaining == 0 ? "MATCH HALVED" : "ALL SQUARE";
+                string leader = playerNames[diff > 0 ? 0 : 1].ToUpperInvariant();
+                int lead = Mathf.Abs(diff);
+                if (lead > remaining) return remaining == 0 ? leader + " WINS " + lead + " UP" : leader + " WINS " + lead + "&" + remaining;
+                return leader + " " + lead + " UP" + (lead == remaining ? " (DORMIE)" : "");
+            }
+            var parts = new List<string>();
+            for (int p = 0; p < playerNames.Length; p++) parts.Add(playerNames[p] + " " + won[p]);
+            return "HOLES WON  •  " + string.Join("   ", parts);
         }
 
         private void StartHole()
@@ -370,7 +571,13 @@ namespace GolfSimZA.UI
             tracer?.Clear();
             PrepareActivePlayer(true);
             status = "READY • " + playerNames[activePlayerIndex];
-            ShowBanner("HOLE " + (holeIndex + 1) + "  •  PAR " + CurrentPar + "  •  " + currentHoleDistance.ToString("F0") + " m");
+            string holeText = "HOLE " + (holeIndex + 1) + "  •  PAR " + CurrentPar + "  •  " + Units.DistanceText(currentHoleDistance);
+            if (holeResultText != null) { holeText = holeResultText + "     " + holeText; holeResultText = null; }
+            if (resumedBanner != null) { holeText = resumedBanner + "     " + holeText; resumedBanner = null; }
+            ShowBanner(holeText);
+            bannerUntil = Time.unscaledTime + 6f;
+            // Tee shot on a par 4/5: start with the driver (first club in the bag).
+            if (CurrentPar >= 4) ActiveClub.SelectBagIndex(0);
         }
 
         /// <summary>Puts the active player's ball down and aims at the next target.</summary>
@@ -382,6 +589,8 @@ namespace GolfSimZA.UI
             if (ballFlightSimulator != null) ballFlightSimulator.PlaceBall(position);
             else if (ball != null) ball.position = position;
             ApplyAim(ball != null ? ball.position : position, snapCamera);
+            ApplyFlagVisibility();
+            UpdatePuttGrid();
         }
 
         private Vector3 AimTarget(Vector3 from)
@@ -421,6 +630,11 @@ namespace GolfSimZA.UI
         private void AdvanceHole()
         {
             RecordHoleScores();
+            if (PracticeMode)
+            {
+                JumpToHole(holeIndex + 1);
+                return;
+            }
             holeIndex++;
             if (holeIndex >= HoleCount)
             {
@@ -436,10 +650,28 @@ namespace GolfSimZA.UI
             for (int i = 0; i < scores.Length; i++) scores[i] = playerHoleStrokes[i];
             while (scorecard.Count <= holeIndex) scorecard.Add(null);
             scorecard[holeIndex] = scores;
+            if (PracticeMode) return;
+            SaveRoundProgress();
+            if (MatchPlay)
+            {
+                int w = HoleWinner(scores);
+                string match = MatchStatusText();
+                bool decided = match.Contains(" WINS ");
+                if (decided && !matchDecidedAnnounced)
+                {
+                    matchDecidedAnnounced = true;
+                    holeResultText = "MATCH OVER  •  " + match;
+                }
+                else
+                {
+                    holeResultText = (w >= 0 ? playerNames[w].ToUpperInvariant() + " WINS THE HOLE" : "HOLE HALVED") + "  •  " + match;
+                }
+            }
         }
 
         private void FinishRound()
         {
+            RoundSave.Clear();
             roundComplete = true;
             status = "ROUND COMPLETE";
             shotFinished = false;
@@ -499,11 +731,24 @@ namespace GolfSimZA.UI
 
         private int GetPlayerRelativeToPar(int playerIndex)
         {
-            if (playerIndex < 0 || playerIndex >= playerTotalStrokes.Length || playerTotalStrokes[playerIndex] == 0) return 0;
-            int parToCount = 0;
-            for (int i = 0; i < holeIndex && i < HoleCount; i++) parToCount += ParForHole(i);
-            if (playerHoleStrokes[playerIndex] > 0 && !roundComplete) parToCount += ParForHole(holeIndex);
-            return playerTotalStrokes[playerIndex] - parToCount;
+            // Completed holes only (plus the current hole once this player has holed out),
+            // so a tee shot does not show as "-2".
+            if (playerIndex < 0 || playerIndex >= playerNames.Length) return 0;
+            int strokes = 0, par = 0;
+            for (int h = 0; h < scorecard.Count && h < HoleCount; h++)
+            {
+                int[] scores = scorecard[h];
+                if (scores == null || playerIndex >= scores.Length || scores[playerIndex] <= 0) continue;
+                if (h == holeIndex && !roundComplete) continue; // counted below from the live strokes
+                strokes += scores[playerIndex];
+                par += ParForHole(h);
+            }
+            if (!roundComplete && playerHoled[playerIndex] && playerHoleStrokes[playerIndex] > 0)
+            {
+                strokes += playerHoleStrokes[playerIndex];
+                par += ParForHole(holeIndex);
+            }
+            return strokes - par;
         }
 
         private float DistanceToPin(int playerIndex)
@@ -519,6 +764,7 @@ namespace GolfSimZA.UI
 
         private void EnsureStyles()
         {
+            GolfSimTheme.Ensure();
             if (stylesReady) return;
 
             darkTexture = MakeTexture(dark);
@@ -540,7 +786,7 @@ namespace GolfSimZA.UI
             courseStyle = MakeLabel(10, FontStyle.Bold, muted, TextAnchor.MiddleCenter);
             clubStyle = MakeLabel(11, FontStyle.Bold, Color.white, TextAnchor.MiddleCenter);
             activeClubStyle = MakeLabel(11, FontStyle.Bold, Color.white, TextAnchor.MiddleCenter);
-            actionStyle = MakeButton(12, blueTexture);
+            actionStyle = new GUIStyle(GolfSimTheme.AccentButton) { fixedHeight = 0 };
             playerStyle = MakeLabel(11, FontStyle.Bold, Color.white, TextAnchor.MiddleLeft);
             activePlayerStyle = MakeLabel(11, FontStyle.Bold, blueBright, TextAnchor.MiddleLeft);
             playerMetaStyle = MakeLabel(9, FontStyle.Normal, muted, TextAnchor.MiddleLeft);
@@ -601,6 +847,7 @@ namespace GolfSimZA.UI
         {
             if (!enabled) return;
             EnsureStyles();
+            GolfSimTheme.Ensure();
 
             if (waitingForCourse)
             {
@@ -613,16 +860,15 @@ namespace GolfSimZA.UI
                 return;
             }
 
-            DrawTopHUD();
-            DrawShotCard();
-            DrawAimCard();
-            DrawHoleInfo();
-            DrawPlayerCard();
-            DrawClubBar();
+            float margin = Mathf.Clamp(Screen.width * 0.015f, 10f, 24f);
+            DrawHoleCard(margin, margin + 44f);
+            DrawCenterTop(margin);
+            ShotDataTiles.Draw(Screen.width - margin, margin, simulatorController != null ? simulatorController.LastShot : default(ShotData), Screen.height - margin - MiniMapHeight - 8f);
             DrawMiniMap();
+            ClubBar.Draw(margin, Screen.height - margin);
             DrawShotCompletionAction();
             DrawBanner();
-            if (roundComplete) DrawScorecard();
+            if (roundComplete || showScorecard) DrawScorecard();
         }
 
         private void DrawLoading()
@@ -653,115 +899,65 @@ namespace GolfSimZA.UI
                 SceneManager.LoadScene("GolfSimZA_0_5_CourseSelection");
         }
 
-        private void DrawTopHUD()
+        /// <summary>Hole number, par, length, tees, then every player with score and distance.</summary>
+        private void DrawHoleCard(float x, float y)
         {
-            float margin = Mathf.Max(14f, Screen.width * 0.018f);
-            float width = Screen.width - margin * 2f;
-            float height = 42f;
+            float w = 290f;
+            Rect card = new Rect(x, y, w, 96f);
+            GUI.Box(card, GUIContent.none, GolfSimTheme.Card);
+            GUI.DrawTexture(new Rect(card.x, card.y, 70f, card.height), GolfSimTheme.AccentTex);
+            GUI.Label(new Rect(card.x, card.y + 8f, 70f, 20f), "HOLE", new GUIStyle(centerStyle) { fontSize = 11 });
+            GUI.Label(new Rect(card.x, card.y + 26f, 70f, 44f), (Mathf.Min(holeIndex, HoleCount - 1) + 1).ToString(), new GUIStyle(holeStyle) { fontSize = 34 });
+            GUI.Label(new Rect(card.x, card.y + 70f, 70f, 18f), "OF " + HoleCount, new GUIStyle(centerStyle) { fontSize = 11 });
 
-            GUI.Box(new Rect(margin, 8f, width, height), GUIContent.none, darkPanel);
-            // The MENU button (GameMenuOverlay) sits at the left of this bar.
-            GUI.Label(new Rect(margin + 140f, 8f, 135f, height), "GOLFSIM ZA", titleStyle);
-            GUI.Label(new Rect(margin + 275f, 8f, width - 520f, height), UsingCourse ? course.name : CourseSession.CourseName, courseStyle);
-            GUI.Label(new Rect(margin + width - 245f, 8f, 115f, height), "HOLE " + (holeIndex + 1) + " / " + HoleCount, holeStyle);
-            GUI.Label(new Rect(margin + width - 130f, 8f, 115f, height), "PAR " + CurrentPar + "  •  " + currentHoleDistance.ToString("F0") + " m", courseStyle);
-        }
+            float tx = card.x + 82f;
+            GUI.Label(new Rect(tx, card.y + 8f, w - 90f, 22f), UsingCourse ? course.name : CourseSession.CourseName, valueStyle);
+            GUI.Label(new Rect(tx, card.y + 32f, w - 90f, 22f), "PAR " + CurrentPar + "   •   " + Units.DistanceText(currentHoleDistance), new GUIStyle(valueStyle) { fontSize = 15, normal = { textColor = GolfSimTheme.Gold } });
+            GUI.Label(new Rect(tx, card.y + 56f, w - 90f, 16f), CourseSession.TeeName.ToUpperInvariant() + " TEES  •  " + CourseSession.PinSetting.ToUpperInvariant() + " PINS" + (PracticeMode ? "  •  PRACTICE" : ""), smallStyle);
 
-        private void DrawShotCard()
-        {
-            float x = 16f;
-            float y = 60f;
-            float width = Mathf.Clamp(Screen.width * 0.17f, 205f, 250f);
-            float height = 194f;
+            if (PracticeMode)
+            {
+                if (GUI.Button(new Rect(tx, card.y + 72f, 64f, 20f), "◀ HOLE", GolfSimTheme.SmallButton)) JumpToHole(holeIndex - 1);
+                if (GUI.Button(new Rect(tx + 70f, card.y + 72f, 64f, 20f), "HOLE ▶", GolfSimTheme.SmallButton)) JumpToHole(holeIndex + 1);
+            }
 
-            GUI.Box(new Rect(x, y, width, height), GUIContent.none, smallPanel);
-            GUI.Label(new Rect(x + 10f, y + 8f, width - 20f, 18f), "SHOT", titleStyle);
-            GUI.Label(new Rect(x + 10f, y + 29f, width - 20f, 15f), status, smallStyle);
-
-            ShotData shot = simulatorController != null ? simulatorController.LastShot : default(ShotData);
-            bool hasShot = shot.IsValid;
-            float row = y + 49f;
-            CompactMetric("CLUB", hasShot ? shot.ClubName : ActiveClub.Resolve(), ref row, x, width);
-            CompactMetric("BALL", hasShot ? (shot.BallSpeedMps * 2.2369363f).ToString("F1") + " mph" : "—", ref row, x, width);
-            CompactMetric("LAUNCH", hasShot ? shot.LaunchAngleDeg.ToString("F1") + "°" : "—", ref row, x, width);
-            CompactMetric("DIRECTION", hasShot ? shot.LaunchDirectionDeg.ToString("F1") + "°" : "—", ref row, x, width);
-            CompactMetric("SPIN", hasShot ? shot.BackSpinRpm.ToString("F0") + " rpm" : "—", ref row, x, width);
-            CompactMetric("CARRY", hasShot ? shot.CarryMeters.ToString("F1") + " m" : "—", ref row, x, width);
-            CompactMetric("TOTAL", hasShot ? shot.TotalMeters.ToString("F1") + " m" : "—", ref row, x, width);
-        }
-
-        private void CompactMetric(string label, string value, ref float y, float x, float width)
-        {
-            GUI.Label(new Rect(x + 10f, y, width * 0.40f, 17f), label, smallStyle);
-            GUI.Label(new Rect(x + width * 0.38f, y - 1f, width * 0.56f, 18f), value, rightValueStyle);
-            y += 20f;
-        }
-
-        private void DrawAimCard()
-        {
-            float width = 168f;
-            float x = (Screen.width - width) * 0.5f;
-            float y = 58f;
-            GUI.Box(new Rect(x, y, width, 40f), GUIContent.none, smallPanel);
-            string aim = Mathf.Abs(aimOffsetDegrees) < 0.5f ? "AIM  •  ON TARGET" : "AIM  •  " + Mathf.Abs(aimOffsetDegrees).ToString("F0") + "° " + (aimOffsetDegrees < 0f ? "LEFT" : "RIGHT");
-            GUI.Label(new Rect(x + 8f, y + 3f, width - 16f, 16f), aim, centerStyle);
-            GUI.Label(new Rect(x + 8f, y + 19f, width - 16f, 17f), "← →  adjust   ↑  reset", courseStyle);
-        }
-
-        private void DrawHoleInfo()
-        {
-            float width = Mathf.Clamp(Screen.width * 0.22f, 245f, 320f);
-            float x = Screen.width - width - 16f;
-            float y = 60f;
-            float height = 74f;
-
-            GUI.Box(new Rect(x, y, width, height), GUIContent.none, smallPanel);
-            GUI.Label(new Rect(x + 10f, y + 8f, 34f, 38f), (holeIndex + 1).ToString(), holeStyle);
-            GUI.Label(new Rect(x + 50f, y + 7f, width - 62f, 22f), UsingCourse ? course.name : CourseSession.CourseName, valueStyle);
-            GUI.Label(new Rect(x + 50f, y + 30f, width - 62f, 17f), "PAR " + CurrentPar + "   •   " + currentHoleDistance.ToString("F0") + " m", smallStyle);
-            GUI.Label(new Rect(x + 50f, y + 48f, width - 62f, 17f), CourseSession.TeeName.ToUpperInvariant() + " TEES  •  " + CourseSession.PinSetting.ToUpperInvariant() + " PINS", smallStyle);
-        }
-
-        private void DrawPlayerCard()
-        {
-            float width = Mathf.Clamp(Screen.width * 0.18f, 215f, 270f);
-            float x = Screen.width - width - 16f;
-            float y = 145f;
-            float rowHeight = 58f;
-            float height = 30f + rowHeight * Mathf.Min(playerNames.Length, 4);
-
-            GUI.Box(new Rect(x, y, width, height), GUIContent.none, smallPanel);
-            GUI.Label(new Rect(x + 10f, y + 8f, width - 20f, 18f), "PLAYERS", titleStyle);
-            GUI.Label(new Rect(x + 10f, y + 27f, width - 20f, 14f), "SCORE  •  DISTANCE TO PIN", smallStyle);
-
-            float rowY = y + 45f;
-            int shown = Mathf.Min(playerNames.Length, 4);
-            for (int i = 0; i < shown; i++)
+            float rowH = 44f;
+            float matchH = MatchPlay ? 26f : 0f;
+            Rect players = new Rect(x, card.yMax + 6f, w, 10f + rowH * playerNames.Length + matchH);
+            GUI.Box(players, GUIContent.none, GolfSimTheme.Card);
+            float ry = players.y + 5f;
+            for (int i = 0; i < playerNames.Length; i++)
             {
                 bool active = i == activePlayerIndex;
-                if (active)
-                    GUI.Box(new Rect(x + 7f, rowY, width - 14f, rowHeight - 4f), GUIContent.none, darkPanel);
-
-                GUI.Label(new Rect(x + 15f, rowY + 5f, width * 0.50f, 18f), active ? "● " + playerNames[i] : playerNames[i], active ? activePlayerStyle : playerStyle);
-                GUI.Label(new Rect(x + 15f, rowY + 25f, width * 0.55f, 15f), "Score  " + FormatScore(GetPlayerRelativeToPar(i)) + "   Strokes " + playerHoleStrokes[i], playerMetaStyle);
-                GUI.Label(new Rect(x + width * 0.51f, rowY + 6f, width * 0.40f, 22f), playerHoled[i] ? "IN" : DistanceToPin(i).ToString("F0") + " m", distanceStyle);
-                GUI.Label(new Rect(x + width * 0.51f, rowY + 29f, width * 0.40f, 13f), playerHoled[i] ? "holed" : "to pin", smallStyle);
-                rowY += rowHeight;
+                if (active) GUI.DrawTexture(new Rect(players.x + 4f, ry + 2f, 4f, rowH - 4f), GolfSimTheme.GoldTex);
+                GUI.Label(new Rect(players.x + 16f, ry + 3f, w * 0.55f, 20f), playerNames[i], active ? activePlayerStyle : playerStyle);
+                GUI.Label(new Rect(players.x + 16f, ry + 23f, w * 0.60f, 16f), (PracticeMode ? "" : "Score " + FormatScore(GetPlayerRelativeToPar(i)) + "   ") + "Strokes " + playerHoleStrokes[i], playerMetaStyle);
+                GUI.Label(new Rect(players.x + w * 0.52f, ry + 4f, w * 0.44f, 26f), playerHoled[i] ? "IN" : Units.DistanceText(DistanceToPin(i)), distanceStyle);
+                ry += rowH;
             }
+            if (MatchPlay)
+                GUI.Label(new Rect(players.x + 16f, ry + 2f, w - 24f, 20f), "MATCH PLAY  •  " + MatchStatusText(), new GUIStyle(smallStyle) { fontStyle = FontStyle.Bold, normal = { textColor = GolfSimTheme.Gold } });
         }
 
-        private void DrawClubBar()
+        private void DrawCenterTop(float y)
         {
-            float width = Mathf.Min(Screen.width - 32f - Mathf.Clamp(Screen.width * 0.15f, 190f, 225f) - 16f, 76f + 64f * Mathf.Max(8, ActiveClub.Bag.Count));
-            ClubBar.Draw(new Rect(16f, Screen.height - ClubBar.Height - 10f, width, ClubBar.Height));
+            float w = 200f;
+            float x = (Screen.width - w) * 0.5f;
+            GUI.Box(new Rect(x, y, w, 36f), GUIContent.none, GolfSimTheme.Card);
+            GUI.Label(new Rect(x, y, w, 36f), "0.0 m/s  •  WIND", centerStyle);
+            string aim = Mathf.Abs(aimOffsetDegrees) < 0.5f ? "AIM ON TARGET" : "AIM " + Mathf.Abs(aimOffsetDegrees).ToString("0") + "° " + (aimOffsetDegrees < 0f ? "LEFT" : "RIGHT");
+            GUI.Label(new Rect(x - 100f, y + 40f, w + 200f, 18f), status + "   •   " + aim + "   (← → aim, ↑ reset)", new GUIStyle(smallStyle) { alignment = TextAnchor.MiddleCenter, normal = { textColor = Color.white } });
         }
+
+        private const float MiniMapHeight = 235f;
 
         private void DrawMiniMap()
         {
+            float margin = Mathf.Clamp(Screen.width * 0.015f, 10f, 24f);
             float width = Mathf.Clamp(Screen.width * 0.15f, 190f, 225f);
-            float x = Screen.width - width - 16f;
-            float y = Screen.height - 265f;
-            float height = 235f;
+            float x = Screen.width - width - margin;
+            float height = MiniMapHeight;
+            float y = Screen.height - height - margin;
 
             GUI.Box(new Rect(x, y, width, height), GUIContent.none, darkPanel);
             GUI.Label(new Rect(x + 10f, y + 8f, width - 20f, 18f), "HOLE MAP", titleStyle);
@@ -844,10 +1040,16 @@ namespace GolfSimZA.UI
         private void DrawBanner()
         {
             if (string.IsNullOrEmpty(banner) || Time.unscaledTime > bannerUntil) return;
-            float w = Mathf.Min(620f, Screen.width - 40f);
-            Rect r = new Rect((Screen.width - w) * 0.5f, Screen.height * 0.22f, w, 48f);
+            // Centre column between the hole card (left) and the data tiles (right); wraps onto
+            // several lines ("hole result" and "next hole" are separate lines).
+            float margin = Mathf.Clamp(Screen.width * 0.015f, 10f, 24f);
+            float w = Mathf.Clamp(Screen.width - 2f * (margin + 310f), 280f, 640f);
+            string text = banner.Replace("     ", "\n");
+            var style = new GUIStyle(bannerStyle) { wordWrap = true };
+            float h = Mathf.Max(48f, style.CalcHeight(new GUIContent(text), w - 24f) + 16f);
+            Rect r = new Rect((Screen.width - w) * 0.5f, Screen.height * 0.22f, w, h);
             GUI.Box(r, GUIContent.none, darkPanel);
-            GUI.Label(r, banner, bannerStyle);
+            GUI.Label(new Rect(r.x + 12f, r.y + 8f, r.width - 24f, r.height - 16f), text, style);
         }
 
         private void DrawShotCompletionAction()
@@ -887,16 +1089,29 @@ namespace GolfSimZA.UI
             }
         }
 
+        private static Texture2D scorecardBackdrop;
+
+        /// <summary>Strokes on finished holes only (a hole in progress is not counted against par).</summary>
+        private int ScoredStrokes(int p)
+        {
+            int strokes = 0;
+            for (int h = 0; h < scorecard.Count && h < HoleCount; h++)
+                if (scorecard[h] != null && p < scorecard[h].Length) strokes += scorecard[h][p];
+            if (!roundComplete && playerHoled[p] && (holeIndex >= scorecard.Count || scorecard[holeIndex] == null)) strokes += playerHoleStrokes[p];
+            return strokes;
+        }
+
         private void DrawScorecard()
         {
-            GUI.Box(new Rect(0, 0, Screen.width, Screen.height), GUIContent.none, darkPanel);
+            if (scorecardBackdrop == null) scorecardBackdrop = GolfSimTheme.Tex(new Color(0.02f, 0.05f, 0.06f, 0.97f));
+            GUI.DrawTexture(new Rect(0, 0, Screen.width, Screen.height), scorecardBackdrop);
             int holes = HoleCount;
             float cellW = Mathf.Clamp((Screen.width - 260f) / (holes + 1), 30f, 52f);
             float tableW = 160f + cellW * (holes + 1);
             float x = (Screen.width - tableW) * 0.5f;
             float y = Screen.height * 0.18f;
 
-            GUI.Label(new Rect(x, y - 50f, tableW, 34f), "ROUND COMPLETE  •  " + (UsingCourse ? course.name : CourseSession.CourseName), bannerStyle);
+            GUI.Label(new Rect(x, y - 50f, tableW, 34f), (roundComplete ? "ROUND COMPLETE  •  " : "SCORECARD  •  ") + (UsingCourse ? course.name : CourseSession.CourseName), bannerStyle);
 
             GUI.Label(new Rect(x, y, 160f, 24f), "HOLE", cellHeaderStyle);
             for (int h = 0; h < holes; h++) GUI.Label(new Rect(x + 160f + cellW * h, y, cellW, 24f), (h + 1).ToString(), cellHeaderStyle);
@@ -916,17 +1131,44 @@ namespace GolfSimZA.UI
             {
                 y += 30f;
                 GUI.Label(new Rect(x, y, 160f, 26f), playerNames[p], cellStyle);
-                int total = 0;
+                int total = 0, parPlayed = 0;
                 for (int h = 0; h < holes; h++)
                 {
-                    int strokes = h < scorecard.Count && scorecard[h] != null && p < scorecard[h].Length ? scorecard[h][p] : 0;
+                    int strokes = h < scorecard.Count && scorecard[h] != null && p < scorecard[h].Length ? scorecard[h][p] : (h == holeIndex && !roundComplete ? playerHoleStrokes[p] : 0);
                     total += strokes;
+                    bool finished = (h < scorecard.Count && scorecard[h] != null) || (h == holeIndex && !roundComplete && playerHoled[p]);
+                    if (strokes > 0 && finished) parPlayed += ParForHole(h);
                     GUI.Label(new Rect(x + 160f + cellW * h, y, cellW, 26f), strokes > 0 ? strokes.ToString() : "-", cellStyle);
                 }
-                GUI.Label(new Rect(x + 160f + cellW * holes, y, cellW, 26f), total + " (" + FormatScore(total - parTotal) + ")", cellStyle);
+                GUI.Label(new Rect(x + 160f + cellW * holes, y, cellW, 26f), total + " (" + FormatScore(ScoredStrokes(p) - parPlayed) + ")", cellStyle);
             }
 
-            if (GUI.Button(new Rect((Screen.width - 260f) * 0.5f, y + 60f, 260f, 44f), "BACK TO COURSES", actionStyle))
+            if (MatchPlay)
+            {
+                y += 30f;
+                GUI.Label(new Rect(x, y, 160f, 26f), "MATCH", cellHeaderStyle);
+                for (int h = 0; h < holes; h++)
+                {
+                    int[] scores = h < scorecard.Count ? scorecard[h] : null;
+                    string cell = "-";
+                    if (scores != null)
+                    {
+                        int w = HoleWinner(scores);
+                        cell = w >= 0 ? (playerNames[w].Length > 3 ? playerNames[w].Substring(0, 3) : playerNames[w]).ToUpperInvariant() : "½";
+                    }
+                    GUI.Label(new Rect(x + 160f + cellW * h, y, cellW, 26f), cell, cellHeaderStyle);
+                }
+                y += 30f;
+                GUI.Label(new Rect(x, y, tableW, 26f), MatchStatusText(), new GUIStyle(cellHeaderStyle) { alignment = TextAnchor.MiddleLeft, normal = { textColor = GolfSimTheme.Gold } });
+            }
+
+            if (!roundComplete)
+            {
+                if (GUI.Button(new Rect((Screen.width - 260f) * 0.5f, y + 60f, 260f, 44f), "CLOSE SCORECARD", actionStyle))
+                    showScorecard = false;
+                return;
+            }
+            if (GUI.Button(new Rect((Screen.width - 260f) * 0.5f, y + 60f, 260f, 44f), "BACK TO HOME", actionStyle))
                 SceneManager.LoadScene("GolfSimZA_0_5_CourseSelection");
         }
     }

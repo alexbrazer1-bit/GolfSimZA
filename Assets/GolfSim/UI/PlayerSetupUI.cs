@@ -12,38 +12,71 @@ namespace GolfSimZA.UI
         private GUIStyle titleStyle, subtitleStyle, labelStyle, fieldStyle, buttonStyle, tabStyle, selectedTabStyle, cardStyle;
         private GUIStyle bagHeaderStyle, bagFieldStyle, bagButtonStyle, bagActiveStyle, bagMutedStyle, clubBigStyle, clubRangeStyle, mapLabelStyle;
         private bool stylesReady;
-        private readonly Color navy = new Color(0.015f, 0.055f, 0.065f);
-        private readonly Color panel = new Color(0.055f, 0.14f, 0.17f);
-        private readonly Color panelDark = new Color(0.02f, 0.055f, 0.065f);
-        private readonly Color panelLight = new Color(0.10f, 0.21f, 0.25f);
-        private readonly Color blue = new Color(0.03f, 0.48f, 0.82f);
-        private readonly Color blueBright = new Color(0.08f, 0.64f, 1f);
-        private readonly Color orange = new Color(1f, 0.56f, 0.08f);
+        private GUIStyle selectedCardStyle, startStyle;
+        private static Texture2D background;
         private readonly Color muted = new Color(0.70f, 0.78f, 0.81f);
         private bool editingBag;
         private int selectedPlayerIndex = -1;
         private GolfBagProfile bagProfile;
         private Vector2 bagScroll;
 
+        private bool returnHome;
+
+        private void Start()
+        {
+            // Players come from the home screen's roster / the current round.
+            players.Clear();
+            foreach (string name in (CourseSession.PlayerNames ?? "Player 1").Split(new[] { '|' }, System.StringSplitOptions.RemoveEmptyEntries))
+                players.Add(name.Trim());
+            if (players.Count == 0) players.Add("Player 1");
+
+            returnHome = PlayerPrefs.GetInt("GolfSimZA.BagReturnHome", 0) == 1;
+            PlayerPrefs.DeleteKey("GolfSimZA.BagReturnHome");
+
+            string openFor = PlayerPrefs.GetString("GolfSimZA.OpenBagFor", "");
+            PlayerPrefs.DeleteKey("GolfSimZA.OpenBagFor");
+            if (!string.IsNullOrWhiteSpace(openFor))
+            {
+                int index = players.FindIndex(p => string.Equals(p, openFor, System.StringComparison.OrdinalIgnoreCase));
+                if (index < 0)
+                {
+                    players.Insert(0, openFor);
+                    if (players.Count > 4) players.RemoveAt(players.Count - 1);
+                    index = 0;
+                }
+                selectedPlayerIndex = index;
+                OpenBagEditor();
+            }
+        }
+
+        private void GoBack()
+        {
+            SceneManager.LoadScene(returnHome ? "GolfSimZA_0_5_CourseSelection" : "GolfSimZA_0_5_RoundSettings");
+        }
+
         private void EnsureStyles()
         {
-            if (stylesReady) return;
-            titleStyle = MakeLabel(28, FontStyle.Bold, Color.white);
-            subtitleStyle = MakeLabel(15, FontStyle.Normal, muted);
-            labelStyle = MakeLabel(14, FontStyle.Bold, new Color(0.82f, 0.87f, 0.89f));
-            fieldStyle = new GUIStyle(GUI.skin.textField) { fontSize = 16, fixedHeight = 42, padding = new RectOffset(12, 12, 8, 8) };
-            buttonStyle = MakeButton(15, 44f, panel);
-            tabStyle = MakeButton(14, 42f, panel);
-            selectedTabStyle = MakeButton(14, 42f, Color.white, navy);
-            cardStyle = new GUIStyle(GUI.skin.box) { padding = new RectOffset(16, 16, 14, 14), normal = { background = MakeTexture(panel) } };
+            GolfSimTheme.Ensure();
+            if (stylesReady && titleStyle != null) return;
+            titleStyle = new GUIStyle(GolfSimTheme.Title) { fontSize = 26 };
+            subtitleStyle = new GUIStyle(GolfSimTheme.Subtitle) { wordWrap = false };
+            labelStyle = GolfSimTheme.Label;
+            fieldStyle = new GUIStyle(GolfSimTheme.TextField) { fixedHeight = 38 };
+            buttonStyle = new GUIStyle(GolfSimTheme.Button) { fixedHeight = 44 };
+            tabStyle = GolfSimTheme.Tab;
+            selectedTabStyle = GolfSimTheme.TabActive;
+            cardStyle = new GUIStyle(GolfSimTheme.Card) { padding = new RectOffset(16, 16, 14, 14) };
+            selectedCardStyle = new GUIStyle(GolfSimTheme.SelectedCard) { padding = new RectOffset(16, 16, 14, 14) };
             bagHeaderStyle = MakeLabel(14, FontStyle.Bold, Color.white);
-            bagFieldStyle = new GUIStyle(GUI.skin.textField) { fontSize = 13, fixedHeight = 34, padding = new RectOffset(8, 8, 6, 6) };
-            bagButtonStyle = MakeButton(12, 34f, panelLight);
-            bagActiveStyle = MakeButton(12, 34f, blue, Color.white);
+            bagFieldStyle = new GUIStyle(GolfSimTheme.TextField) { fontSize = 13, fixedHeight = 34 };
+            bagButtonStyle = new GUIStyle(GolfSimTheme.SmallButton) { fixedHeight = 34 };
+            bagActiveStyle = new GUIStyle(GolfSimTheme.AccentButton) { fixedHeight = 34, fontSize = 12 };
             bagMutedStyle = MakeLabel(11, FontStyle.Normal, muted);
             clubBigStyle = MakeLabel(18, FontStyle.Bold, Color.white, TextAnchor.MiddleCenter);
-            clubRangeStyle = MakeLabel(11, FontStyle.Bold, orange, TextAnchor.MiddleCenter);
+            clubRangeStyle = MakeLabel(11, FontStyle.Bold, GolfSimTheme.Gold, TextAnchor.MiddleCenter);
             mapLabelStyle = MakeLabel(10, FontStyle.Bold, muted, TextAnchor.MiddleCenter);
+            startStyle = new GUIStyle(GolfSimTheme.AccentButton) { fixedHeight = 52, fontSize = 17 };
+            background = GolfSimTheme.Tex(GolfSimTheme.Navy);
             stylesReady = true;
         }
 
@@ -57,34 +90,11 @@ namespace GolfSimZA.UI
             return style;
         }
 
-        private GUIStyle MakeButton(int size, float height, Color background, Color text = default(Color))
-        {
-            GUIStyle style = new GUIStyle(GUI.skin.button);
-            style.fontSize = size;
-            style.fontStyle = FontStyle.Bold;
-            style.fixedHeight = height;
-            style.normal.background = MakeTexture(background);
-            style.hover.background = MakeTexture(blueBright);
-            style.active.background = MakeTexture(blue);
-            style.normal.textColor = text == default(Color) ? Color.white : text;
-            style.hover.textColor = Color.white;
-            style.active.textColor = Color.white;
-            return style;
-        }
-
-        private Texture2D MakeTexture(Color color)
-        {
-            Texture2D texture = new Texture2D(1, 1);
-            texture.SetPixel(0, 0, color);
-            texture.Apply();
-            return texture;
-        }
 
         private void OnGUI()
         {
             EnsureStyles();
-            GUI.backgroundColor = navy;
-            GUI.Box(new Rect(0, 0, Screen.width, Screen.height), GUIContent.none);
+            GUI.DrawTexture(new Rect(0, 0, Screen.width, Screen.height), background);
             if (editingBag) DrawBagEditor(); else DrawPlayerSetup();
         }
 
@@ -95,20 +105,22 @@ namespace GolfSimZA.UI
             GUILayout.BeginArea(new Rect(margin, 22f, width, Screen.height - 44f));
 
             GUILayout.BeginHorizontal();
-            if (GUILayout.Button("‹  BACK", buttonStyle, GUILayout.Width(110))) SceneManager.LoadScene("GolfSimZA_0_5_RoundSettings");
+            if (GUILayout.Button("←  BACK", GolfSimTheme.TopBarButton, GUILayout.Width(110))) GoBack();
             GUILayout.FlexibleSpace();
-            GUILayout.Label("GOLFSIM ZA", titleStyle, GUILayout.Width(190));
+            GolfSimTheme.DrawLogo(GUILayoutUtility.GetRect(300f, 40f, GUILayout.Width(300f)));
             GUILayout.FlexibleSpace();
-            GUILayout.Label("PLAYERS    ⚙ SETTINGS", labelStyle, GUILayout.Width(210));
+            if (GUILayout.Button("PLAYERS", GolfSimTheme.TopBarButton, GUILayout.Width(110))) CourseSelectionUI.OpenHome("Players");
+            if (GUILayout.Button("SETTINGS", GolfSimTheme.TopBarButton, GUILayout.Width(110))) CourseSelectionUI.OpenHome("Settings");
             GUILayout.EndHorizontal();
+            GUI.DrawTexture(GUILayoutUtility.GetRect(width, 2f), GolfSimTheme.AccentTex);
             GUILayout.Space(10);
 
             GUILayout.BeginHorizontal();
             GUILayout.Label("PLAYERS", titleStyle, GUILayout.Width(210));
             GUILayout.FlexibleSpace();
-            GUILayout.Label("01 COURSE", tabStyle, GUILayout.Width(130));
-            GUILayout.Label("02 ROUND", tabStyle, GUILayout.Width(130));
-            GUILayout.Label("03 PLAYERS", selectedTabStyle, GUILayout.Width(130));
+            if (GUILayout.Button("01 COURSE", tabStyle, GUILayout.Width(130))) CourseSelectionUI.OpenHome("LocalMatch");
+            if (GUILayout.Button("02 ROUND", tabStyle, GUILayout.Width(130))) SceneManager.LoadScene("GolfSimZA_0_5_RoundSettings");
+            GUILayout.Button("03 PLAYERS", selectedTabStyle, GUILayout.Width(130));
             GUILayout.EndHorizontal();
             GUILayout.Space(8);
             GUILayout.Label(CourseSession.CourseName + "  •  " + CourseSession.RoundLength + " holes  •  " + CourseSession.TeeName + " tees", subtitleStyle);
@@ -123,7 +135,7 @@ namespace GolfSimZA.UI
             for (int i = 0; i < players.Count; i++)
             {
                 bool selected = selectedPlayerIndex == i;
-                GUILayout.BeginHorizontal(selected ? selectedTabStyle : cardStyle);
+                GUILayout.BeginHorizontal(selected ? selectedCardStyle : cardStyle);
                 if (GUILayout.Button(selected ? "✓" : "○", selected ? bagActiveStyle : bagButtonStyle, GUILayout.Width(48))) selectedPlayerIndex = i;
                 GUILayout.BeginVertical();
                 players[i] = GUILayout.TextField(players[i], fieldStyle);
@@ -150,7 +162,7 @@ namespace GolfSimZA.UI
 
             GUILayout.Space(12);
             GUILayout.BeginHorizontal(cardStyle);
-            GUILayout.Label("GOLF BAG", titleStyle, GUILayout.Width(130));
+            GUILayout.Label("GOLF BAG", GolfSimTheme.Heading, GUILayout.Width(130));
             if (selectedPlayerIndex >= 0 && selectedPlayerIndex < players.Count)
             {
                 string name = string.IsNullOrWhiteSpace(players[selectedPlayerIndex]) ? "Player " + (selectedPlayerIndex + 1) : players[selectedPlayerIndex].Trim();
@@ -165,12 +177,13 @@ namespace GolfSimZA.UI
 
             GUILayout.Space(22);
             GUILayout.BeginVertical(cardStyle, GUILayout.Width(width * 0.28f));
-            GUILayout.Label("ROUND SUMMARY", titleStyle);
+            GUILayout.Label("ROUND SUMMARY", GolfSimTheme.Heading);
             GUILayout.Space(10);
             Summary("COURSE", CourseSession.CourseName);
             Summary("TEE", CourseSession.TeeName);
             Summary("ROUND", CourseSession.RoundLength + " holes");
-            Summary("MODE", CourseSession.GameMode);
+            Summary("MODE", CourseSession.GameMode + (CourseSession.GameMode == "Match Play" && players.Count < 2 ? " (needs 2 players)" : ""));
+            Summary("GIMME / MULLIGANS", CourseSession.GimmieSetting + "  /  " + CourseSession.MulliganSetting);
             Summary("PLAYERS", players.Count.ToString());
             GUILayout.Space(12);
             GUILayout.Label("PLAYER", labelStyle);
@@ -182,10 +195,16 @@ namespace GolfSimZA.UI
             }
             else GUILayout.Label("NONE SELECTED", subtitleStyle);
             GUILayout.FlexibleSpace();
-            if (GUILayout.Button("START ROUND  →", buttonStyle, GUILayout.Height(54)))
+            if (GUILayout.Button("START ROUND  →", startStyle))
             {
                 string[] names = new string[players.Count];
                 for (int i = 0; i < players.Count; i++) names[i] = string.IsNullOrWhiteSpace(players[i]) ? "Player " + (i + 1) : players[i].Trim();
+                CourseSession.SetPlayers(names);
+                // Keep the home screen's player list in step with players added here.
+                bool changed = false;
+                foreach (string n in names)
+                    if (PlayerRoster.Current.Find(n) == null) { PlayerRoster.Current.players.Add(new PlayerProfile { name = n, selected = false }); changed = true; }
+                if (changed) PlayerRoster.Current.Save();
                 CourseSession.SetPlayers(names);
                 SceneManager.LoadScene("GolfSimZA_0_6_PlayRound");
             }

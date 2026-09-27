@@ -22,7 +22,19 @@ We will not bundle Garmin proprietary SDKs or reverse-engineered proprietary mat
 
 Unity 6 / 6000.x. The initial target is Windows Standalone 64-bit.
 
-## Current version: 1.1.0
+## Current version: 1.2.0
+
+### 1.2 new look, players, range and HUD
+
+- **Home screen** (GolfSim ZA design): EXIT / logo / PLAYERS / SETTINGS top bar, welcome banner and tiles for LOCAL MATCH, PRACTICE, MAP MY BAG and IMPORT COURSES. No online or tournament modes.
+- **Players**: add, rename, delete, left/right handed, who plays the next round (up to 4), and each player's golf bag. Saved in `players.json`.
+- **Local Match**: course list with search, favourites (☆/★, favourites listed first), library filters (all / favourites / imported / demo), sort by name or holes, 9/18 holes.
+- **Round Settings**: game mode (Stroke Play, or Match Play for 2+ players with hole winners and "2 UP" status), tees, pins, round length, gimme, mulligans per player (Off/1/2/3/Unlimited), and RESUME ROUND (finished holes are saved after every hole).
+- **Practice**: Practice Range and On-Course Practice (any hole, no scoring, ◀ HOLE ▶).
+- **Driving range**: mown range with 25/50 m lines, target green and flag with distance and proximity, aim line, and a range panel (target distance, range width, green width, random target after every shot).
+- **Play screen**: club drop-up at the bottom left with every club in the bag and its loft, hand (LH/RH) toggle, shot data tiles at the top right (ball/club speed, carry/total, VLA/HLA, back spin/spin axis, peak height/descent angle, club path/face to target, offline/smash factor), recent shots, hole card with players and distances, hole map.
+- **Game menu** (≡ MENU or Esc): data tiles, settings (units, altitude), lighting, mulligan, flyover, putt grid, putt mode, show flag, shortcuts, scorecard, players & bags, end round / leave range, quit.
+- **Units**: metric (km/h, m) or imperial (mph, yd).
 
 ### 1.1 course import, real physics and updates
 
@@ -79,7 +91,9 @@ Unity 6 / 6000.x. The initial target is Windows Standalone 64-bit.
 
 | Key / button | Action |
 |---|---|
-| Club bar or `1`-`8` | Choose the club (used for R10 and test shots) |
+| CLUB tile (bottom left), `1`-`0`, `Q`/`E`, `PgUp`/`PgDn`, `C` | Choose the club (used for R10 and test shots) |
+| `Esc` / ≡ MENU | Game menu |
+| `R` (range) | Put a new ball on the mat |
 | `SPACE` | Keyboard test shot (development shot provider) |
 | `←` / `→` (`Shift` = 5°) | Aim left / right, `↑` resets aim |
 | PICK UP | Pick the ball up (+1 stroke) |
