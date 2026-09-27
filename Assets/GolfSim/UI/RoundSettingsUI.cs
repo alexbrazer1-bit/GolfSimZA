@@ -10,13 +10,13 @@ namespace GolfSimZA.UI
         private string[] tees = { "Red", "White", "Blue", "Black" };
         private readonly string[] gameModes = { "Stroke Play", "Match Play" };
         private readonly string[] pins = { "Easy", "Standard", "Tournament" };
-        private readonly string[] gimmies = { "Off", "3 m", "6 m" };
+        private readonly string[] gimmies = { "Off", "1 m", "2 m", "3 m" };
         private readonly string[] mulligans = { "Off", "1", "3" };
 
         private int selectedTee;
         private int selectedGameMode;
         private int selectedPins = 1;
-        private int selectedGimmie = 2;
+        private int selectedGimmie = 1;
         private int selectedMulligan;
         private bool resumeRound;
         private int roundLength;
@@ -104,7 +104,7 @@ namespace GolfSimZA.UI
             {
                 selectedGameMode = 0;
                 selectedPins = 1;
-                selectedGimmie = 2;
+                selectedGimmie = 1;
                 selectedMulligan = 0;
                 resumeRound = false;
             }

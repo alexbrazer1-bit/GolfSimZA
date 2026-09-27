@@ -55,6 +55,8 @@ namespace GolfSimZA.LaunchMonitors.GarminR10
                         RedirectStandardError = false
                     }
                 };
+                // Parse settings.json numbers the same way on every regional setting (e.g. en-ZA uses ',').
+                bridgeProcess.StartInfo.EnvironmentVariables["DOTNET_SYSTEM_GLOBALIZATION_INVARIANT"] = "1";
 
                 bridgeProcess.Start();
                 UnityEngine.Debug.Log($"[GolfSimZA] Started packaged R10 bridge: {executablePath}");

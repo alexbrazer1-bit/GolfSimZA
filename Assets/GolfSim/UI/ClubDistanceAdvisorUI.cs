@@ -14,7 +14,6 @@ namespace GolfSimZA.UI
         private FieldInfo activePlayerField;
         private Transform ball;
         private Transform pin;
-        private Vector2 scroll;
         private string selectedPlayer = "Player 1";
         private float targetDistance;
         private GUIStyle panel, title, subtitle, row, value, recommend, button;
@@ -32,7 +31,7 @@ namespace GolfSimZA.UI
 
         private void Update()
         {
-            if (SceneManager.GetActiveScene().name != "GolfSimZA_0_6_PlayRound") return;
+            if (!SceneManager.GetSceneByName("GolfSimZA_0_6_PlayRound").isLoaded) return;
             if (roundUI == null) FindRoundUI();
             FindTargets();
             RefreshTarget();
@@ -138,7 +137,7 @@ namespace GolfSimZA.UI
 
         private void OnGUI()
         {
-            if (SceneManager.GetActiveScene().name != "GolfSimZA_0_6_PlayRound") return;
+            if (!SceneManager.GetSceneByName("GolfSimZA_0_6_PlayRound").isLoaded) return;
             EnsureStyles();
             GolfBagProfile profile = Profile();
             List<int> best = BestClubs(profile);
@@ -146,8 +145,9 @@ namespace GolfSimZA.UI
 
             float width = Mathf.Min(265f, Screen.width * 0.22f);
             float x = Screen.width - width - 16f;
-            float y = Screen.height - 250f;
             float height = 226f;
+            // Sits above the hole map (bottom right) so the two never overlap.
+            float y = Mathf.Max(250f, Screen.height - 265f - height - 12f);
             GUI.Box(new Rect(x, y, width, height), GUIContent.none, panel);
             GUI.Label(new Rect(x + 12f, y + 9f, width - 24f, 20f), "CLUB RECOMMENDATION", title);
             GUI.Label(new Rect(x + 12f, y + 31f, width - 24f, 17f), selectedPlayer + "  •  mapped bag", subtitle);
@@ -174,8 +174,7 @@ namespace GolfSimZA.UI
 
         private void SelectClub(string clubName)
         {
-            PlayerPrefs.SetString("GolfSimZA.RoundClubName", clubName);
-            PlayerPrefs.Save();
+            GolfSimZA.Core.ActiveClub.Select(clubName);
             Debug.Log("[GolfSimZA] Recommended club selected: " + clubName);
         }
     }

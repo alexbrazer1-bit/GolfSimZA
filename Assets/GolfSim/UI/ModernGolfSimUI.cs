@@ -16,9 +16,7 @@ namespace GolfSimZA.UI
         private bool stylesReady;
         private bool isRange;
         private int lastShotCount;
-        private int selectedClub = 1;
         private string status = "READY";
-        private readonly string[] clubs = { "Driver", "3W", "5i", "7i", "9i", "PW", "SW", "Putter" };
 
         private void Awake()
         {
@@ -44,6 +42,8 @@ namespace GolfSimZA.UI
 
         private void Update()
         {
+            if (!GameMenuOverlay.IsOpen && (flight == null || !flight.IsInFlight))
+                ClubBar.HandleKeys();
             if (simulator == null) return;
 
             int count = simulator.History != null ? simulator.History.Count : 0;
@@ -52,7 +52,6 @@ namespace GolfSimZA.UI
                 lastShotCount = count;
                 status = "SHOT RECEIVED";
                 ShotData shot = simulator.LastShot;
-                if (shot.IsValid) selectedClub = Mathf.Clamp(shot.ClubNumber, 1, clubs.Length);
             }
 
             if (flight != null && flight.IsInFlight)
@@ -168,7 +167,7 @@ namespace GolfSimZA.UI
             DrawRangeTargets(margin + leftW + gap, y, centerW, h, shot, hasShot);
             DrawLastShotCard(margin + leftW + gap + centerW + gap, y, rightW, h, shot, hasShot);
 
-            DrawClubSelector(margin, Screen.height - 62f, contentW);
+            ClubBar.Draw(new Rect(margin, Screen.height - ClubBar.Height - 8f, contentW, ClubBar.Height));
         }
 
         private void DrawRoundHUD(ShotData shot, bool hasShot)
@@ -186,14 +185,14 @@ namespace GolfSimZA.UI
             DrawShotDataCard(margin, y, leftW, h, shot, hasShot);
             DrawRoundCenter(margin + leftW + gap, y, contentW - leftW - gap, h, shot, hasShot);
 
-            DrawClubSelector(margin, Screen.height - 62f, contentW);
+            ClubBar.Draw(new Rect(margin, Screen.height - ClubBar.Height - 8f, contentW, ClubBar.Height));
         }
 
         private void DrawHeader(float x, float y, float w, float h, string titleText, string rightText)
         {
             GUI.Box(new Rect(x, y, w, h), GUIContent.none, panelStrong);
-            GUI.Label(new Rect(x + 12f, y, 155f, h), "GOLFSIM ZA", title);
-            GUI.Label(new Rect(x + 160f, y, Mathf.Max(100f, w - 345f), h), titleText, section);
+            GUI.Label(new Rect(x + 140f, y, 155f, h), "GOLFSIM ZA", title);
+            GUI.Label(new Rect(x + 300f, y, Mathf.Max(100f, w - 485f), h), titleText, section);
             GUI.Label(new Rect(x + w - 175f, y, 163f, h), rightText, center);
         }
 
@@ -204,7 +203,7 @@ namespace GolfSimZA.UI
             GUI.Label(new Rect(x + 10f, y + 29f, w - 20f, 14f), hasShot ? "LATEST MEASURED SHOT" : "WAITING FOR SHOT", label);
 
             float row = y + 48f;
-            Metric("CLUB", hasShot ? shot.ClubName : ClubName(selectedClub), ref row, x, w);
+            Metric("CLUB", hasShot ? shot.ClubName + "  (next: " + ActiveClub.ShortName(ActiveClub.Resolve()) + ")" : ActiveClub.Resolve(), ref row, x, w);
             Metric("CLUB SPEED", hasShot && shot.HasClubData ? Mph(shot.ClubSpeedMps) : "—", ref row, x, w);
             Metric("BALL SPEED", hasShot ? Mph(shot.BallSpeedMps) : "—", ref row, x, w);
             Metric("SMASH", Smash(shot, hasShot), ref row, x, w);
@@ -281,31 +280,6 @@ namespace GolfSimZA.UI
             GUI.Label(new Rect(x + 12f, y + 31f, w - 24f, 18f), "LIVE SHOT VIEW", label);
             GUI.Label(new Rect(x + 12f, y + 72f, w - 24f, 30f), hasShot ? "LAST CARRY  " + shot.CarryMeters.ToString("F1") + " m" : "READY", center);
             GUI.Label(new Rect(x + 12f, y + 110f, w - 24f, 18f), status, center);
-        }
-
-        private void DrawClubSelector(float x, float y, float w)
-        {
-            GUI.Box(new Rect(x, y, w, 48f), GUIContent.none, panelStrong);
-            GUI.Label(new Rect(x + 9f, y + 7f, 40f, 32f), "CLUB", label);
-
-            float start = x + 53f;
-            float bw = (w - 62f) / clubs.Length;
-            for (int i = 0; i < clubs.Length; i++)
-            {
-                Rect r = new Rect(start + i * bw, y + 8f, bw - 3f, 30f);
-                if (GUI.Button(r, clubs[i], button))
-                {
-                    selectedClub = i + 1;
-                    ActiveClub.SelectSlot(selectedClub);
-                }
-                if (i + 1 == selectedClub)
-                    GUI.DrawTexture(new Rect(r.x + 4f, r.yMax - 3f, r.width - 8f, 3f), accentTex);
-            }
-        }
-
-        private string ClubName(int number)
-        {
-            return clubs[Mathf.Clamp(number - 1, 0, clubs.Length - 1)];
         }
 
         private string Smash(ShotData shot, bool hasShot)

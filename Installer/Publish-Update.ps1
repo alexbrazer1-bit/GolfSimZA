@@ -23,6 +23,10 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
+$logDir = Join-Path (Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)) 'Logs'
+New-Item -ItemType Directory -Force -Path $logDir | Out-Null
+try { Start-Transcript -Path (Join-Path $logDir 'GolfSimZA-publish.log') -Force | Out-Null } catch { }
+
 if ($Version -notmatch '^\d+\.\d+\.\d+$') { throw "Version '$Version' must look like 1.2.3" }
 $BuildDir = (Resolve-Path $BuildDir).Path
 if (-not (Test-Path (Join-Path $BuildDir 'GolfSimZA.exe'))) { throw "GolfSimZA.exe not found in $BuildDir. Build the Windows player first." }
@@ -102,3 +106,4 @@ Write-Host "Published GolfSimZA $Version"
 Write-Host "  Installer : $published"
 Write-Host "  SHA-256   : $hash"
 Write-Host "  Manifest  : $manifestPath"
+try { Stop-Transcript | Out-Null } catch { }

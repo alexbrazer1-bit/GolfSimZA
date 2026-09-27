@@ -164,7 +164,7 @@ namespace GolfSimZA.UI
 
         private void OnGUI()
         {
-            if (!visible || SceneManager.GetActiveScene().name != SceneName) return;
+            if (!visible || !SceneManager.GetSceneByName(SceneName).isLoaded) return;
             EnsureStyles();
             GUI.depth = -1200;
 

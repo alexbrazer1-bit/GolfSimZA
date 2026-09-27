@@ -1331,9 +1331,11 @@ MonoBehaviour:
   cameraFollowSpeed: 5
   cameraLookHeight: 1
   maximumFollowDistance: 300
-  maximumSideOffset: 45
   markerRadius: 1.5
   markerHeight: 0.035
+  addressBackDistance: 6.5
+  addressHeight: 2.2
+  addressLookAhead: 60
 --- !u!114 &1396048592
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1395,22 +1397,29 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   ball: {fileID: 1237898919}
   gravity: 9.81
-  airDrag: 0.00075
-  spinLift: 0.000018
-  spinDecayPerSecond: 0.08
+  dragBase: 0.2066
+  dragPerSpinFactor: 0.2679
+  liftScale: 0.3937
+  liftExponent: 0.3543
+  liftMaximum: 0.3223
+  spinDecayRate: 0.0519
   metersToUnity: 1
   maximumFlightTime: 12
   groundY: 0
   bounceRetention: 0.28
   horizontalBounceRetention: 0.86
-  rollDeceleration: 12
+  fairwayRollDeceleration: 4.2
+  greenRollDeceleration: 0.65
+  fairwayPuttDeceleration: 1.6
   maxRollMeters: 35
   stopSpeed: 0.15
-  referenceSpinRpm: 2400
-  spinRollInfluence: 0.45
+  minBounceSpeed: 1.2
+  slopeRollFactor: 0.71
+  maximumRollTime: 25
   rollSpinDecayPerSecond: 0.65
   useMeasuredR10Carry: 1
-  useMeasuredR10CarryAsTotalWhenNoRoll: 1
+  cupRadius: 0.054
+  maxCupEntrySpeed: 1.6
 --- !u!114 &1396048596
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1423,7 +1432,6 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 9cf7eaef59bd6de4b9b3722946262239, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  selectedClubIndex: 0
 --- !u!4 &1396048597
 Transform:
   m_ObjectHideFlags: 0
@@ -1467,7 +1475,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   listenPort: 921
-  listenOnAllInterfaces: 1
+  allowNetworkConnections: 0
   autoStart: 1
   sendReadyHeartbeat: 1
   heartbeatIntervalSeconds: 2

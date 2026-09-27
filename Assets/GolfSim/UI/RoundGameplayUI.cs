@@ -40,7 +40,7 @@ namespace GolfSimZA.UI
 
         private int holeIndex, lastObservedShotCount;
         private bool wasInFlight, shotFinished, waitingForNextPlayer, roundComplete;
-        private int activePlayerIndex, selectedClubNumber = 1;
+        private int activePlayerIndex;
         private float currentHoleDistance;
         private float aimOffsetDegrees;
         private Vector3 pinPosition;
@@ -137,7 +137,11 @@ namespace GolfSimZA.UI
             if (waitingForCourse || courseError != null || roundComplete) return;
             if (simulatorController == null || ballFlightSimulator == null) return;
 
-            HandleAimKeys();
+            if (!GameMenuOverlay.IsOpen && !ballFlightSimulator.IsInFlight)
+            {
+                HandleAimKeys();
+                ClubBar.HandleKeys();
+            }
 
             int shotCount = simulatorController.History != null ? simulatorController.History.Count : 0;
             if (shotCount > lastObservedShotCount)
@@ -149,8 +153,6 @@ namespace GolfSimZA.UI
                 waitingForNextPlayer = false;
                 status = "SHOT IN PROGRESS";
 
-                int slot = ActiveClub.SlotFor(simulatorController.LastShot.ClubName);
-                if (slot > 0) selectedClubNumber = slot;
             }
 
             bool inFlight = ballFlightSimulator.IsInFlight;
@@ -374,6 +376,7 @@ namespace GolfSimZA.UI
         /// <summary>Puts the active player's ball down and aims at the next target.</summary>
         private void PrepareActivePlayer(bool snapCamera)
         {
+            ActiveClub.Player = playerNames[activePlayerIndex];
             Vector3 position = playerPositions[activePlayerIndex];
             playerPreviousPositions[activePlayerIndex] = position;
             if (ballFlightSimulator != null) ballFlightSimulator.PlaceBall(position);
@@ -657,8 +660,9 @@ namespace GolfSimZA.UI
             float height = 42f;
 
             GUI.Box(new Rect(margin, 8f, width, height), GUIContent.none, darkPanel);
-            GUI.Label(new Rect(margin + 12f, 8f, 135f, height), "GOLFSIM ZA", titleStyle);
-            GUI.Label(new Rect(margin + 145f, 8f, width - 390f, height), UsingCourse ? course.name : CourseSession.CourseName, courseStyle);
+            // The MENU button (GameMenuOverlay) sits at the left of this bar.
+            GUI.Label(new Rect(margin + 140f, 8f, 135f, height), "GOLFSIM ZA", titleStyle);
+            GUI.Label(new Rect(margin + 275f, 8f, width - 520f, height), UsingCourse ? course.name : CourseSession.CourseName, courseStyle);
             GUI.Label(new Rect(margin + width - 245f, 8f, 115f, height), "HOLE " + (holeIndex + 1) + " / " + HoleCount, holeStyle);
             GUI.Label(new Rect(margin + width - 130f, 8f, 115f, height), "PAR " + CurrentPar + "  •  " + currentHoleDistance.ToString("F0") + " m", courseStyle);
         }
@@ -748,30 +752,8 @@ namespace GolfSimZA.UI
 
         private void DrawClubBar()
         {
-            float width = Mathf.Clamp(Screen.width * 0.38f, 360f, 500f);
-            float x = 16f;
-            float y = Screen.height - 70f;
-            float height = 54f;
-
-            GUI.Box(new Rect(x, y, width, height), GUIContent.none, darkPanel);
-            GUI.Label(new Rect(x + 8f, y + 5f, 45f, 16f), "CLUB", smallStyle);
-
-            string[] clubs = ActiveClub.SlotShortNames;
-            int activeSlot = ActiveClub.SlotFor(ActiveClub.Resolve());
-            if (activeSlot > 0) selectedClubNumber = activeSlot;
-            float buttonWidth = (width - 62f) / clubs.Length;
-            for (int i = 0; i < clubs.Length; i++)
-            {
-                Rect r = new Rect(x + 54f + buttonWidth * i, y + 7f, buttonWidth - 3f, 30f);
-                bool active = selectedClubNumber == i + 1;
-                if (GUI.Button(r, clubs[i], active ? activeClubStyle : clubStyle))
-                {
-                    selectedClubNumber = i + 1;
-                    ActiveClub.SelectSlot(selectedClubNumber);
-                }
-                if (active)
-                    GUI.DrawTexture(new Rect(r.x + 4f, r.yMax - 3f, r.width - 8f, 3f), blueBrightTexture);
-            }
+            float width = Mathf.Min(Screen.width - 32f - Mathf.Clamp(Screen.width * 0.15f, 190f, 225f) - 16f, 76f + 64f * Mathf.Max(8, ActiveClub.Bag.Count));
+            ClubBar.Draw(new Rect(16f, Screen.height - ClubBar.Height - 10f, width, ClubBar.Height));
         }
 
         private void DrawMiniMap()
@@ -874,7 +856,7 @@ namespace GolfSimZA.UI
 
             float width = Mathf.Clamp(Screen.width * 0.24f, 250f, 330f);
             float x = (Screen.width - width) * 0.5f;
-            float y = Screen.height - 67f;
+            float y = Screen.height - ClubBar.Height - 62f;
             bool holeDone = AllHoled();
 
             if (holeDone || (shotFinished && waitingForNextPlayer))

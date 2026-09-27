@@ -41,7 +41,8 @@ namespace GolfSimZA.Physics
         [SerializeField] private float groundY = 0.0f;
         [SerializeField, Range(0.05f, 0.9f)] private float bounceRetention = 0.18f;
         [SerializeField, Range(0.5f, 1f)] private float horizontalBounceRetention = 0.90f;
-        [SerializeField] private float rollDeceleration = 7.5f;
+        [Tooltip("Rolling resistance on fairway in m/s² (a ball rolling at 10 m/s stops after about 12 m).")]
+        [SerializeField] private float fairwayRollDeceleration = 4.2f;
         [SerializeField] private float greenRollDeceleration = 0.65f;
         [SerializeField] private float fairwayPuttDeceleration = 1.6f;
         [SerializeField] private float maxRollMeters = 60.0f;
@@ -51,8 +52,6 @@ namespace GolfSimZA.Physics
         [SerializeField] private float maximumRollTime = 25f;
 
         [Header("Spin / roll tuning")]
-        [SerializeField] private float referenceSpinRpm = 2400.0f;
-        [SerializeField] private float spinRollInfluence = 0.45f;
         [SerializeField] private float rollSpinDecayPerSecond = 0.65f;
 
         [Header("R10 measurement")]
@@ -195,7 +194,7 @@ namespace GolfSimZA.Physics
             velocity.y = speed * Mathf.Sin(elevation);
             currentSpinRpm = Mathf.Max(0f, shot.BackSpinRpm);
             spinAxisRad = Mathf.Clamp(shot.SpinAxisDeg, -60f, 60f) * Mathf.Deg2Rad;
-            landingRollDeceleration = rollDeceleration;
+            landingRollDeceleration = fairwayRollDeceleration;
 
             horizontalScale = 1f;
             if (useMeasuredR10Carry && shot.CarryMeters > 0.5f)
@@ -311,17 +310,20 @@ namespace GolfSimZA.Physics
                 landingPosition = ball.position;
                 carryMeters = HorizontalDistance(landingPosition, launchPosition);
 
-                float normalizedSpin = Mathf.Clamp01(currentSpinRpm / Mathf.Max(1f, referenceSpinRpm));
-                float spinFriction = Mathf.Lerp(1f - spinRollInfluence, 1f + spinRollInfluence, normalizedSpin);
                 bool onGreen = IsOnGreen(landingPosition);
-                landingRollDeceleration = (onGreen ? rollDeceleration * 0.55f : rollDeceleration) * spinFriction;
+                // Greens are smoother than fairways, so the ball releases a little more.
+                landingRollDeceleration = onGreen ? fairwayRollDeceleration * 0.8f : fairwayRollDeceleration;
             }
 
             // Split velocity into the part into the ground and the part along it.
             float intoGround = Vector3.Dot(velocity, normal);
             Vector3 along = velocity - normal * intoGround;
-            float normalizedSpinNow = Mathf.Clamp01(currentSpinRpm / Mathf.Max(1f, referenceSpinRpm));
-            float alongRetention = Mathf.Lerp(horizontalBounceRetention, horizontalBounceRetention * 0.88f, normalizedSpinNow);
+
+            // How much forward speed survives the bounce: steep landings and backspin
+            // "check" the ball (a wedge stops quickly, a driver runs out).
+            float speedNow = velocity.magnitude;
+            float steepness = speedNow > 0.01f ? Mathf.Clamp01(Mathf.Abs(intoGround) / speedNow) : 0f;
+            float alongRetention = Mathf.Clamp(0.95f - 0.55f * steepness - currentSpinRpm / 14000f, 0.12f, horizontalBounceRetention);
 
             along *= alongRetention;
             float bounceSpeed = Mathf.Abs(intoGround) * bounceRetention;
@@ -377,8 +379,7 @@ namespace GolfSimZA.Physics
                 return;
             }
 
-            float spinFactor = Mathf.Clamp01(currentSpinRpm / Mathf.Max(1f, referenceSpinRpm));
-            float currentDeceleration = deceleration * Mathf.Lerp(1f, 1.12f, spinFactor);
+            float currentDeceleration = deceleration;
             Vector3 direction = speed > 0.0001f ? horizontalVelocity / speed : Vector3.zero;
 
             horizontalVelocity += slopeAcceleration * dt;

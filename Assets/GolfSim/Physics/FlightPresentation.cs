@@ -17,7 +17,6 @@ namespace GolfSimZA.Physics
         [SerializeField] private float cameraFollowSpeed = 5f;
         [SerializeField] private float cameraLookHeight = 1.0f;
         [SerializeField] private float maximumFollowDistance = 300f;
-        [SerializeField] private float maximumSideOffset = 45f;
 
         [Header("Landing marker")]
         [SerializeField] private float markerRadius = 1.5f;

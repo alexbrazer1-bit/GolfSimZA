@@ -119,6 +119,9 @@ namespace GolfSimZA.Editor
             GUI.enabled = true;
             EditorGUILayout.EndHorizontal();
 
+            if (File.Exists(InstallerPath(updateFolder)) && GUILayout.Button("Install " + GolfSimVersion.Version + " on this PC (test the installer)"))
+                InstallOnThisPc();
+
             if (!string.IsNullOrEmpty(status))
                 EditorGUILayout.HelpBox(status, status.StartsWith("Fail") || status.StartsWith("Build failed") ? MessageType.Error : MessageType.Info);
 
@@ -308,6 +311,7 @@ namespace GolfSimZA.Editor
             if (File.Exists(Path.Combine(BridgePublishFolder, BridgeExe))) return "R10Bridge/publish (built locally)";
             if (File.Exists(BridgeZip)) return "R10Bridge/GolfSimZA-R10-Bridge-win-x64.zip";
             if (File.Exists(Path.Combine(ProjectRoot, BridgeStreamingFolder, BridgeExe))) return "already in StreamingAssets";
+            if (File.Exists(Path.Combine(ProjectRoot, "R10Bridge", "_upstream", "gspro-r10.csproj"))) return "will be built from R10Bridge/_upstream during the build";
             return "NOT FOUND - download the GitHub Actions artifact into R10Bridge/";
         }
 
@@ -329,9 +333,13 @@ namespace GolfSimZA.Editor
                     Directory.CreateDirectory(target);
                     ZipFile.ExtractToDirectory(BridgeZip, target);
                 }
+                else if (BuildBridge(out string bridgeError))
+                {
+                    CopyFolder(BridgePublishFolder, target);
+                }
                 else if (!File.Exists(Path.Combine(target, BridgeExe)))
                 {
-                    message = "The R10 bridge was not found. Download 'GolfSimZA-R10-Bridge-win-x64' from the GitHub Actions run of 'Build GolfSimZA R10 Bridge' and put the zip in the R10Bridge folder.";
+                    message = "The R10 bridge could not be built (" + bridgeError + "). See Logs/GolfSimZA-bridge.log, or put the GitHub Actions zip 'GolfSimZA-R10-Bridge-win-x64.zip' in the R10Bridge folder.";
                     return false;
                 }
 
@@ -361,22 +369,79 @@ namespace GolfSimZA.Editor
 
         public static bool Publish(string releaseNotes, string folder, out string error)
         {
-            error = null;
-            string script = Path.Combine(ProjectRoot, "Installer", "Publish-Update.ps1");
-            if (!File.Exists(script))
-            {
-                error = "Installer/Publish-Update.ps1 not found.";
-                return false;
-            }
-
             string buildDir = Path.GetFullPath(BuildFolder);
             string notesFile = Path.Combine(Path.GetTempPath(), "GolfSimZA-release-notes.txt");
             File.WriteAllText(notesFile, releaseNotes ?? "", new UTF8Encoding(false));
+            return RunPowerShell("Publish-Update.ps1",
+                $"-BuildDir \"{buildDir}\" -Version \"{GolfSimVersion.Version}\" -UpdateFolder \"{folder}\" -NotesFile \"{notesFile}\"",
+                "Creating the installer and publishing the update...", out error);
+        }
+
+        /// <summary>Builds R10Bridge/publish/gspro-r10.exe from the pinned source (installs the .NET SDK if needed).</summary>
+        public static bool BuildBridge(out string error)
+        {
+            if (!File.Exists(Path.Combine(ProjectRoot, "R10Bridge", "_upstream", "gspro-r10.csproj")))
+            {
+                error = "bridge source R10Bridge/_upstream is missing";
+                return false;
+            }
+            return RunPowerShell("Build-R10Bridge.ps1", "", "Building the R10 Bluetooth bridge (first time can take a few minutes)...", out error)
+                   && File.Exists(Path.Combine(BridgePublishFolder, BridgeExe));
+        }
+
+        [MenuItem("GolfSimZA/Release/Build R10 Bridge", priority = 21)]
+        public static void BuildBridgeMenu()
+        {
+            if (BuildBridge(out string error)) EditorUtility.DisplayDialog("GolfSimZA", "R10 bridge built:\n" + BridgePublishFolder, "OK");
+            else EditorUtility.DisplayDialog("R10 bridge build failed", error + "\n\nSee Logs/GolfSimZA-bridge.log", "OK");
+        }
+
+        [MenuItem("GolfSimZA/Release/Build + Publish Now (current version)", priority = 10)]
+        public static void BuildAndPublishMenu()
+        {
+            string latest = LatestPublishedVersion(UpdateFolder);
+            if (!string.IsNullOrEmpty(latest) && CompareVersions(GolfSimVersion.Version, latest) <= 0)
+            {
+                EditorUtility.DisplayDialog("GolfSimZA", $"Version {GolfSimVersion.Version} is not newer than the published {latest}. Bump the version in the Release Manager first.", "OK");
+                return;
+            }
+            bool ok = BuildAndPublish(true, "GolfSimZA " + GolfSimVersion.Version, UpdateFolder, out string error);
+            string message = ok ? $"GolfSimZA {GolfSimVersion.Version} published.\n\nInstaller:\n{InstallerPath(UpdateFolder)}" : error;
+            Debug.Log("[GolfSimZA] Release: " + message);
+            EditorUtility.DisplayDialog(ok ? "GolfSimZA published" : "GolfSimZA publish failed", message, "OK");
+        }
+
+        [MenuItem("GolfSimZA/Release/Install Published Version On This PC", priority = 30)]
+        public static void InstallOnThisPc()
+        {
+            string installer = InstallerPath(UpdateFolder);
+            if (!File.Exists(installer))
+            {
+                EditorUtility.DisplayDialog("GolfSimZA", "No installer found for " + GolfSimVersion.Version + ":\n" + installer, "OK");
+                return;
+            }
+            Process.Start(new ProcessStartInfo { FileName = installer, Arguments = "/SILENT", UseShellExecute = true });
+        }
+
+        public static string InstallerPath(string folder)
+        {
+            return Path.Combine(folder ?? AppSettings.DefaultUpdateFolder, "installers", "GolfSimZA-Setup-" + GolfSimVersion.Version + ".exe");
+        }
+
+        private static bool RunPowerShell(string scriptName, string arguments, string progressText, out string error)
+        {
+            error = null;
+            string script = Path.Combine(ProjectRoot, "Installer", scriptName);
+            if (!File.Exists(script))
+            {
+                error = "Installer/" + scriptName + " not found.";
+                return false;
+            }
 
             var start = new ProcessStartInfo
             {
                 FileName = "powershell.exe",
-                Arguments = $"-NoProfile -ExecutionPolicy Bypass -File \"{script}\" -BuildDir \"{buildDir}\" -Version \"{GolfSimVersion.Version}\" -UpdateFolder \"{folder}\" -NotesFile \"{notesFile}\"",
+                Arguments = $"-NoProfile -ExecutionPolicy Bypass -File \"{script}\" {arguments}",
                 UseShellExecute = false,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
@@ -386,16 +451,20 @@ namespace GolfSimZA.Editor
 
             try
             {
-                EditorUtility.DisplayProgressBar("GolfSimZA", "Creating installer and publishing update...", 0.5f);
+                if (!Application.isBatchMode) EditorUtility.DisplayProgressBar("GolfSimZA", progressText, 0.5f);
                 using (Process process = Process.Start(start))
                 {
-                    string output = process.StandardOutput.ReadToEnd();
-                    string errors = process.StandardError.ReadToEnd();
+                    var output = new StringBuilder();
+                    var errors = new StringBuilder();
+                    process.OutputDataReceived += (s, e) => { if (e.Data != null) lock (output) output.AppendLine(e.Data); };
+                    process.ErrorDataReceived += (s, e) => { if (e.Data != null) lock (errors) errors.AppendLine(e.Data); };
+                    process.BeginOutputReadLine();
+                    process.BeginErrorReadLine();
                     process.WaitForExit();
-                    if (!string.IsNullOrWhiteSpace(output)) Debug.Log("[GolfSimZA] Publish:\n" + output);
+                    if (output.Length > 0) Debug.Log($"[GolfSimZA] {scriptName}:\n{output}");
                     if (process.ExitCode != 0)
                     {
-                        error = "Publish script failed:\n" + (string.IsNullOrWhiteSpace(errors) ? output : errors);
+                        error = $"{scriptName} failed:\n" + (errors.Length > 0 ? errors.ToString() : output.ToString());
                         Debug.LogError("[GolfSimZA] " + error);
                         return false;
                     }
@@ -409,7 +478,7 @@ namespace GolfSimZA.Editor
             }
             finally
             {
-                EditorUtility.ClearProgressBar();
+                if (!Application.isBatchMode) EditorUtility.ClearProgressBar();
             }
         }
 

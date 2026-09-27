@@ -169,6 +169,9 @@ namespace GolfSimZA.Courses
 
             if (ourCamera != null)
             {
+                AudioListener listener = ourCamera.GetComponent<AudioListener>();
+                if (listener == null) listener = ourCamera.gameObject.AddComponent<AudioListener>();
+                listener.enabled = true;
                 ourCamera.farClipPlane = Mathf.Max(ourCamera.farClipPlane, 5000f);
                 ourCamera.nearClipPlane = Mathf.Min(ourCamera.nearClipPlane, 0.1f);
                 if (RenderSettings.skybox != null) ourCamera.clearFlags = CameraClearFlags.Skybox;

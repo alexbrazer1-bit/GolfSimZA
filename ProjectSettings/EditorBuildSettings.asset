@@ -7,12 +7,15 @@ EditorBuildSettings:
   m_Scenes:
   - enabled: 1
     path: Assets/Scenes/GolfSimZA_0_5_CourseSelection.unity
-    guid: 00000000000000000000000000000000
+    guid: 80068f3e65331004eb868559a4e8207a
+  - enabled: 1
+    path: Assets/Scenes/GolfSimZA_0_5_RoundSettings.unity
+    guid: 40a0b1bf6a3fef948b137d4b5becd7cd
+  - enabled: 1
+    path: Assets/Scenes/GolfSimZA_0_5_Players.unity
+    guid: 7cd9ad4ce17b15341a35358f56704b82
   - enabled: 1
     path: Assets/Scenes/GolfSimZA_0_6_PlayRound.unity
     guid: 7abbd9d5223656f408663bf7fe840470
-  - enabled: 1
-    path: Assets/Scenes/GolfSimZA_0_4_SimulatorPresentationRange.unity
-    guid: 00000000000000000000000000000000
   m_configObjects: {}
   m_UseUCBPForAssetBundles: 0

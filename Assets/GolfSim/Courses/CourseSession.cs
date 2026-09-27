@@ -24,7 +24,7 @@ namespace GolfSimZA.Courses
         public static int RoundLength => PlayerPrefs.GetInt(RoundKey, 18);
         public static string GameMode => PlayerPrefs.GetString(ModeKey, "Stroke Play");
         public static string PinSetting => PlayerPrefs.GetString(PinsKey, "Standard");
-        public static string GimmieSetting => PlayerPrefs.GetString(GimmieKey, "6 m");
+        public static string GimmieSetting => PlayerPrefs.GetString(GimmieKey, "1 m");
         public static string MulliganSetting => PlayerPrefs.GetString(MulliganKey, "Off");
         public static bool ResumeRound => PlayerPrefs.GetInt(ResumeKey, 0) == 1;
         public static string PlayerNames => PlayerPrefs.GetString(PlayersKey, "Player 1");
