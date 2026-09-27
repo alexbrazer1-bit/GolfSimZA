@@ -34,17 +34,21 @@ sysinfo.txt
 CoursePackages/Installed/
 Builds/
 
-# GSPro reference material: do not publish the GSPro application or runtime binaries
-GSPro_Reference_Material/**/*.exe
-GSPro_Reference_Material/**/*.dll
-GSPro_Reference_Material/**/*.pdb
-GSPro_Reference_Material/**/*.lic
-GSPro_Reference_Material/**/*.dat
-GSPro_Reference_Material/**/*.ico
-GSPro_Reference_Material/**/TOS.html
+# GSPro reference material is local-only study material. Never commit any of it.
+GSPro_Reference_Material/
 
-# GSPro reference course packages / proprietary course assets
-GSPro_Reference_Material/**/Courses/**/*.unity3d
-GSPro_Reference_Material/**/Courses/**/*.g3d
-GSPro_Reference_Material/**/Courses/**/*.gsp
-GSPro_Reference_Material/**/Courses/**/*.gkd
+# Large course files, wherever they are
+*.gspcrse
+*.unity3d
+*.GKD_BAK
+
+# Unity StreamingAssets bridge binaries (installed by the build script)
+Assets/StreamingAssets/GolfSimZA-R10-Bridge/
+Assets/StreamingAssets/GolfSimZA-R10-Bridge.meta
+
+# R10 bridge build output
+R10Bridge/_upstream/
+R10Bridge/publish/
+
+# Installer output
+Installer/Output/
