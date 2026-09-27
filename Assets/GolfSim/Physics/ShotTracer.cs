@@ -29,6 +29,9 @@ namespace GolfSimZA.Physics
             line.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
             line.receiveShadows = false;
 
+            ApplyTrailSettings();
+            AppSettings.Changed += ApplyTrailSettings;
+
             flight = GetComponent<BallFlightSimulator>();
             if (flight == null) flight = FindFirstObjectByType<BallFlightSimulator>();
             if (flight != null)
@@ -40,7 +43,27 @@ namespace GolfSimZA.Physics
 
         private void OnDestroy()
         {
+            AppSettings.Changed -= ApplyTrailSettings;
             if (flight != null) flight.Launched -= OnLaunched;
+        }
+
+        public static readonly string[] ColorNames = { "RED", "BLUE", "GREEN", "YELLOW", "GOLD", "NONE" };
+        public static readonly Color[] Colors =
+        {
+            new Color(0.93f, 0.20f, 0.18f), new Color(0.22f, 0.55f, 0.98f), new Color(0.20f, 0.85f, 0.45f),
+            new Color(1f, 0.92f, 0.20f), new Color(1f, 0.75f, 0.08f), Color.clear
+        };
+
+        /// <summary>Settings → CAMERA OPTIONS → BALL TRAIL colour and size.</summary>
+        private void ApplyTrailSettings()
+        {
+            if (line == null) return;
+            AppSettings s = AppSettings.Current;
+            int index = Mathf.Clamp(s.ballTrailColor, 0, Colors.Length - 1);
+            line.enabled = index != Colors.Length - 1;
+            if (line.material != null) line.material.color = Colors[index];
+            line.startColor = line.endColor = Colors[index];
+            line.widthMultiplier = s.ballTrailThick ? 0.14f : 0.06f;
         }
 
         private void OnLaunched(ShotData shot)

@@ -50,7 +50,7 @@ namespace GolfSimZA.Core
             {
                 case LightingPreset.Morning: pitch = 18f; intensity = 0.95f; color = new Color(1f, 0.90f, 0.78f); break;
                 case LightingPreset.Evening: pitch = 12f; intensity = 0.85f; color = new Color(1f, 0.78f, 0.60f); break;
-                default: pitch = 55f; intensity = 1.25f; color = Color.white; break;
+                default: pitch = 55f; intensity = 1.05f; color = new Color(1f, 0.98f, 0.94f); break;
             }
             foreach (Light light in UnityEngine.Object.FindObjectsByType<Light>(FindObjectsSortMode.None))
             {

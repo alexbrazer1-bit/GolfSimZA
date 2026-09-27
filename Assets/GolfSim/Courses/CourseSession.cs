@@ -16,6 +16,22 @@ namespace GolfSimZA.Courses
         private const string CourseIdKey = "GolfSimZA.CourseId";
         private const string CourseTeesKey = "GolfSimZA.CourseTees";
         private const string PracticeKey = "GolfSimZA.PracticeMode";
+        private const string StartHoleKey = "GolfSimZA.RoundStartHole";
+        private const string CourseHolesKey = "GolfSimZA.CourseHoles";
+
+        /// <summary>First hole of the round, 0-based (9 = back nine).</summary>
+        public static int RoundStartHole => Mathf.Max(0, PlayerPrefs.GetInt(StartHoleKey, 0));
+
+        /// <summary>Number of holes the selected course has.</summary>
+        public static int CourseHoles => Mathf.Clamp(PlayerPrefs.GetInt(CourseHolesKey, 18), 1, 18);
+
+        public static void SetHoles(int courseHoles, int startHole, int roundLength)
+        {
+            PlayerPrefs.SetInt(CourseHolesKey, Mathf.Clamp(courseHoles, 1, 18));
+            PlayerPrefs.SetInt(StartHoleKey, Mathf.Max(0, startHole));
+            PlayerPrefs.SetInt(RoundKey, Mathf.Clamp(roundLength, 1, 18));
+            PlayerPrefs.Save();
+        }
 
         /// <summary>On-course practice: pick any hole, no scoring.</summary>
         public static bool PracticeMode

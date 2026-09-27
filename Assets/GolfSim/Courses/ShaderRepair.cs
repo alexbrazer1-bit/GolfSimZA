@@ -131,7 +131,9 @@ namespace GolfSimZA.Courses
             }
 
             // 2. The course's own custom shader happens to work in this Unity - keep it.
-            if (current != null && current.isSupported && !IsErrorShader(current) && HasPasses(current))
+            //    (Not for GSPro's tree/vegetation shaders: they compile but draw nothing without
+            //    GSPro's own wind and vegetation scripts, which leaves courses without trees.)
+            if (current != null && current.isSupported && !IsErrorShader(current) && HasPasses(current) && !NeedsGolfSimReplacement(name))
             {
                 report.SameShader++;
                 return;
@@ -149,6 +151,16 @@ namespace GolfSimZA.Courses
             report.Failed++;
         }
 
+        private static readonly string[] ReplaceShaders = { "arboreum", "vegetationstudio", "vegetation studio", "awesometechnologies", "ctree", "nature manufacture", "naturemanufacture", "treeleaves", "treebark" };
+
+        /// <summary>Custom tree / vegetation shaders that only work inside GSPro.</summary>
+        public static bool NeedsGolfSimReplacement(string shaderName)
+        {
+            string n = (shaderName ?? "").ToLowerInvariant().Replace("/", " ");
+            foreach (string k in ReplaceShaders) if (n.Contains(k)) return true;
+            return false;
+        }
+
         private static bool HasPasses(Shader shader)
         {
             try { return shader.passCount > 0; } catch { return true; }
@@ -163,6 +175,8 @@ namespace GolfSimZA.Courses
         {
             string n = (original + " " + material.name).ToLowerInvariant();
             if (n.Contains("terrain")) return "Nature/Terrain/Standard";
+            // Tree trunks and branches are solid; leaves (below) are cut out.
+            if ((n.Contains("bark") || n.Contains("trunk") || n.Contains("branch_") || n.Contains("stem")) && !n.Contains("leaf") && !n.Contains("leaves")) return "Standard";
             if (n.Contains("skybox") || n.Contains("sky")) return "Skybox/Procedural";
             if (n.Contains("grass") || n.Contains("leaf") || n.Contains("leaves") || n.Contains("foliage") ||
                 n.Contains("cutout") || n.Contains("billboard") || n.Contains("tree") || n.Contains("arboreum") ||

@@ -43,10 +43,9 @@ namespace GolfSimZA.UI
         private int libraryFilter;        // 0 all, 1 favourites, 2 imported, 3 demo
         private int sortMode;             // 0 name, 1 holes
         private int roundHoles = 18;
-        private Vector2 listScroll, playerScroll;
+        private Vector2 listScroll;
+        private SettingsScreen settingsScreen;
         private bool rebuildRequested = true;
-        private PlayerProfile editing;
-        private string newPlayerName = "";
         private Texture2D hero, heroShade, tileShade, heroGradient, navyTex;
 
         private void OnEnable() => CourseLibrary.Changed += RequestRebuild;
@@ -60,7 +59,7 @@ namespace GolfSimZA.UI
             updatePanel.CheckInBackground();
             PlayerRoster.Current.ApplyToSession();
             CourseSession.PracticeMode = false;
-            if (PlayerRoster.Current.players.Count > 0) editing = PlayerRoster.Current.players[0];
+            settingsScreen = new SettingsScreen(() => screen = Screen_.Home, OpenBag, () => { screen = Screen_.Import; importPanel.Open(); }, updatePanel);
 
             // Another screen asked to come back to a specific home page (e.g. BACK from Round Settings).
             string open = PlayerPrefs.GetString(OpenScreenKey, "");
@@ -68,6 +67,7 @@ namespace GolfSimZA.UI
             {
                 PlayerPrefs.DeleteKey(OpenScreenKey);
                 if (Enum.TryParse(open, out Screen_ requested)) screen = requested;
+                if (screen == Screen_.Players || screen == Screen_.Settings) settingsScreen.Open(screen == Screen_.Players);
             }
         }
 
@@ -157,6 +157,7 @@ namespace GolfSimZA.UI
             CourseSession.PracticeMode = false;
             CourseSession.SetSession(e.Name, tee, holes);
             CourseSession.SetCourse(e.Id, e.Demo ? null : e.Tees);
+            CourseSession.SetHoles(e.Holes, 0, holes);
             SceneManager.LoadScene("GolfSimZA_0_5_RoundSettings");
         }
 
@@ -167,6 +168,7 @@ namespace GolfSimZA.UI
             CourseSession.PracticeMode = true;
             CourseSession.SetSession(e.Name, PickTee(e), Mathf.Clamp(e.Holes, 1, 18));
             CourseSession.SetCourse(e.Id, e.Demo ? null : e.Tees);
+            CourseSession.SetHoles(e.Holes, 0, Mathf.Clamp(e.Holes, 1, 18));
             SceneManager.LoadScene(PlayScene);
         }
 
@@ -176,6 +178,7 @@ namespace GolfSimZA.UI
             CourseSession.PracticeMode = false;
             CourseSession.SetSession(RangeName, "Blue", 18);
             CourseSession.SetCourse("", null);
+            CourseSession.SetHoles(18, 0, 18);
             SceneManager.LoadScene(PlayScene);
         }
 
@@ -236,8 +239,8 @@ namespace GolfSimZA.UI
                 case Screen_.LocalMatch: DrawCourseList(content, false); break;
                 case Screen_.OnCoursePractice: DrawCourseList(content, true); break;
                 case Screen_.Practice: DrawPractice(content); break;
-                case Screen_.Players: DrawPlayers(content); break;
-                case Screen_.Settings: DrawSettings(content); break;
+                case Screen_.Players:
+                case Screen_.Settings: settingsScreen.Draw(content); break;
                 case Screen_.Import:
                     importPanel.Draw(content);
                     if (!importPanel.IsOpen) screen = Screen_.LocalMatch;
@@ -267,9 +270,9 @@ namespace GolfSimZA.UI
             if (GUI.Button(new Rect(right - 190f, y, 190f, 40f), settings, updatePanel.UpdateAvailable ? GolfSimTheme.AccentButton : GolfSimTheme.TopBarButton))
             {
                 screen = Screen_.Settings;
-                updatePanel.Open();
+                settingsScreen.Open();
             }
-            if (GUI.Button(new Rect(right - 330f, y, 130f, 40f), "PLAYERS", GolfSimTheme.TopBarButton)) screen = Screen_.Players;
+            if (GUI.Button(new Rect(right - 330f, y, 130f, 40f), "PLAYERS", GolfSimTheme.TopBarButton)) { screen = Screen_.Players; settingsScreen.Open(true); }
             GUI.DrawTexture(new Rect(margin, y + 50f, Screen.width - margin * 2f, 2f), GolfSimTheme.AccentTex);
         }
 
@@ -447,103 +450,6 @@ namespace GolfSimZA.UI
             }
             if (GolfSimTheme.FitButton(b, "ON-COURSE PRACTICE", GolfSimTheme.BigTile)) { screen = Screen_.OnCoursePractice; search = ""; }
             GUI.Label(new Rect(b.x, b.y + 14f, b.width, 20f), "Any hole, no scoring", new GUIStyle(GolfSimTheme.Label) { alignment = TextAnchor.MiddleCenter });
-        }
-
-        // ---- Players
-
-        private void DrawPlayers(Rect r)
-        {
-            PlayerRoster roster = PlayerRoster.Current;
-            GUI.Label(new Rect(r.x, r.y, 400f, 40f), "PLAYERS", GolfSimTheme.Title);
-
-            float listW = Mathf.Min(360f, r.width * 0.3f);
-            Rect list = new Rect(r.x, r.y + 52f, listW, r.height - 52f);
-            GUI.Box(list, GUIContent.none, GolfSimTheme.Card);
-
-            float rowH = 50f;
-            Rect view = new Rect(list.x + 8f, list.y + 8f, list.width - 16f, list.height - 120f);
-            playerScroll = GUI.BeginScrollView(view, playerScroll, new Rect(0, 0, view.width - 18f, roster.players.Count * (rowH + 4f)));
-            for (int i = 0; i < roster.players.Count; i++)
-            {
-                PlayerProfile p = roster.players[i];
-                Rect row = new Rect(0, i * (rowH + 4f), view.width - 18f, rowH);
-                bool sel = p == editing;
-                if (GUI.Button(new Rect(row.x, row.y, row.width - 50f, rowH), "  " + p.name.ToUpperInvariant() + (p.selected ? "   ●" : ""), sel ? GolfSimTheme.TabActive : GolfSimTheme.Button)) editing = p;
-                GUI.enabled = roster.players.Count > 1;
-                if (GUI.Button(new Rect(row.xMax - 44f, row.y + 5f, 40f, 40f), "✕", GolfSimTheme.SmallButton))
-                {
-                    roster.Remove(p);
-                    if (editing == p) editing = roster.players[0];
-                    GUI.enabled = true;
-                    break;
-                }
-                GUI.enabled = true;
-            }
-            GUI.EndScrollView();
-
-            newPlayerName = GUI.TextField(new Rect(list.x + 12f, list.yMax - 102f, list.width - 24f, 36f), newPlayerName ?? "", GolfSimTheme.TextField);
-            if (string.IsNullOrEmpty(newPlayerName)) GUI.Label(new Rect(list.x + 24f, list.yMax - 94f, 200f, 20f), "New player name", GolfSimTheme.Subtitle);
-            if (GUI.Button(new Rect(list.x + 12f, list.yMax - 56f, list.width - 24f, 44f), "+  ADD PLAYER", GolfSimTheme.AccentButton))
-            {
-                editing = roster.Add(newPlayerName);
-                newPlayerName = "";
-            }
-
-            if (editing == null) return;
-            Rect info = new Rect(list.xMax + 16f, list.y, r.width - listW - 16f, list.height);
-            GUI.Box(info, GUIContent.none, GolfSimTheme.Card);
-            float x = info.x + 24f, y = info.y + 20f, w = Mathf.Min(520f, info.width - 48f);
-
-            GUI.Label(new Rect(x, y, w, 26f), "INFORMATION", GolfSimTheme.Heading);
-            y += 40f;
-            GUI.Label(new Rect(x, y, w, 18f), "PLAYER NAME", GolfSimTheme.Label);
-            y += 22f;
-            string renamed = GUI.TextField(new Rect(x, y, w, 36f), editing.name ?? "", GolfSimTheme.TextField);
-            if (renamed != editing.name)
-            {
-                editing.name = PlayerRoster.Clean(renamed);
-                roster.Save();
-            }
-            y += 54f;
-
-            GUI.Label(new Rect(x, y, w, 18f), "LEFT / RIGHT HANDED", GolfSimTheme.Label);
-            y += 22f;
-            if (GUI.Button(new Rect(x, y, w * 0.49f, 42f), "LEFT", editing.leftHanded ? GolfSimTheme.TabActive : GolfSimTheme.Button)) { editing.leftHanded = true; roster.Save(); }
-            if (GUI.Button(new Rect(x + w * 0.51f, y, w * 0.49f, 42f), "RIGHT", !editing.leftHanded ? GolfSimTheme.TabActive : GolfSimTheme.Button)) { editing.leftHanded = false; roster.Save(); }
-            y += 58f;
-
-            GUI.Label(new Rect(x, y, w, 18f), "PLAYS IN THE NEXT ROUND (up to " + PlayerRoster.MaxPlayersInRound + ")", GolfSimTheme.Label);
-            y += 22f;
-            if (GUI.Button(new Rect(x, y, w * 0.49f, 42f), "PLAYING", editing.selected ? GolfSimTheme.TabActive : GolfSimTheme.Button))
-            {
-                if (!editing.selected && roster.Selected.Count >= PlayerRoster.MaxPlayersInRound) roster.Selected[roster.Selected.Count - 1].selected = false;
-                editing.selected = true;
-                roster.Save();
-            }
-            if (GUI.Button(new Rect(x + w * 0.51f, y, w * 0.49f, 42f), "NOT PLAYING", !editing.selected ? GolfSimTheme.TabActive : GolfSimTheme.Button)) { editing.selected = false; roster.Save(); }
-            y += 58f;
-
-            GUI.Label(new Rect(x, y, w, 18f), "GOLF BAG", GolfSimTheme.Label);
-            y += 22f;
-            if (GUI.Button(new Rect(x, y, w, 44f), "EDIT GOLF BAG  &  MAP MY BAG  →", GolfSimTheme.AccentButton)) OpenBag(editing.name);
-            y += 58f;
-            GUI.Label(new Rect(x, y, w, 60f), "Selected players (●) play the next round in that order. Each player's clubs and mapped distances are kept with their name.", GolfSimTheme.Subtitle);
-        }
-
-        // ---- Settings & updates
-
-        private void DrawSettings(Rect r)
-        {
-            float unitsH = 70f;
-            Rect units = new Rect(r.x, r.y, r.width, unitsH);
-            GUI.Box(units, GUIContent.none, GolfSimTheme.Card);
-            GUI.Label(new Rect(units.x + 20f, units.y + 22f, 200f, 24f), "UNITS", GolfSimTheme.Heading);
-            bool metric = AppSettings.Current.metricUnits;
-            if (GUI.Button(new Rect(units.x + 140f, units.y + 14f, 240f, 42f), "METRIC  (km/h, m)", metric ? GolfSimTheme.TabActive : GolfSimTheme.Button)) { AppSettings.Current.metricUnits = true; AppSettings.Current.Save(); }
-            if (GUI.Button(new Rect(units.x + 390f, units.y + 14f, 240f, 42f), "IMPERIAL  (mph, yd)", !metric ? GolfSimTheme.TabActive : GolfSimTheme.Button)) { AppSettings.Current.metricUnits = false; AppSettings.Current.Save(); }
-
-            updatePanel.Draw(new Rect(r.x, r.y + unitsH + 12f, r.width, r.height - unitsH - 12f));
-            if (!updatePanel.IsOpen) screen = Screen_.Home;
         }
 
         private void DrawConfirmQuit(Rect r)

@@ -75,6 +75,8 @@ namespace GolfSimZA.UI
             GameObject root = new GameObject("GolfSimZA_Range");
             range = root.AddComponent<RangeEnvironment>();
             range.Build(targetSlider, widthSlider, greenSlider);
+            CourseScenery.ImproveRange(root, Camera.main, widthSlider);
+            Wind.NewHole(Vector3.forward);
             // Range view: higher behind the mat, looking down the range (fairway, lines and flag all in view).
             presentation?.ConfigureAddressView(5f, 10f, 30f, 0f);
             if (Camera.main != null) Camera.main.fieldOfView = 48f; // slightly tele so the targets read well
@@ -101,6 +103,7 @@ namespace GolfSimZA.UI
             presentation?.SetAddress(range.TeePosition, aim, snapCamera);
             tracer?.Clear();
             status = "READY";
+            GolfSimAudio.PlayReady();
         }
 
         private void Update()
@@ -139,11 +142,12 @@ namespace GolfSimZA.UI
                 {
                     range.RandomTarget(targetSlider);
                     lastProximity = -1f;
+                    Wind.NewHole(Vector3.forward);
                 }
                 ResetBall(false);
             }
 
-            if (Keyboard.current != null && Keyboard.current.rKey.wasPressedThisFrame && !inFlight)
+            if (Keyboard.current != null && Keyboard.current.rKey.wasPressedThisFrame && !inFlight && !GameMenuOverlay.IsOpen)
                 ResetBall(true);
         }
 
@@ -171,16 +175,45 @@ namespace GolfSimZA.UI
             if (!isRange || range == null) return;
             EnsureStyles();
 
+            AppSettings settings = AppSettings.Current;
+            bool flying = flight != null && flight.IsInFlight;
+            if (flying && settings.hideUiOnShot) return;
+
             DrawWorldLabels();
 
             float margin = Mathf.Clamp(Screen.width * 0.015f, 10f, 24f);
             DrawRangePanel(margin + 132f, margin);
-            GUI.Box(new Rect(Screen.width * 0.5f - 80f, margin, 160f, 36f), "0.0 m/s  •  WIND", pill);
-            GUI.Label(new Rect(Screen.width * 0.5f - 150f, margin + 40f, 300f, 20f), status + "   •   " + ActiveClub.Player, new GUIStyle(small) { alignment = TextAnchor.MiddleCenter, normal = { textColor = Color.white } });
+            DrawWind(margin);
+            GUI.Label(new Rect(Screen.width * 0.5f - 150f, margin + 42f, 300f, 20f), status + "   •   " + ActiveClub.Player, new GUIStyle(small) { alignment = TextAnchor.MiddleCenter, normal = { textColor = Color.white } });
+            if (settings.showBallReady && !flying && status == "READY")
+            {
+                Rect ready = new Rect(Screen.width * 0.5f - 90f, Screen.height - ClubBar.Height - 70f, 180f, 32f);
+                GUI.Box(ready, "BALL READY", pill);
+            }
 
             float recentTop = DrawRecent(Screen.width - margin, Screen.height - margin);
             ShotDataTiles.Draw(Screen.width - margin, margin, simulator != null ? simulator.LastShot : default(ShotData), recentTop - 8f);
-            ClubBar.Draw(margin, Screen.height - margin);
+            bool clubBar = settings.clubSelectorMode == 0 || (settings.clubSelectorMode == 2 && !flying);
+            if (clubBar) ClubBar.Draw(margin, Screen.height - margin);
+            else ClubBar.Close();
+        }
+
+        private void DrawWind(float y)
+        {
+            Rect r = new Rect(Screen.width * 0.5f - 115f, y, 230f, 38f);
+            GUI.Box(r, GUIContent.none, pill);
+            Camera cam = Camera.main;
+            Vector3 forward = cam != null ? cam.transform.forward : Vector3.forward;
+            bool calm = Wind.SpeedMps < 0.1f;
+            if (!calm)
+            {
+                Rect arrow = new Rect(r.x + 12f, r.y + 5f, 28f, 28f);
+                Matrix4x4 saved = GUI.matrix;
+                GUIUtility.RotateAroundPivot(Wind.ArrowAngle(forward), arrow.center);
+                GUI.Label(arrow, "▲", new GUIStyle(markerLabel) { fontSize = 20, normal = { textColor = GolfSimTheme.Gold } });
+                GUI.matrix = saved;
+            }
+            GUI.Label(new Rect(r.x + 44f, r.y, r.width - 52f, r.height), calm ? "NO WIND" : Wind.SpeedText() + "   " + Wind.Describe(forward), new GUIStyle(small) { fontSize = 13, fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleLeft, normal = { textColor = Color.white } });
         }
 
         private void DrawWorldLabels()
@@ -266,6 +299,7 @@ namespace GolfSimZA.UI
                 s.rangeRandomizer = randomizer;
                 s.Save();
                 range.Build(s.rangeTargetMeters, s.rangeFairwayWidth, s.rangeGreenWidth);
+                CourseScenery.ImproveRange(range.gameObject, Camera.main, s.rangeFairwayWidth);
                 lastProximity = -1f;
                 ResetBall(true);
                 panelOpen = false;

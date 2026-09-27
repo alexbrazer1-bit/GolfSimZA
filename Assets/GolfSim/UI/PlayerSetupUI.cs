@@ -18,7 +18,6 @@ namespace GolfSimZA.UI
         private bool editingBag;
         private int selectedPlayerIndex = -1;
         private GolfBagProfile bagProfile;
-        private Vector2 bagScroll;
 
         private bool returnHome;
 
@@ -219,7 +218,6 @@ namespace GolfSimZA.UI
             string name = string.IsNullOrWhiteSpace(players[selectedPlayerIndex]) ? "Player " + (selectedPlayerIndex + 1) : players[selectedPlayerIndex].Trim();
             bagProfile = GolfBagProfile.Load(name);
             editingBag = true;
-            bagScroll = Vector2.zero;
         }
 
         private void CloseBagEditor(bool save)
@@ -258,35 +256,79 @@ namespace GolfSimZA.UI
             GUILayout.EndArea();
         }
 
+        /// <summary>
+        /// Every club in the library in a two-column grid that always fits the screen (no scrolling):
+        /// tick to put it in the bag (up to 18), MAP to hit six shots with it.
+        /// </summary>
         private void DrawClubLibraryPanel(float width)
         {
             GUILayout.BeginVertical(cardStyle, GUILayout.Width(width));
             GUILayout.BeginHorizontal();
-            GUILayout.Label("SELECT A CLUB", titleStyle);
+            GUILayout.Label("SELECT A CLUB", GolfSimTheme.Heading);
             GUILayout.FlexibleSpace();
-            GUILayout.Label("14 CLUBS", bagMutedStyle);
+            GUILayout.Label(CountClubsInBag() + " / " + GolfBagProfile.MaxBagClubs + " IN BAG", bagMutedStyle);
             GUILayout.EndHorizontal();
-            GUILayout.Label("Mapped clubs show their carry–total range. Toggle a club to include or remove it from this player's bag.", bagMutedStyle);
-            GUILayout.Space(8);
+            GUILayout.Label("Tick a club to put it in this player's bag. MAP hits six shots to learn its carry and total.", bagMutedStyle);
+            GUILayout.Space(6);
 
-            bagScroll = GUILayout.BeginScrollView(bagScroll, GUILayout.Height(Screen.height - 155f));
-            int[] rows = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13 };
-            for (int r = 0; r < rows.Length; r++)
+            Rect area = GUILayoutUtility.GetRect(width - 40f, Screen.height - 190f);
+            int count = GolfBagProfile.ClubCount;
+            int columns = 2;
+            int rows = Mathf.CeilToInt(count / (float)columns);
+            float gap = 4f;
+            float rowH = Mathf.Max(24f, (area.height - gap * (rows - 1)) / rows);
+            float colW = (area.width - gap) / columns;
+            var nameStyle = new GUIStyle(clubBigStyle) { fontSize = rowH >= 40f ? 16 : 13, alignment = TextAnchor.MiddleLeft };
+            var small = new GUIStyle(bagMutedStyle) { alignment = TextAnchor.MiddleLeft };
+            var range = new GUIStyle(clubRangeStyle) { alignment = TextAnchor.MiddleLeft };
+            var tick = new GUIStyle(bagButtonStyle) { fixedHeight = 0 };
+            var tickOn = new GUIStyle(bagActiveStyle) { fixedHeight = 0 };
+            int inBagCount = CountClubsInBag();
+            string playerName = CurrentPlayerName();
+
+            for (int i = 0; i < count; i++)
             {
-                int i = rows[r];
-                GUILayout.BeginHorizontal(cardStyle, GUILayout.Height(58f));
+                int col = i / rows, row = i % rows;
+                Rect cell = new Rect(area.x + col * (colW + gap), area.y + row * (rowH + gap), colW, rowH);
                 bool inBag = bagProfile.InBag[i];
-                if (GUILayout.Button(inBag ? "✓" : "+", inBag ? bagActiveStyle : bagButtonStyle, GUILayout.Width(42))) bagProfile.InBag[i] = !inBag;
-                GUILayout.Label(ShortClubName(bagProfile.ClubNames[i]), clubBigStyle, GUILayout.Width(90));
-                GUILayout.Label(bagProfile.Lofts[i].ToString("F1") + "°", labelStyle, GUILayout.Width(55));
-                string range = bagProfile.CarryMeters[i] > 0f ? bagProfile.CarryMeters[i].ToString("F0") + " – " + bagProfile.TotalMeters[i].ToString("F0") + " m" : "NOT MAPPED";
-                GUILayout.Label(range, clubRangeStyle, GUILayout.Width(125));
-                GUILayout.FlexibleSpace();
-                GUILayout.EndHorizontal();
-                GUILayout.Space(3);
+                GUI.Box(cell, GUIContent.none, inBag ? GolfSimTheme.SelectedCard : GolfSimTheme.Card);
+
+                float bh = Mathf.Min(34f, rowH - 6f);
+                bool canAdd = inBag || inBagCount < GolfBagProfile.MaxBagClubs;
+                GUI.enabled = canAdd;
+                if (GUI.Button(new Rect(cell.x + 6f, cell.y + (rowH - bh) * 0.5f, bh, bh), inBag ? "✓" : "+", inBag ? tickOn : tick))
+                {
+                    bagProfile.InBag[i] = !inBag;
+                    bagProfile.Save(playerName);
+                }
+                GUI.enabled = true;
+
+                float x = cell.x + bh + 14f;
+                float nameW = Mathf.Min(130f, colW * 0.36f);
+                GUI.Label(new Rect(x, cell.y, nameW, rowH), bagProfile.ClubNames[i], nameStyle);
+                x += nameW;
+                GUI.Label(new Rect(x, cell.y, 48f, rowH), bagProfile.Lofts[i].ToString("0.#") + "°", small);
+                x += 50f;
+                float mapW = inBag ? 58f : 0f;
+                string mapped = bagProfile.CarryMeters[i] > 0f ? bagProfile.CarryMeters[i].ToString("F0") + "–" + bagProfile.TotalMeters[i].ToString("F0") + " m" : (inBag ? "NOT MAPPED" : "");
+                GUI.Label(new Rect(x, cell.y, cell.xMax - x - mapW - 8f, rowH), mapped, range);
+                if (inBag && GUI.Button(new Rect(cell.xMax - mapW - 6f, cell.y + (rowH - bh) * 0.5f, mapW, bh), "MAP", tickOn))
+                {
+                    bagProfile.Save(playerName);
+                    PlayerPrefs.SetInt("GolfSimZA.MapMode", 1);
+                    PlayerPrefs.SetString("GolfSimZA.MapPlayer", playerName);
+                    PlayerPrefs.SetInt("GolfSimZA.MapClubIndex", i);
+                    PlayerPrefs.Save();
+                    SceneManager.LoadScene("GolfSimZA_0_6_PlayRound");
+                }
             }
-            GUILayout.EndScrollView();
             GUILayout.EndVertical();
+        }
+
+        private string CurrentPlayerName()
+        {
+            if (selectedPlayerIndex < 0 || selectedPlayerIndex >= players.Count) return "Player 1";
+            return string.IsNullOrWhiteSpace(players[selectedPlayerIndex]) ? "Player " + (selectedPlayerIndex + 1) : players[selectedPlayerIndex].Trim();
         }
 
         private void DrawBagMapPanel(float width)

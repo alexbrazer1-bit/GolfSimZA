@@ -17,6 +17,45 @@ namespace GolfSimZA.LaunchMonitors.GarminR10
         [SerializeField] private string executableRelativePath = "GolfSimZA-R10-Bridge/gspro-r10.exe";
 
         private Process bridgeProcess;
+        private bool wanted;
+        private float restartAt = -1f;
+        private float restartDelay = 3f;
+        private float startedAt;
+
+        /// <summary>
+        /// RESTART R10 BRIDGE (Settings → GAME → SYSTEM): stops every running GolfSim ZA bridge.
+        /// A play screen that is open starts a fresh bridge within a few seconds; otherwise the next
+        /// round or range session starts it.
+        /// </summary>
+        public static int RestartAll()
+        {
+            string exe = Path.Combine(Application.streamingAssetsPath, "GolfSimZA-R10-Bridge/gspro-r10.exe");
+            int stopped = StopOrphanedBridges(exe);
+            UnityEngine.Debug.Log($"[GolfSimZA] R10 bridge restart requested ({stopped} stopped).");
+            return stopped;
+        }
+
+        private void Update()
+        {
+            // Keep the bridge running: if it exits (crash, or RESTART R10 BRIDGE), start it again.
+            if (!wanted) return;
+            if (bridgeProcess != null && !IsRunning && restartAt < 0f)
+            {
+                // A bridge that keeps stopping straight away (e.g. no R10 switched on) is retried
+                // less and less often: 3, 6, 12 ... up to 60 seconds.
+                bool quickExit = Time.unscaledTime - startedAt < 20f;
+                restartDelay = quickExit ? Mathf.Min(60f, restartDelay * 2f) : 3f;
+                restartAt = Time.unscaledTime + restartDelay;
+                UnityEngine.Debug.LogWarning($"[GolfSimZA] R10 bridge stopped; restarting in {restartDelay:0} s.");
+            }
+            if (restartAt > 0f && Time.unscaledTime >= restartAt)
+            {
+                restartAt = -1f;
+                bridgeProcess?.Dispose();
+                bridgeProcess = null;
+                StartBridge();
+            }
+        }
 
         public bool IsRunning => bridgeProcess != null && !bridgeProcess.HasExited;
 
@@ -37,6 +76,7 @@ namespace GolfSimZA.LaunchMonitors.GarminR10
 
         public bool StartBridge()
         {
+            wanted = true;
             if (IsRunning)
                 return true;
 
@@ -70,6 +110,7 @@ namespace GolfSimZA.LaunchMonitors.GarminR10
                 bridgeProcess.StartInfo.EnvironmentVariables["DOTNET_SYSTEM_GLOBALIZATION_INVARIANT"] = "1";
 
                 bridgeProcess.Start();
+                startedAt = Time.unscaledTime;
                 UnityEngine.Debug.Log($"[GolfSimZA] Started packaged R10 bridge: {executablePath}");
                 return true;
             }
@@ -87,6 +128,7 @@ namespace GolfSimZA.LaunchMonitors.GarminR10
 
         public void StopBridge()
         {
+            wanted = false;
             if (!IsRunning)
             {
                 bridgeProcess?.Dispose();
@@ -124,8 +166,9 @@ namespace GolfSimZA.LaunchMonitors.GarminR10
         /// Stops bridges started from this same exe that are still running (e.g. after a crash),
         /// so only one bridge talks to the R10 and the exe can be updated.
         /// </summary>
-        private static void StopOrphanedBridges(string executablePath)
+        private static int StopOrphanedBridges(string executablePath)
         {
+            int stopped = 0;
             string full = Path.GetFullPath(executablePath);
             foreach (Process p in Process.GetProcessesByName(Path.GetFileNameWithoutExtension(full)))
             {
@@ -134,6 +177,7 @@ namespace GolfSimZA.LaunchMonitors.GarminR10
                     if (p.MainModule == null || !string.Equals(Path.GetFullPath(p.MainModule.FileName), full, StringComparison.OrdinalIgnoreCase)) continue;
                     p.Kill();
                     p.WaitForExit(3000);
+                    stopped++;
                     UnityEngine.Debug.Log($"[GolfSimZA] Stopped an old R10 bridge (process {p.Id}) before starting a new one.");
                 }
                 catch (Exception ex)
@@ -145,6 +189,7 @@ namespace GolfSimZA.LaunchMonitors.GarminR10
                     p.Dispose();
                 }
             }
+            return stopped;
         }
     }
 }

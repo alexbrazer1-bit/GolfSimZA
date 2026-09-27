@@ -135,9 +135,9 @@ namespace GolfSimZA.Physics
         private void EnsureMaterials()
         {
             if (grass != null) return;
-            grass = Mat(new Color(0.16f, 0.34f, 0.13f), 0.05f);
-            bandLight = Mat(new Color(0.42f, 0.70f, 0.27f), 0.1f);
-            bandDark = Mat(new Color(0.25f, 0.49f, 0.17f), 0.1f);
+            grass = Mat(new Color(0.19f, 0.33f, 0.15f), 0.05f);
+            bandLight = Mat(new Color(0.33f, 0.52f, 0.22f), 0.1f);
+            bandDark = Mat(new Color(0.25f, 0.43f, 0.17f), 0.1f);
             line = Mat(new Color(0.92f, 0.94f, 0.92f), 0.2f);
             green = Mat(new Color(0.38f, 0.78f, 0.34f), 0.35f);
             flagRed = Mat(new Color(0.90f, 0.12f, 0.10f), 0.2f);
@@ -168,13 +168,10 @@ namespace GolfSimZA.Physics
             if (cam != null)
             {
                 cam.clearFlags = CameraClearFlags.Skybox;
-                cam.farClipPlane = Mathf.Max(cam.farClipPlane, 3000f);
+                cam.farClipPlane = Mathf.Clamp(AppSettings.Current.drawDistanceMeters, 500f, 15000f);
             }
-            RenderSettings.fog = true;
-            RenderSettings.fogMode = FogMode.Linear;
             RenderSettings.fogColor = new Color(0.72f, 0.80f, 0.86f);
-            RenderSettings.fogStartDistance = 450f;
-            RenderSettings.fogEndDistance = 1600f;
+            FlightPresentation.ApplyFog();
             GameOptions.ApplyLighting();
         }
     }

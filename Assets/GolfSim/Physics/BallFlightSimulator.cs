@@ -79,6 +79,7 @@ namespace GolfSimZA.Physics
         private float stepAccumulator;
         private bool landedOnce;
         private ShotData activeShot;
+        private readonly System.Collections.Generic.HashSet<int> treesHit = new System.Collections.Generic.HashSet<int>();
 
         private bool hasHole;
         private Vector3 holePosition;
@@ -112,16 +113,50 @@ namespace GolfSimZA.Physics
         public event Action<ShotData> Launched;
         public event Action<ShotData, float, float, float, float> ShotCompleted;
         public event Action BallHoled;
+        /// <summary>First time the ball touches the ground after a full shot (for the landing sound).</summary>
+        public event Action<float> Landed;
+
+        /// <summary>Stimpmeter reading → rolling deceleration (a ball released at 1.83 m/s rolls "stimp" feet).</summary>
+        public static float StimpToDeceleration(float stimpFeet)
+        {
+            float distance = Mathf.Clamp(stimpFeet, 5f, 16f) * 0.3048f;
+            return 1.83f * 1.83f / (2f * distance);
+        }
+
+        /// <summary>Applies the realism settings (green speed, fairway firmness).</summary>
+        public void ApplyRealismSettings()
+        {
+            AppSettings s = AppSettings.Current;
+            greenRollDeceleration = StimpToDeceleration(s.greenStimp);
+            switch (s.fairwayFirmness)
+            {
+                case 0: fairwayRollDeceleration = 5.6f; fairwayPuttDeceleration = 2.0f; bounceRetention = 0.14f; break;
+                case 2: fairwayRollDeceleration = 3.1f; fairwayPuttDeceleration = 1.3f; bounceRetention = 0.22f; break;
+                default: fairwayRollDeceleration = 4.2f; fairwayPuttDeceleration = 1.6f; bounceRetention = 0.18f; break;
+            }
+        }
 
         private void Awake()
         {
             AltitudeMeters = AppSettings.Current.homeAltitudeMeters;
+            ApplyRealismSettings();
+            AppSettings.Changed += ApplyRealismSettings;
+
+            // Sounds: strike on launch, thud on the first landing, rattle in the cup.
+            Launched += shot => GolfSimAudio.PlayStrike(shot.BallSpeedMps, puttMode);
+            Landed += GolfSimAudio.PlayLanding;
+            BallHoled += GolfSimAudio.PlayCup;
             if (ball != null)
             {
                 // Keep the ball out of ground ray casts.
                 ball.gameObject.layer = GroundProbe.IgnoreRaycastLayer;
                 GroundProbe.FallbackHeight = groundY;
             }
+        }
+
+        private void OnDestroy()
+        {
+            AppSettings.Changed -= ApplyRealismSettings;
         }
 
         /// <summary>Sets the current hole so greens roll faster and the ball can drop in the cup.</summary>
@@ -160,7 +195,11 @@ namespace GolfSimZA.Physics
             if (!shot.IsValid || ball == null)
                 return;
 
+            // Offsets from Settings → VISUAL SETTINGS → OFFSET (launch monitor not square to the screen).
+            shot.LaunchDirectionDeg += AppSettings.Current.aimOffsetDeg;
+            shot.LaunchAngleDeg += AppSettings.Current.launchAngleOffsetDeg;
             activeShot = shot;
+            treesHit.Clear();
             WasHoled = false;
             stepAccumulator = 0f;
             rollTime = 0f;
@@ -206,7 +245,7 @@ namespace GolfSimZA.Physics
             landingRollDeceleration = fairwayRollDeceleration;
 
             horizontalScale = 1f;
-            if (useMeasuredR10Carry && shot.CarryMeters > 0.5f)
+            if (useMeasuredR10Carry && shot.CarryMeters > 0.5f && Wind.SpeedMps < 0.1f)
             {
                 float predicted = PredictFlatCarry(velocity, currentSpinRpm, spinAxisRad);
                 if (predicted > 0.5f)
@@ -239,9 +278,11 @@ namespace GolfSimZA.Physics
         /// spin factor S = r*omega/v. Lift acts at right angles to the velocity, tilted
         /// sideways by the spin axis (positive axis curves the ball right).
         /// </summary>
-        private void Accelerate(ref Vector3 v, ref float spinRpm, float axis, float dt)
+        private void Accelerate(ref Vector3 v, ref float spinRpm, float axis, float dt, float heightAboveGround)
         {
-            float speed = v.magnitude;
+            // Aerodynamics use the air speed relative to the ball (wind from Settings → REALISM).
+            Vector3 air = v - Wind.At(heightAboveGround);
+            float speed = air.magnitude;
             if (speed < 0.01f)
             {
                 v += Vector3.down * gravity * dt;
@@ -254,14 +295,14 @@ namespace GolfSimZA.Physics
             float cl = spinFactor > 0f ? Mathf.Min(liftMaximum, liftScale * Mathf.Pow(spinFactor, liftExponent)) : 0f;
             float k = 0.5f * AirDensity * BallArea / BallMass;
 
-            Vector3 direction = v / speed;
-            Vector3 horizontal = new Vector3(v.x, 0f, v.z);
+            Vector3 direction = air / speed;
+            Vector3 horizontal = new Vector3(air.x, 0f, air.z);
             Vector3 right = horizontal.sqrMagnitude > 0.000001f ? Vector3.Cross(Vector3.up, horizontal.normalized) : Vector3.right;
             Vector3 up = Vector3.Cross(direction, right);
             if (up.y < 0f) up = -up;
             Vector3 liftDirection = up * Mathf.Cos(axis) + right * Mathf.Sin(axis);
 
-            Vector3 acceleration = -k * cd * speed * v + k * cl * speed * speed * liftDirection + Vector3.down * gravity;
+            Vector3 acceleration = -k * cd * speed * air + k * cl * speed * speed * liftDirection + Vector3.down * gravity;
             v += acceleration * dt;
             spinRpm *= Mathf.Exp(-spinDecayRate * dt);
         }
@@ -272,7 +313,7 @@ namespace GolfSimZA.Physics
             float t = 0f;
             while (t < maximumFlightTime)
             {
-                Accelerate(ref v, ref spin, axis, Step);
+                Accelerate(ref v, ref spin, axis, Step, Mathf.Max(0f, p.y));
                 p += v * Step;
                 t += Step;
                 if (p.y <= 0f && t > 0.05f) break;
@@ -284,10 +325,18 @@ namespace GolfSimZA.Physics
         private void StepAirborne(float dt)
         {
             flightTime += dt;
-            Accelerate(ref velocity, ref currentSpinRpm, spinAxisRad, dt);
+            Accelerate(ref velocity, ref currentSpinRpm, spinAxisRad, dt, ball.position.y - GroundProbe.HeightAt(ball.position));
 
             Vector3 move = new Vector3(velocity.x * horizontalScale, velocity.y, velocity.z * horizontalScale) * dt;
             ball.position += move;
+
+            // Trees: leaves slow the ball down, trunks knock it back.
+            TreeField trees = TreeField.Active;
+            if (trees != null && trees.Collide(ball.position, ref velocity, treesHit))
+            {
+                horizontalScale = 1f;
+                currentSpinRpm *= 0.5f;
+            }
             maxHeight = Mathf.Max(maxHeight, ball.position.y);
             totalMeters = HorizontalDistance(ball.position, launchPosition);
             if (!landedOnce) carryMeters = totalMeters;
@@ -319,6 +368,7 @@ namespace GolfSimZA.Physics
                 DescentAngleDeg = Mathf.Atan2(Mathf.Max(0f, -velocity.y), Mathf.Max(0.001f, horizontalSpeed)) * Mathf.Rad2Deg;
                 landedOnce = true;
                 landingPosition = ball.position;
+                Landed?.Invoke(velocity.magnitude);
                 carryMeters = HorizontalDistance(landingPosition, launchPosition);
 
                 bool onGreen = IsOnGreen(landingPosition);

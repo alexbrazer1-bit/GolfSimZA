@@ -12,6 +12,10 @@ namespace GolfSimZA.Players
         public string name = "Player";
         public bool leftHanded;
         public bool selected = true;   // plays in the next round
+        /// <summary>Colour / team index into PlayerRoster.Colors (-1 = not chosen yet).</summary>
+        public int color = -1;
+        /// <summary>Tee box for this player ("" = the match tees chosen in Round Settings).</summary>
+        public string tee = "";
     }
 
     /// <summary>
@@ -21,7 +25,47 @@ namespace GolfSimZA.Players
     [Serializable]
     public sealed class PlayerRoster
     {
-        public const int MaxPlayersInRound = 4;
+        public const int MaxPlayersInRound = 8;
+
+        public static readonly string[] ColorNames = { "RED", "BLUE", "GREEN", "GOLD", "PURPLE", "ORANGE", "TEAL", "PINK" };
+        public static readonly Color[] Colors =
+        {
+            new Color(0.90f, 0.20f, 0.20f), new Color(0.20f, 0.50f, 0.95f), new Color(0.15f, 0.72f, 0.38f), new Color(0.96f, 0.72f, 0.20f),
+            new Color(0.58f, 0.34f, 0.88f), new Color(0.98f, 0.50f, 0.12f), new Color(0.10f, 0.72f, 0.72f), new Color(0.93f, 0.38f, 0.66f)
+        };
+
+        /// <summary>The player's colour (their chosen one, or one by position in the roster).</summary>
+        public static Color ColorFor(string name)
+        {
+            PlayerRoster r = Current;
+            PlayerProfile p = r.Find(name);
+            int index = p != null ? r.ColorIndex(p) : Mathf.Abs((name ?? "").GetHashCode()) % Colors.Length;
+            return Colors[index];
+        }
+
+        public int ColorIndex(PlayerProfile p)
+        {
+            if (p.color >= 0 && p.color < Colors.Length) return p.color;
+            int i = players.IndexOf(p);
+            return (i < 0 ? 0 : i) % Colors.Length;
+        }
+
+        /// <summary>First colour no other selected player uses.</summary>
+        public int FreeColor(PlayerProfile except = null)
+        {
+            var used = new HashSet<int>();
+            foreach (PlayerProfile p in players)
+                if (p != except && p.selected) used.Add(ColorIndex(p));
+            for (int i = 0; i < Colors.Length; i++) if (!used.Contains(i)) return i;
+            return 0;
+        }
+
+        /// <summary>This player's tee on the current course, or null to use the match tees.</summary>
+        public static string TeeFor(string name)
+        {
+            PlayerProfile p = Current.Find(name);
+            return p != null && !string.IsNullOrEmpty(p.tee) ? p.tee : null;
+        }
         public List<PlayerProfile> players = new List<PlayerProfile>();
 
         private static PlayerRoster current;
@@ -47,6 +91,10 @@ namespace GolfSimZA.Players
             {
                 Debug.LogWarning("[GolfSimZA] Could not read players: " + ex.Message);
             }
+
+            if (roster != null && roster.players != null)
+                foreach (PlayerProfile p in roster.players)
+                    if (p.tee == null) p.tee = "";
 
             if (roster == null || roster.players == null || roster.players.Count == 0)
             {
@@ -102,6 +150,7 @@ namespace GolfSimZA.Players
             int n = 2;
             while (Find(unique) != null) unique = name + " " + n++;
             var profile = new PlayerProfile { name = unique, selected = Selected.Count < MaxPlayersInRound };
+            profile.color = FreeColor();
             players.Add(profile);
             Save();
             return profile;

@@ -88,16 +88,19 @@ namespace GolfSimZA.Physics
         {
             float total = 0f;
             for (int i = 1; i < path.Count; i++) total += Vector3.Distance(path[i - 1], path[i]);
-            float duration = Mathf.Clamp(total / 45f, 4f, 12f);
+            AppSettings settings = AppSettings.Current;
+            float metersPerSecond = Mathf.Lerp(25f, 90f, Mathf.Clamp01(settings.flyoverSpeed));
+            float heightAbove = Mathf.Lerp(12f, 60f, Mathf.Clamp01(settings.flyoverHeight));
+            float duration = Mathf.Clamp(total / metersPerSecond, 3f, 16f);
             float t = 0f;
             while (t < duration)
             {
                 t += Time.deltaTime;
                 float along = Mathf.SmoothStep(0f, 1f, t / duration) * total;
                 Vector3 point = PointAlong(path, along, out Vector3 forward);
-                Vector3 camPos = point - forward * 25f + Vector3.up * 32f;
+                Vector3 camPos = point - forward * (heightAbove * 0.8f) + Vector3.up * heightAbove;
                 float ground = GroundProbe.HeightAt(camPos);
-                camPos.y = Mathf.Max(camPos.y, ground + 20f);
+                camPos.y = Mathf.Max(camPos.y, ground + heightAbove * 0.6f);
                 followCamera.transform.position = Vector3.Lerp(followCamera.transform.position, camPos, 1f - Mathf.Exp(-4f * Time.deltaTime));
                 Vector3 look = PointAlong(path, Mathf.Min(total, along + 60f), out _);
                 followCamera.transform.rotation = Quaternion.Slerp(followCamera.transform.rotation, Quaternion.LookRotation(look - followCamera.transform.position, Vector3.up), 1f - Mathf.Exp(-4f * Time.deltaTime));
@@ -146,19 +149,52 @@ namespace GolfSimZA.Physics
 
             if (followCamera != null)
             {
-                followCamera.farClipPlane = Mathf.Max(followCamera.farClipPlane, 4000f);
                 homeCameraPosition = followCamera.transform.position;
                 homeCameraRotation = followCamera.transform.rotation;
             }
 
             if (flight != null)
                 flight.ShotCompleted += OnShotCompleted;
+
+            ApplyVisualSettings();
+            AppSettings.Changed += ApplyVisualSettings;
         }
 
         private void OnDestroy()
         {
+            AppSettings.Changed -= ApplyVisualSettings;
             if (flight != null)
                 flight.ShotCompleted -= OnShotCompleted;
+        }
+
+        /// <summary>Settings → VISUAL SETTINGS → CAMERA OPTIONS (follow camera, delay, fog, draw distance).</summary>
+        public void ApplyVisualSettings()
+        {
+            AppSettings s = AppSettings.Current;
+            followDuringFlight = s.followCamera;
+            // Delay 0 = tight (fast follow), 1 = lazy (slow follow).
+            cameraFollowSpeed = Mathf.Lerp(9f, 1.5f, Mathf.Clamp01(s.followDelay));
+            if (followCamera != null)
+                followCamera.farClipPlane = Mathf.Clamp(s.drawDistanceMeters, 500f, 15000f);
+            ApplyFog();
+        }
+
+        /// <summary>Gradient fog on/off; the fog starts later with a longer draw distance.</summary>
+        public static void ApplyFog()
+        {
+            AppSettings s = AppSettings.Current;
+            if (!s.gradientFog)
+            {
+                RenderSettings.fog = false;
+                return;
+            }
+            float draw = Mathf.Clamp(s.drawDistanceMeters, 500f, 15000f);
+            // A course with its own fog keeps it; otherwise use the GolfSim ZA haze.
+            if (RenderSettings.fog && RenderSettings.fogMode != FogMode.Linear) return;
+            RenderSettings.fog = true;
+            RenderSettings.fogMode = FogMode.Linear;
+            RenderSettings.fogStartDistance = Mathf.Min(450f, draw * 0.25f);
+            RenderSettings.fogEndDistance = Mathf.Max(RenderSettings.fogStartDistance + 200f, Mathf.Min(1600f, draw * 0.9f));
         }
 
         private void Update()

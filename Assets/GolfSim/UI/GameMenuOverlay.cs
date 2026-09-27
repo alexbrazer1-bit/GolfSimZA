@@ -23,7 +23,8 @@ namespace GolfSimZA.UI
         private bool open;
         private Page page;
         private GUIStyle tile, tileOn, tileOff, menuButton;
-        private string altitudeField;
+        private SettingsScreen settingsScreen;
+        private static Texture2D settingsBackdrop;
 
         public static bool IsOpen { get; private set; }
 
@@ -87,6 +88,18 @@ namespace GolfSimZA.UI
                 return;
             }
 
+            if (page == Page.Settings)
+            {
+                // Full-screen settings (same screen as the home SETTINGS).
+                if (settingsScreen == null) settingsScreen = new SettingsScreen(() => page = Page.Grid, null, null, null);
+                if (settingsBackdrop == null) settingsBackdrop = GolfSimTheme.Tex(new Color(0.02f, 0.05f, 0.06f, 0.97f));
+                GUI.DrawTexture(new Rect(0, 0, Screen.width, Screen.height), settingsBackdrop);
+                float m = Mathf.Max(24f, Screen.width * 0.03f);
+                settingsScreen.Draw(new Rect(m, 24f, Screen.width - m * 2f, Screen.height - 48f));
+                if (Event.current.type == EventType.MouseDown || Event.current.type == EventType.MouseUp) Event.current.Use();
+                return;
+            }
+
             if (dimTexture == null) dimTexture = GolfSimTheme.Tex(new Color(0f, 0f, 0f, 0.45f));
             GUI.DrawTexture(new Rect(0, 0, Screen.width, Screen.height), dimTexture);
             float w = 420f;
@@ -103,7 +116,6 @@ namespace GolfSimZA.UI
             switch (page)
             {
                 case Page.Grid: DrawGrid(body); break;
-                case Page.Settings: DrawSettings(body); break;
                 case Page.Shortcuts: DrawShortcuts(body); break;
                 case Page.ConfirmEnd: DrawConfirm(body, OnRange ? "Leave the driving range?" : (CourseSession.PracticeMode ? "End practice and go home?" : "End this round? Finished holes are saved - turn on RESUME ROUND in Round Settings to carry on later."), () => Load(HomeScene)); break;
                 case Page.ConfirmQuit: DrawConfirm(body, "Quit GolfSim ZA?", Quit); break;
@@ -135,7 +147,7 @@ namespace GolfSimZA.UI
             int i = 0;
 
             if (Cell(body, ref i, cw, ch, gap, "DATA TILES", GameOptions.ShowDataTiles ? tileOn : tile)) GameOptions.ShowDataTiles = !GameOptions.ShowDataTiles;
-            if (Cell(body, ref i, cw, ch, gap, "SETTINGS", tile)) { page = Page.Settings; altitudeField = AppSettings.Current.homeAltitudeMeters.ToString("0"); }
+            if (Cell(body, ref i, cw, ch, gap, "SETTINGS", tile)) OpenSettings(false);
             if (Cell(body, ref i, cw, ch, gap, "LIGHTING\n" + GameOptions.Lighting.ToString().ToUpperInvariant(), tile)) GameOptions.CycleLighting();
             if (Cell(body, ref i, cw, ch, gap, "MULLIGAN\n(take shot back)", round ? tile : tileOff) && round) { GameOptions.RequestMulligan(); SetOpen(false); }
             if (Cell(body, ref i, cw, ch, gap, "FLYOVER", round ? tile : tileOff) && round) { SetOpen(false); GameOptions.RequestFlyover(); }
@@ -144,7 +156,10 @@ namespace GolfSimZA.UI
             if (Cell(body, ref i, cw, ch, gap, "SHOW FLAG", GameOptions.ShowFlag ? tileOn : tile)) GameOptions.ToggleFlag();
             if (Cell(body, ref i, cw, ch, gap, "SHORTCUTS", tile)) page = Page.Shortcuts;
             if (Cell(body, ref i, cw, ch, gap, "SCORECARD", round ? tile : tileOff) && round) { GameOptions.RequestScorecard(); SetOpen(false); }
-            if (Cell(body, ref i, cw, ch, gap, "PLAYERS & BAGS", tile)) Load(PlayersScene);
+            // During a round the players page opens in place (the round keeps going);
+            // on the range the golf bag editor can be opened.
+            if (round) { if (Cell(body, ref i, cw, ch, gap, "PLAYERS", tile)) OpenSettings(true); }
+            else if (Cell(body, ref i, cw, ch, gap, "PLAYERS & BAGS", tile)) Load(PlayersScene);
             if (Cell(body, ref i, cw, ch, gap, "RESUME", tile)) SetOpen(false);
 
             float y = body.y + Mathf.Ceil(i / 2f) * (ch + gap) + 6f;
@@ -159,35 +174,11 @@ namespace GolfSimZA.UI
             return GUI.Button(new Rect(body.x + col * (w + gap), body.y + row * (h + gap), w, h), text, style);
         }
 
-        private void DrawSettings(Rect body)
+        private void OpenSettings(bool players)
         {
-            float y = body.y;
-            GUI.Label(new Rect(body.x, y, body.width, 20f), "UNITS", GolfSimTheme.Label);
-            y += 24f;
-            bool metric = AppSettings.Current.metricUnits;
-            if (GUI.Button(new Rect(body.x, y, body.width * 0.49f, 42f), "METRIC (km/h, m)", metric ? tileOn : tile)) SetUnits(true);
-            if (GUI.Button(new Rect(body.x + body.width * 0.51f, y, body.width * 0.49f, 42f), "IMPERIAL (mph, yd)", !metric ? tileOn : tile)) SetUnits(false);
-            y += 58f;
-
-            GUI.Label(new Rect(body.x, y, body.width, 20f), "HOME / RANGE ALTITUDE (metres)", GolfSimTheme.Label);
-            y += 24f;
-            altitudeField = GUI.TextField(new Rect(body.x, y, body.width * 0.5f, 36f), altitudeField ?? "0", GolfSimTheme.TextField);
-            if (GUI.Button(new Rect(body.x + body.width * 0.54f, y, body.width * 0.46f, 36f), "SAVE", GolfSimTheme.AccentButton)
-                && float.TryParse(altitudeField, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float m))
-            {
-                AppSettings.Current.homeAltitudeMeters = Mathf.Clamp(m, -400f, 5000f);
-                AppSettings.Current.Save();
-            }
-            y += 50f;
-            GUI.Label(new Rect(body.x, y, body.width, 60f), "Courses use their own altitude. The range uses this altitude (Johannesburg is about 1 750 m).", GolfSimTheme.Subtitle);
-
-            if (GUI.Button(new Rect(body.x, body.yMax - 44f, body.width, 44f), "BACK", GolfSimTheme.Button)) page = Page.Grid;
-        }
-
-        private static void SetUnits(bool metric)
-        {
-            AppSettings.Current.metricUnits = metric;
-            AppSettings.Current.Save();
+            if (settingsScreen == null) settingsScreen = new SettingsScreen(() => page = Page.Grid, null, null, null);
+            settingsScreen.Open(players);
+            page = Page.Settings;
         }
 
         private void DrawShortcuts(Rect body)

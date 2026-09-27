@@ -157,6 +157,8 @@ namespace GolfSimZA.Courses
             // Use the course's sky, fog and ambient light.
             SceneManager.SetActiveScene(courseScene);
 
+            GolfSimZA.Physics.FlightPresentation.ApplyFog();
+
             ShaderRepair.Report report = ShaderRepair.Repair(courseScene);
             Debug.Log("[GolfSimZA] Course shaders: " + report);
 
@@ -169,12 +171,23 @@ namespace GolfSimZA.Courses
 
             if (ourCamera != null)
             {
-                AudioListener listener = ourCamera.GetComponent<AudioListener>();
-                if (listener == null) listener = ourCamera.gameObject.AddComponent<AudioListener>();
-                listener.enabled = true;
-                ourCamera.farClipPlane = Mathf.Max(ourCamera.farClipPlane, 5000f);
+                // The single audio listener lives on the GolfSimZA audio object (it follows the camera).
+                AudioListener own = ourCamera.GetComponent<AudioListener>();
+                if (own != null) Destroy(own);
+                _ = GolfSimZA.Core.GolfSimAudio.Instance;
+                ourCamera.farClipPlane = Mathf.Clamp(GolfSimZA.Core.AppSettings.Current.drawDistanceMeters, 500f, 15000f);
                 ourCamera.nearClipPlane = Mathf.Min(ourCamera.nearClipPlane, 0.1f);
                 if (RenderSettings.skybox != null) ourCamera.clearFlags = CameraClearFlags.Skybox;
+            }
+
+            // Trees, grass distance, clouds and colour boost (Settings → VISUAL → COURSE LOOK).
+            try
+            {
+                Debug.Log("[GolfSimZA] Course look: " + CourseScenery.ImproveCourse(courseScene, Course, gameObject, ourCamera));
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning("[GolfSimZA] Course look could not be applied: " + ex);
             }
         }
 

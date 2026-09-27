@@ -83,8 +83,10 @@ namespace GolfSimZA.UI
             subtitleStyle = Label(12, FontStyle.Normal, new Color(0.72f, 0.80f, 0.83f));
             rowStyle = Label(16, FontStyle.Bold, Color.white);
             smallStyle = Label(11, FontStyle.Normal, new Color(0.70f, 0.78f, 0.81f));
-            buttonStyle = Button(13, blueTexture);
-            activeButtonStyle = Button(13, blueBrightTexture);
+            GolfSimTheme.Ensure();
+            buttonStyle = new GUIStyle(GolfSimTheme.Button) { fixedHeight = 36f, fontSize = 13 };
+            activeButtonStyle = new GUIStyle(GolfSimTheme.AccentButton) { fixedHeight = 36f, fontSize = 13 };
+            panelStyle = new GUIStyle(GolfSimTheme.Overlay) { padding = new RectOffset(18, 18, 14, 14) };
             stylesReady = true;
         }
 
@@ -118,7 +120,7 @@ namespace GolfSimZA.UI
             if (!showPicker)
             {
                 float x = Screen.width - 225f;
-                if (GUI.Button(new Rect(x, 24f, 195f, 40f), "CLUB LIBRARY • MAP", buttonStyle)) showPicker = true;
+                if (GUI.Button(new Rect(x, 24f, 195f, 40f), "CLUB LIBRARY", activeButtonStyle)) showPicker = true;
                 return;
             }
 
