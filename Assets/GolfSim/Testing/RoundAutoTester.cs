@@ -59,6 +59,9 @@ namespace GolfSimZA.Testing
         private static void Boot()
         {
             if (PlayerPrefs.GetInt(FlagKey, 0) != 1) return;
+            // One test per request: a stopped test never restarts by itself on the next Play.
+            PlayerPrefs.SetInt(FlagKey, 0);
+            PlayerPrefs.Save();
             var go = new GameObject("GolfSimZA_AutoTester");
             DontDestroyOnLoad(go);
             go.AddComponent<RoundAutoTester>();

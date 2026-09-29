@@ -87,6 +87,11 @@ namespace GolfSimZA.UI
             aimPointer.CanInteract = () => !GameMenuOverlay.IsOpen && flight != null && !flight.IsInFlight && !panelOpen;
             aimPointer.Moved += p => { aimMoved = true; ApplyRangeAim(false); };
             dispersion = GolfSimZA.Visual.ShotDispersion.Attach(gameObject, flight);
+            if (simulator != null)
+            {
+                simulator.AllowShotDuringFlight = true;
+                simulator.BeforeLaunch += PutBallOnMat;
+            }
             // Range view: higher behind the mat, looking down the range (fairway, lines and flag all in view).
             presentation?.ConfigureAddressView(5f, 10f, 30f, 0f);
             if (Camera.main != null) Camera.main.fieldOfView = 48f; // slightly tele so the targets read well
@@ -113,6 +118,23 @@ namespace GolfSimZA.UI
             tracer?.Clear();
             status = "READY";
             GolfSimAudio.PlayReady();
+        }
+
+        /// <summary>
+        /// Driving range: every shot is hit from the mat - even when the player hits again before
+        /// the last ball has been put back - never from where the previous ball stopped.
+        /// </summary>
+        private void PutBallOnMat(ShotData shot)
+        {
+            if (!isRange || flight == null || range == null) return;
+            resetAt = -1f;
+            wasInFlight = false;
+            flight.PlaceBall(range.TeePosition);
+            flight.SetHole(range.TargetPosition, range.GreenWidth * 0.5f + 1f);
+            if (aimPointer != null) aimPointer.Set(range.TeePosition, aimMoved ? aimPointer.Point : range.TargetPosition);
+            ApplyRangeAim(true);
+            tracer?.Clear();
+            presentation?.HideLandingMarker();
         }
 
         /// <summary>Turns the shot towards the aim target (or the flag).</summary>
@@ -147,6 +169,15 @@ namespace GolfSimZA.UI
             aimPointer.Set(range.TeePosition, range.TeePosition + dir * distance);
             aimMoved = true;
             ApplyRangeAim(false);
+        }
+
+        private void OnDestroy()
+        {
+            if (simulator != null)
+            {
+                simulator.BeforeLaunch -= PutBallOnMat;
+                simulator.AllowShotDuringFlight = false;
+            }
         }
 
         private void Update()

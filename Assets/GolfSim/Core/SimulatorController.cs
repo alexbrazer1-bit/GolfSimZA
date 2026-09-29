@@ -23,6 +23,12 @@ namespace GolfSimZA.Core
         /// History.Count stops growing once the history is full (a long round or range session).
         /// </summary>
         public int TotalShots { get; private set; }
+
+        /// <summary>Called with every shot just before the ball is launched (the range puts the ball back on the mat).</summary>
+        public event System.Action<ShotData> BeforeLaunch;
+
+        /// <summary>Accept a new shot while the previous ball is still flying / rolling (driving range).</summary>
+        public bool AllowShotDuringFlight { get; set; }
         public BallFlightSimulator BallFlight => ballFlightSimulator;
         public string LaunchMonitorName => launchMonitor?.DeviceName ?? "Not configured";
         public bool IsLaunchMonitorConnected => launchMonitor != null && launchMonitor.IsConnected;
@@ -81,7 +87,9 @@ namespace GolfSimZA.Core
             if (!shot.IsValid)
                 return;
 
-            if (ballFlightSimulator != null && ballFlightSimulator.IsInFlight)
+            // On a course a shot during the flight is ignored; the driving range allows it (the
+            // new ball starts from the mat - see BeforeLaunch).
+            if (ballFlightSimulator != null && ballFlightSimulator.IsInFlight && !AllowShotDuringFlight)
                 return;
 
             // Launch monitors like the R10 do not know which club was hit.
@@ -90,6 +98,9 @@ namespace GolfSimZA.Core
                 shot.ClubName = ActiveClub.Resolve();
                 shot.ClubNumber = ActiveClub.SlotFor(shot.ClubName);
             }
+
+            // Driving range: every shot starts from the mat, wherever the last ball stopped.
+            BeforeLaunch?.Invoke(shot);
 
             lastShot = shot;
             if (shot.IsValid) TotalShots++;
