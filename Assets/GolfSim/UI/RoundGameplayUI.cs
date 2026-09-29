@@ -123,8 +123,7 @@ namespace GolfSimZA.UI
             else
             {
                 // Demo holes: clouds and colour boost (imported courses get these when they load).
-                GolfSimZA.Visual.CloudDome.Ensure(Camera.main);
-                GolfSimZA.Visual.ColorGrade.Attach(Camera.main);
+                CourseScenery.ImproveDemo(gameObject, Camera.main);
                 StartHole();
             }
         }

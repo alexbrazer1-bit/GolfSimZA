@@ -105,6 +105,18 @@ namespace GolfSimZA.Core
         /// <summary>0 off, 1 natural, 2 lush, 3 vivid colour grading.</summary>
         public int colourBoost = 2;
         public bool clouds = true;
+        /// <summary>0 low, 1 medium, 2 high, 3 ultra: shadows, texture filtering, edge smoothing.</summary>
+        public int graphicsQuality = 3;
+        /// <summary>GolfSim ZA 3D grass in the rough (0 off, 1 on).</summary>
+        public int roughGrass = 1;
+        /// <summary>0.2 (thin) .. 1 (thick) rough grass.</summary>
+        public float grassDensity = 0.7f;
+        /// <summary>How far away the rough grass is drawn (metres).</summary>
+        public float grassDistance = 70f;
+        /// <summary>Filmic tone mapping + sunlight like a photo (HDR).</summary>
+        public bool photoLighting = true;
+        /// <summary>Crisper picture (mild sharpening) and a soft darkened edge.</summary>
+        public bool sharpen = true;
 
         // ---------------- OFFSET
         /// <summary>Added to the launch direction of every shot (corrects a launch monitor that is not square to the screen).</summary>
@@ -146,6 +158,8 @@ namespace GolfSimZA.Core
                         if (loaded.dataTiles == null) loaded.dataTiles = new System.Collections.Generic.List<string>();
                         if (loaded.greenStimp < 5f) loaded.greenStimp = 10f;
                         if (loaded.drawDistanceMeters < 500f) loaded.drawDistanceMeters = 5000f;
+                        if (loaded.grassDistance < 20f) loaded.grassDistance = 70f;
+                        if (loaded.grassDensity < 0.1f) loaded.grassDensity = 0.7f;
                         if (loaded.autoPuttOneMeters <= 0f) loaded.autoPuttOneMeters = 3f;
                         if (loaded.autoPuttTwoMeters <= loaded.autoPuttOneMeters) loaded.autoPuttTwoMeters = Mathf.Max(12f, loaded.autoPuttOneMeters + 1f);
                         return loaded;

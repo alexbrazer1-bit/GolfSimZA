@@ -261,6 +261,8 @@ namespace GolfSimZA.Editor
             PlayerSettings.defaultIsNativeResolution = true;
             PlayerSettings.resizableWindow = true;
             PlayerSettings.usePlayerLog = true;
+            // Linear lighting: GSPro courses are made in linear colour space; in gamma they look flat and washed out.
+            if (PlayerSettings.colorSpace != ColorSpace.Linear) PlayerSettings.colorSpace = ColorSpace.Linear;
             PlayerSettings.SetScriptingBackend(UnityEditor.Build.NamedBuildTarget.Standalone, ScriptingImplementation.Mono2x);
         }
 

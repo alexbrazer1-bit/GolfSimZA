@@ -135,11 +135,11 @@ namespace GolfSimZA.Physics
         private void EnsureMaterials()
         {
             if (grass != null) return;
-            grass = Mat(new Color(0.19f, 0.33f, 0.15f), 0.05f);
-            bandLight = Mat(new Color(0.33f, 0.52f, 0.22f), 0.1f);
-            bandDark = Mat(new Color(0.25f, 0.43f, 0.17f), 0.1f);
+            grass = Mat(new Color(0.16f, 0.28f, 0.11f), 0.05f);
+            bandLight = Mat(new Color(0.25f, 0.41f, 0.15f), 0.1f);
+            bandDark = Mat(new Color(0.19f, 0.34f, 0.12f), 0.1f);
             line = Mat(new Color(0.92f, 0.94f, 0.92f), 0.2f);
-            green = Mat(new Color(0.38f, 0.78f, 0.34f), 0.35f);
+            green = Mat(new Color(0.30f, 0.60f, 0.25f), 0.35f);
             flagRed = Mat(new Color(0.90f, 0.12f, 0.10f), 0.2f);
             white = Mat(Color.white, 0.3f);
             tee = Mat(new Color(0.08f, 0.26f, 0.14f), 0.05f);

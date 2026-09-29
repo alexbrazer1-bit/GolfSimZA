@@ -30,9 +30,15 @@ namespace GolfSimZA.Courses
                 {
                     t.drawTreesAndFoliage = true;
                     t.treeDistance = Mathf.Max(t.treeDistance, 2000f);
-                    t.treeBillboardDistance = Mathf.Max(t.treeBillboardDistance, 250f);
+                    // Course trees made for GSPro's tree add-on have no working far-away (billboard)
+                    // version here - they vanish at the billboard distance. Draw them as real trees
+                    // (GPU instanced) as far as the quality setting allows.
+                    int quality = AppSettings.Current.graphicsQuality;
+                    t.drawInstanced = true;
+                    t.treeBillboardDistance = Mathf.Max(t.treeBillboardDistance, quality >= 3 ? 2000f : quality == 2 ? 1200f : 600f);
                     t.treeCrossFadeLength = Mathf.Max(t.treeCrossFadeLength, 30f);
-                    t.treeMaximumFullLODCount = Mathf.Max(t.treeMaximumFullLODCount, 300);
+                    t.treeMaximumFullLODCount = Mathf.Max(t.treeMaximumFullLODCount, quality >= 3 ? 20000 : quality == 2 ? 6000 : 1500);
+                    t.treeLODBiasMultiplier = Mathf.Max(t.treeLODBiasMultiplier, 1.5f);
                     t.detailObjectDistance = Mathf.Max(t.detailObjectDistance, 120f);
                     t.detailObjectDensity = Mathf.Max(t.detailObjectDensity, 0.8f);
                     t.basemapDistance = Mathf.Max(t.basemapDistance, 1500f);
@@ -55,9 +61,15 @@ namespace GolfSimZA.Courses
             }
             field.Commit();
 
-            // 3. Sky and colour.
+            // 3. Rough grass (GSPro's own grass add-on does not run outside GSPro).
+            GolfSimZA.Visual.GrassField grass = GolfSimZA.Visual.GrassField.Ensure(host);
+            grass.Exclude = CourseGrassExclusion(course);
+
+            // 4. Sky, sun, shadows, picture.
             GolfSimZA.Visual.CloudDome.Ensure(camera);
             GolfSimZA.Visual.ColorGrade.Attach(camera);
+            GolfSimZA.Visual.GraphicsQuality.ApplySceneLighting(camera);
+            result += AppSettings.Current.roughGrass > 0 ? ", rough grass on" : ", rough grass off";
             return result;
         }
 
@@ -82,8 +94,61 @@ namespace GolfSimZA.Courses
                     Plant(field, random, new Vector3(x, 0f, 440f + (float)random.NextDouble() * 70f), 1.2f);
             }
             field.Commit();
+
+            // Rough grass beside the range fairway (never on the mown bands or the tee).
+            float half = fairwayWidth * 0.5f + 1.5f;
+            GolfSimZA.Visual.GrassField grass = GolfSimZA.Visual.GrassField.Ensure(host);
+            grass.Exclude = p => Mathf.Abs(p.x) < half && p.z > -12f && p.z < RangeEnvironment.MaxTarget + 80f || (Mathf.Abs(p.x) < 4f && Mathf.Abs(p.z) < 4f);
+
             GolfSimZA.Visual.CloudDome.Ensure(camera);
             GolfSimZA.Visual.ColorGrade.Attach(camera);
+            GolfSimZA.Visual.GraphicsQuality.ApplySceneLighting(camera);
+        }
+
+        /// <summary>Demo holes: grass off the fairway strip and green, sun and picture.</summary>
+        public static void ImproveDemo(GameObject host, Camera camera)
+        {
+            GolfSimZA.Visual.GrassField.Ensure(host);
+            GolfSimZA.Visual.CloudDome.Ensure(camera);
+            GolfSimZA.Visual.ColorGrade.Attach(camera);
+            GolfSimZA.Visual.GraphicsQuality.ApplySceneLighting(camera);
+        }
+
+        /// <summary>
+        /// Safety margin for courses whose fairways are painted on the terrain with unnamed layers:
+        /// no grass within 12 m of a hole's playing line, 20 m of a green or 8 m of a tee.
+        /// </summary>
+        private static System.Func<Vector3, bool> CourseGrassExclusion(CourseDefinition course)
+        {
+            var segments = new List<Vector3[]>();
+            var greens = new List<Vector3>();
+            var tees = new List<Vector3>();
+            if (course != null && course.holes != null)
+                foreach (HoleDefinition hole in course.holes)
+                {
+                    if (hole == null) continue;
+                    Vector3 green = hole.GreenTarget;
+                    greens.Add(green);
+                    TeeDefinition back = null;
+                    if (hole.tees != null)
+                        foreach (TeeDefinition t in hole.tees)
+                        {
+                            tees.Add(t.position);
+                            if (back == null || (t.position - green).sqrMagnitude > (back.position - green).sqrMagnitude) back = t;
+                        }
+                    var line = new List<Vector3>();
+                    if (back != null) line.Add(back.position);
+                    if (hole.aimPoints != null) line.AddRange(hole.aimPoints);
+                    line.Add(green);
+                    for (int i = 1; i < line.Count; i++) segments.Add(new[] { line[i - 1], line[i] });
+                }
+            return p =>
+            {
+                foreach (Vector3 g in greens) if (Flat(p - g) < 20f) return true;
+                foreach (Vector3 t in tees) if (Flat(p - t) < 8f) return true;
+                foreach (Vector3[] seg in segments) if (DistanceToSegment(p, seg[0], seg[1]) < 12f) return true;
+                return false;
+            };
         }
 
         // ------------------------------------------------------------ Planting

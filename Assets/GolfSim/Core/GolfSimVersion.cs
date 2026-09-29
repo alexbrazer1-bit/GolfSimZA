@@ -8,7 +8,7 @@ namespace GolfSimZA.Core
     /// </summary>
     public static class GolfSimVersion
     {
-        public const string Version = "1.3.0";
+        public const string Version = "1.3.1";
         public const string ProductName = "GolfSimZA";
     }
 }

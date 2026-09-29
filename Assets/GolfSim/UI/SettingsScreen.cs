@@ -401,6 +401,22 @@ namespace GolfSimZA.UI
 
         private float LookPage(AppSettings s, float x, float y, float w)
         {
+            int quality = s.graphicsQuality;
+            if (Choice(ref y, x, w, "GRAPHICS QUALITY  (shadows, sharp textures far away, smooth edges)", GolfSimZA.Visual.GraphicsQuality.Names, ref quality)) s.graphicsQuality = quality;
+            Switch(ref y, x, w, "PHOTO LIGHTING  (bright sunlight and soft highlights like a course photo)", ref s.photoLighting);
+            Switch(ref y, x, w, "CRISP PICTURE  (mild sharpening and softly darkened corners)", ref s.sharpen);
+
+            int grass = s.roughGrass;
+            if (Choice(ref y, x, w, "ROUGH GRASS  (3D grass in the rough, swaying in the wind)", new[] { "OFF", "ON" }, ref grass)) s.roughGrass = grass;
+            if (grass > 0)
+            {
+                float gd = s.grassDensity;
+                if (Slider(ref y, x, w, "GRASS AMOUNT", ref gd, 0.2f, 1f, gd < 0.35f ? "THIN" : gd > 0.85f ? "THICK" : (gd * 100f).ToString("0") + "%", 0.05f)) s.grassDensity = gd;
+                float gdist = s.grassDistance;
+                if (Slider(ref y, x, w, "GRASS DISTANCE  (lower = faster on a slow PC)", ref gdist, 30f, 150f, Units.DistanceText(gdist), 5f)) s.grassDistance = gdist;
+            }
+            Hint(ref y, x, w, "Grass grows only in the rough - never on fairways, greens, tees, bunkers, paths or water - and takes the colour of the course ground under it.");
+
             int boost = s.colourBoost;
             if (Choice(ref y, x, w, "COLOUR BOOST  (fairway and rough greens, sky)", GolfSimZA.Visual.ColorGrade.PresetNames, ref boost)) s.colourBoost = boost;
             Hint(ref y, x, w, "LUSH gives the rich summer-green fairways and rough of a well-kept course. Changes show straight away.");
