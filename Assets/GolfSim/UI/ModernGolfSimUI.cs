@@ -16,7 +16,7 @@ namespace GolfSimZA.UI
     /// circle.
     /// On a course this component switches itself off (RoundGameplayUI runs the round).
     /// </summary>
-    public sealed class ModernGolfSimUI : MonoBehaviour
+    public sealed partial class ModernGolfSimUI : MonoBehaviour
     {
         private const float ResetDelay = 2.2f;
 
@@ -92,9 +92,10 @@ namespace GolfSimZA.UI
                 simulator.AllowShotDuringFlight = true;
                 simulator.BeforeLaunch += PutBallOnMat;
             }
-            // Range view: higher behind the mat, looking down the range (fairway, lines and flag all in view).
-            presentation?.ConfigureAddressView(5f, 10f, 30f, 0f);
-            if (Camera.main != null) Camera.main.fieldOfView = 48f; // slightly tele so the targets read well
+            // Range view: low behind the mat like a golfer's eye line, looking down the range to the mountains.
+            presentation?.ConfigureAddressView(2.2f, 4.6f, 70f, 1.4f);
+            if (Camera.main != null) Camera.main.fieldOfView = 50f;
+            SetUpRangeViews(root);
             ResetBall(true);
         }
 
@@ -208,6 +209,7 @@ namespace GolfSimZA.UI
             if (wasInFlight && !inFlight)
             {
                 ShotData shot = simulator.LastShot;
+                RecordRangeShot(shot);
                 recent.Insert(0, shot);
                 if (recent.Count > 6) recent.RemoveAt(recent.Count - 1);
                 Vector3 d = flight.Ball.position - range.TargetPosition;
@@ -224,6 +226,7 @@ namespace GolfSimZA.UI
                 if (randomizer)
                 {
                     range.RandomTarget(targetSlider);
+                    mapDirty = true;
                     aimMoved = false;
                     lastProximity = -1f;
                     Wind.NewHole(Vector3.forward);
@@ -264,23 +267,7 @@ namespace GolfSimZA.UI
             if (flying && settings.hideUiOnShot) return;
 
             DrawWorldLabels();
-
-            float margin = Mathf.Clamp(Screen.width * 0.015f, 10f, 24f);
-            DrawRangePanel(margin + 132f, margin);
-            if (!panelOpen) DrawDispersionCard(margin + 132f, margin + 44f);
-            DrawWind(margin);
-            GUI.Label(new Rect(Screen.width * 0.5f - 150f, margin + 42f, 300f, 20f), status + "   •   " + ActiveClub.Player, new GUIStyle(small) { alignment = TextAnchor.MiddleCenter, normal = { textColor = Color.white } });
-            if (settings.showBallReady && !flying && status == "READY")
-            {
-                Rect ready = new Rect(Screen.width * 0.5f - 90f, Screen.height - ClubBar.Height - 70f, 180f, 32f);
-                GUI.Box(ready, "BALL READY", pill);
-            }
-
-            float recentTop = DrawRecent(Screen.width - margin, Screen.height - margin);
-            ShotDataTiles.Draw(Screen.width - margin, margin, simulator != null ? simulator.LastShot : default(ShotData), recentTop - 8f);
-            bool clubBar = settings.clubSelectorMode == 0 || (settings.clubSelectorMode == 2 && !flying);
-            if (clubBar) ClubBar.Draw(margin, Screen.height - margin);
-            else ClubBar.Close();
+            DrawRangeHud(settings, flying);
         }
 
         private void DrawWind(float y)
@@ -309,6 +296,7 @@ namespace GolfSimZA.UI
             // Distance numbers on both sides of the range. Far lines bunch up near the horizon,
             // so a line is only labelled when it is far enough (on screen) from the last label.
             float lastY = float.MaxValue;
+            if (AppSettings.Current.rangeDistanceLines)
             foreach (float d in range.MarkerDistances)
             {
                 Vector3 left = new Vector3(-range.FairwayWidth * 0.36f, 0.2f, d);
@@ -324,7 +312,7 @@ namespace GolfSimZA.UI
             }
 
             // Aim target distance.
-            if (aimPointer != null && aimPointer.Visible && ToScreen(cam, aimPointer.Point + Vector3.up * 1.2f, out Vector2 ap))
+            if (aimPointer != null && aimPointer.Visible && Vector3.Distance(aimPointer.Point, range.TargetPosition) > 3f && ToScreen(cam, aimPointer.Point + Vector3.up * 1.2f, out Vector2 ap))
             {
                 string t = Units.DistanceText(aimPointer.Distance);
                 var st = new GUIStyle(flagSub) { fontSize = 14 };
@@ -364,7 +352,7 @@ namespace GolfSimZA.UI
                 panelOpen = !panelOpen;
             if (!panelOpen) return;
 
-            Rect panel = new Rect(x, y + 42f, 420f, 300f);
+            Rect panel = new Rect(x, y + 42f, 420f, 388f);
             GUI.Box(panel, GUIContent.none, GolfSimTheme.Overlay);
             float px = panel.x + 18f, py = panel.y + 14f, w = panel.width - 36f;
 
@@ -377,6 +365,23 @@ namespace GolfSimZA.UI
             GUI.Label(new Rect(px, py + 6f, w - 100f, 20f), "RANDOM TARGET AFTER EVERY SHOT", GolfSimTheme.Label);
             if (GUI.Button(new Rect(px + w - 78f, py, 78f, 30f), randomizer ? "ON" : "OFF", randomizer ? switchOn : switchOff))
                 randomizer = !randomizer;
+            py += 44f;
+            AppSettings st = AppSettings.Current;
+            GUI.Label(new Rect(px, py + 6f, w - 100f, 20f), "DISTANCE LINES ON THE FAIRWAY", GolfSimTheme.Label);
+            if (GUI.Button(new Rect(px + w - 78f, py, 78f, 30f), st.rangeDistanceLines ? "ON" : "OFF", st.rangeDistanceLines ? switchOn : switchOff))
+            {
+                st.rangeDistanceLines = !st.rangeDistanceLines;
+                st.Save();
+                range.Build(range.TargetDistance, range.FairwayWidth, range.GreenWidth);
+                mapDirty = true;
+            }
+            py += 44f;
+            GUI.Label(new Rect(px, py + 6f, w - 100f, 20f), "TARGET VIEW (small live picture)", GolfSimTheme.Label);
+            if (GUI.Button(new Rect(px + w - 78f, py, 78f, 30f), st.rangeTargetCam ? "ON" : "OFF", st.rangeTargetCam ? switchOn : switchOff))
+            {
+                st.rangeTargetCam = !st.rangeTargetCam;
+                st.Save();
+            }
             py += 44f;
             if (GUI.Button(new Rect(px, py, w * 0.48f, 40f), "CANCEL", GolfSimTheme.Button))
             {
@@ -396,40 +401,12 @@ namespace GolfSimZA.UI
                 s.Save();
                 range.Build(s.rangeTargetMeters, s.rangeFairwayWidth, s.rangeGreenWidth);
                 CourseScenery.ImproveRange(range.gameObject, Camera.main, s.rangeFairwayWidth);
+                mapDirty = true;
                 aimMoved = false;
                 lastProximity = -1f;
                 ResetBall(true);
                 panelOpen = false;
             }
-        }
-
-        /// <summary>SHOT DISPERSION of the selected club: shots saved, average carry, spread; show / clear.</summary>
-        private void DrawDispersionCard(float x, float y)
-        {
-            if (dispersion == null) return;
-            AppSettings s = AppSettings.Current;
-            GolfSimZA.Visual.ShotDispersion.Stats st = dispersion.Current;
-            string club = ActiveClub.Resolve();
-            float w = 300f;
-            float h = s.showDispersion ? 118f : 44f;
-            Rect r = new Rect(x, y, w, h);
-            GUI.Box(r, GUIContent.none, GolfSimTheme.Card);
-            GUI.Label(new Rect(r.x + 12f, r.y + 8f, w - 110f, 20f), "DISPERSION  •  " + ActiveClub.ShortName(club), new GUIStyle(GolfSimTheme.Label) { normal = { textColor = new Color(0.35f, 0.85f, 1f) } });
-            if (GUI.Button(new Rect(r.xMax - 94f, r.y + 6f, 84f, 28f), s.showDispersion ? "HIDE" : "SHOW", GolfSimTheme.SmallButton)) { s.showDispersion = !s.showDispersion; s.Save(); }
-            if (!s.showDispersion) return;
-            string line1, line2;
-            if (ActiveClub.IsPutter(club)) { line1 = "Not recorded for the putter."; line2 = ""; }
-            else if (st.Shots == 0) { line1 = "Hit shots with this club to see its"; line2 = "dispersion circle on the range."; }
-            else
-            {
-                line1 = st.Shots + (st.Shots == 1 ? " SHOT" : " SHOTS") + "  •  CARRY " + Units.DistanceText(st.MeanCarry) + (st.Shots > 1 ? " ± " + Units.Distance(st.CarrySpread).ToString("0") : "");
-                string side = Mathf.Abs(st.MeanSide) < 0.5f ? "ON LINE" : Units.Distance(Mathf.Abs(st.MeanSide)).ToString("0") + " " + Units.DistanceUnit + (st.MeanSide < 0f ? " LEFT" : " RIGHT");
-                line2 = "AVERAGE " + side + (st.Shots > 1 ? "  •  SPREAD ± " + Units.Distance(st.SideSpread).ToString("0") + " " + Units.DistanceUnit : "");
-            }
-            GUI.Label(new Rect(r.x + 12f, r.y + 38f, w - 24f, 20f), line1, GolfSimTheme.Label);
-            GUI.Label(new Rect(r.x + 12f, r.y + 58f, w - 24f, 20f), line2, small);
-            if (st.Shots > 0 && GUI.Button(new Rect(r.x + 12f, r.y + 82f, 160f, 28f), "CLEAR THIS CLUB", GolfSimTheme.SmallButton)) dispersion.ClearCurrent();
-            GUI.Label(new Rect(r.x + 180f, r.y + 84f, w - 190f, 24f), "last " + GolfSimZA.Visual.ShotDispersion.MaxShots + " shots", small);
         }
 
         private float SliderRow(float x, ref float y, float w, string title, float value, float min, float max, string shown)
@@ -441,30 +418,5 @@ namespace GolfSimZA.UI
             return result;
         }
 
-        /// <summary>Draws the last shots list above the bottom-right corner; returns its top edge.</summary>
-        private float DrawRecent(float right, float bottom)
-        {
-            if (recent.Count == 0) return bottom;
-            float w = 300f, rowH = 22f;
-            int rows = Mathf.Min(recent.Count, Screen.height < 800 ? 3 : 6);
-            float h = 34f + rowH * rows;
-            Rect r = new Rect(right - w, bottom - h, w, h);
-            GUI.Box(r, GUIContent.none, GolfSimTheme.Card);
-            GUI.Label(new Rect(r.x + 12f, r.y + 8f, 86f, 18f), "SHOT", small);
-            GUI.Label(new Rect(r.x + 100f, r.y + 8f, 70f, 18f), "CLUB", small);
-            GUI.Label(new Rect(r.x + 170f, r.y + 8f, 64f, 18f), "CARRY", small);
-            GUI.Label(new Rect(r.x + 236f, r.y + 8f, 60f, 18f), "TOTAL", small);
-            float y = r.y + 30f;
-            for (int i = 0; i < rows; i++)
-            {
-                ShotData s = recent[i];
-                GUI.Label(new Rect(r.x + 12f, y, 80f, rowH), "#" + (lastShotCount - i), GolfSimTheme.Label);
-                GUI.Label(new Rect(r.x + 100f, y, 70f, rowH), ActiveClub.ShortName(s.ClubName), GolfSimTheme.Label);
-                GUI.Label(new Rect(r.x + 170f, y, 60f, rowH), Units.Distance(s.CarryMeters).ToString("0.0"), GolfSimTheme.Label);
-                GUI.Label(new Rect(r.x + 236f, y, 60f, rowH), Units.Distance(s.TotalMeters).ToString("0.0"), GolfSimTheme.Label);
-                y += rowH;
-            }
-            return r.y;
-        }
     }
 }

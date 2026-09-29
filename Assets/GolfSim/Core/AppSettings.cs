@@ -52,6 +52,12 @@ namespace GolfSimZA.Core
         public bool showPuttCircles = true;
         /// <summary>Driving range: show the shot dispersion circle of the selected club.</summary>
         public bool showDispersion = true;
+        /// <summary>Driving range: white distance lines across the fairway every 50 m (off = clean tour look).</summary>
+        public bool rangeDistanceLines;
+        /// <summary>Driving range: small live view of the target area (top-right).</summary>
+        public bool rangeTargetCam = true;
+        /// <summary>Driving range session list shows TOTAL (false) or CARRY (true).</summary>
+        public bool rangeShowCarry;
 
         // ---------------- REALISM
         /// <summary>0 off, 1 light, 2 moderate, 3 strong, 4 custom.</summary>

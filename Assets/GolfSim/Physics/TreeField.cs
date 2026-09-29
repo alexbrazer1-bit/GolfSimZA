@@ -12,7 +12,8 @@ namespace GolfSimZA.Physics
     /// </summary>
     public sealed class TreeField : MonoBehaviour
     {
-        public enum Kind { Pine, Broadleaf }
+        public enum Kind { Pine, Broadleaf, Palm, Bush }
+        private const int Kinds = 4;
 
         private struct TreeInfo
         {
@@ -30,9 +31,10 @@ namespace GolfSimZA.Physics
         private const float Cell = 20f;
 
         // Instanced drawing: per (kind, colour variant) a list of matrices in batches of 1023.
-        private readonly List<Matrix4x4>[,] matrices = new List<Matrix4x4>[2, 3];
-        private readonly List<Matrix4x4[]>[,] batches = new List<Matrix4x4[]>[2, 3];
-        private static Mesh pineMesh, broadMesh;
+        private readonly List<Matrix4x4>[,] matrices = new List<Matrix4x4>[Kinds, 3];
+        private readonly List<Matrix4x4[]>[,] batches = new List<Matrix4x4[]>[Kinds, 3];
+        private static Mesh pineMesh, broadMesh, palmMesh;
+        private static Material palmTrunkMaterial;
         private static Material trunkMaterial;
         private static Material[,] foliageMaterials;
 
@@ -48,7 +50,7 @@ namespace GolfSimZA.Physics
         {
             trees.Clear();
             grid.Clear();
-            for (int k = 0; k < 2; k++)
+            for (int k = 0; k < Kinds; k++)
                 for (int v = 0; v < 3; v++)
                 {
                     matrices[k, v]?.Clear();
@@ -68,7 +70,14 @@ namespace GolfSimZA.Physics
             matrices[k, v].Add(m);
 
             var info = new TreeInfo { Base = basePosition, Height = height };
-            if (kind == Kind.Pine)
+            if (kind == Kind.Palm)
+            {
+                info.TrunkRadius = 0.025f * width + 0.1f;
+                info.CanopyCentre = basePosition + Vector3.up * height * 0.9f;
+                info.CanopyRadius = 0.3f * width;
+                info.CanopyHalfHeight = height * 0.1f;
+            }
+            else if (kind == Kind.Pine)
             {
                 info.TrunkRadius = 0.035f * width + 0.1f;
                 info.CanopyCentre = basePosition + Vector3.up * height * 0.55f;
@@ -92,7 +101,7 @@ namespace GolfSimZA.Physics
         /// <summary>Call after adding trees: packs the matrices for drawing.</summary>
         public void Commit()
         {
-            for (int k = 0; k < 2; k++)
+            for (int k = 0; k < Kinds; k++)
                 for (int v = 0; v < 3; v++)
                 {
                     if (batches[k, v] == null) batches[k, v] = new List<Matrix4x4[]>();
@@ -107,16 +116,17 @@ namespace GolfSimZA.Physics
         private void LateUpdate()
         {
             if (trees.Count == 0) return;
-            for (int k = 0; k < 2; k++)
+            for (int k = 0; k < Kinds; k++)
             {
-                Mesh mesh = k == 0 ? pineMesh : broadMesh;
+                Mesh mesh = k == 0 ? pineMesh : k == 2 ? palmMesh : broadMesh;
+                Material trunk = k == 2 ? palmTrunkMaterial : trunkMaterial;
                 for (int v = 0; v < 3; v++)
                 {
                     List<Matrix4x4[]> list = batches[k, v];
                     if (list == null) continue;
                     foreach (Matrix4x4[] batch in list)
                     {
-                        Graphics.DrawMeshInstanced(mesh, 0, trunkMaterial, batch, batch.Length, null, ShadowCastingMode.On, true);
+                        Graphics.DrawMeshInstanced(mesh, 0, trunk, batch, batch.Length, null, ShadowCastingMode.On, true);
                         Graphics.DrawMeshInstanced(mesh, 1, foliageMaterials[k, v], batch, batch.Length, null, ShadowCastingMode.On, true);
                     }
                 }
@@ -196,14 +206,20 @@ namespace GolfSimZA.Physics
             if (pineMesh != null) return;
             pineMesh = BuildPine();
             broadMesh = BuildBroadleaf();
+            palmMesh = BuildPalm();
             trunkMaterial = MakeMaterial(new Color(0.30f, 0.22f, 0.15f));
-            foliageMaterials = new Material[2, 3];
+            palmTrunkMaterial = MakeMaterial(new Color(0.46f, 0.38f, 0.29f));
+            foliageMaterials = new Material[Kinds, 3];
+            Color[] palms = { new Color(0.24f, 0.40f, 0.14f), new Color(0.30f, 0.45f, 0.16f), new Color(0.21f, 0.36f, 0.13f) };
+            Color[] bushes = { new Color(0.34f, 0.38f, 0.20f), new Color(0.40f, 0.42f, 0.24f), new Color(0.28f, 0.34f, 0.17f) };
             Color[] pines = { new Color(0.10f, 0.26f, 0.12f), new Color(0.12f, 0.30f, 0.14f), new Color(0.09f, 0.23f, 0.13f) };
             Color[] broad = { new Color(0.22f, 0.42f, 0.14f), new Color(0.27f, 0.47f, 0.16f), new Color(0.19f, 0.38f, 0.13f) };
             for (int v = 0; v < 3; v++)
             {
                 foliageMaterials[0, v] = MakeMaterial(pines[v]);
                 foliageMaterials[1, v] = MakeMaterial(broad[v]);
+                foliageMaterials[2, v] = MakeMaterial(palms[v]);
+                foliageMaterials[3, v] = MakeMaterial(bushes[v]);
             }
         }
 
@@ -237,6 +253,31 @@ namespace GolfSimZA.Physics
             b.Blob(1, new Vector3(0.02f, 0.80f, 0.10f), new Vector3(0.21f, 0.17f, 0.21f), 0.14f);
             b.Blob(1, new Vector3(-0.06f, 0.56f, 0.19f), new Vector3(0.19f, 0.16f, 0.19f), 0.14f);
             return b.ToMesh("GolfSimZA_Broadleaf");
+        }
+
+        /// <summary>
+        /// Palm: a slightly curved, ringed trunk and a crown of arching fronds (both sides drawn).
+        /// Built 1 unit tall; the fronds reach about 0.36 of the width scale.
+        /// </summary>
+        private static Mesh BuildPalm()
+        {
+            var b = new MeshBuilder(new System.Random(17));
+            const int rings = 10;
+            Vector3 prev = Vector3.zero;
+            for (int r = 0; r < rings; r++)
+            {
+                float t0 = r / (float)rings, t1 = (r + 1) / (float)rings;
+                Vector3 c0 = new Vector3(0.06f * t0 * t0, t0 * 0.92f, 0f), c1 = new Vector3(0.06f * t1 * t1, t1 * 0.92f, 0f);
+                b.Segment(0, c0, c1, Mathf.Lerp(0.03f, 0.018f, t0) * (r % 2 == 0 ? 1.08f : 1f), Mathf.Lerp(0.03f, 0.018f, t1), 7);
+            }
+            Vector3 top = new Vector3(0.06f, 0.92f, 0f);
+            for (int f = 0; f < 13; f++)
+            {
+                float yaw = f / 13f * Mathf.PI * 2f + (f % 2) * 0.2f;
+                float lift = f % 3 == 0 ? 0.10f : 0.05f;
+                b.Frond(1, top, new Vector3(Mathf.Cos(yaw), 0f, Mathf.Sin(yaw)), 0.36f, lift, 0.05f);
+            }
+            return b.ToMesh("GolfSimZA_Palm");
         }
 
         /// <summary>Tiny mesh builder with two submeshes (0 = trunk, 1 = leaves).</summary>
@@ -315,6 +356,47 @@ namespace GolfSimZA.Physics
                         int bIndex = a + segments + 1;
                         triangles[sub].AddRange(new[] { a, a + 1, bIndex, a + 1, bIndex + 1, bIndex });
                     }
+            }
+
+            /// <summary>Tapered tube between two points (palm trunk rings).</summary>
+            public void Segment(int sub, Vector3 a, Vector3 b, float ra, float rb, int segments)
+            {
+                int start = vertices.Count;
+                for (int i = 0; i <= segments; i++)
+                {
+                    float ang = i / (float)segments * Mathf.PI * 2f;
+                    Vector3 n = new Vector3(Mathf.Cos(ang), 0f, Mathf.Sin(ang));
+                    vertices.Add(a + n * ra); normals.Add(n);
+                    vertices.Add(b + n * rb); normals.Add(n);
+                }
+                for (int i = 0; i < segments; i++)
+                {
+                    int k = start + i * 2;
+                    triangles[sub].AddRange(new[] { k, k + 1, k + 2, k + 1, k + 3, k + 2 });
+                }
+            }
+
+            /// <summary>A frond: a strip that rises a little then arches down, drawn on both sides.</summary>
+            public void Frond(int sub, Vector3 root, Vector3 dir, float length, float lift, float width)
+            {
+                const int steps = 7;
+                Vector3 side = Vector3.Cross(Vector3.up, dir).normalized;
+                int start = vertices.Count;
+                for (int i = 0; i <= steps; i++)
+                {
+                    float t = i / (float)steps;
+                    float y = lift * Mathf.Sin(t * Mathf.PI * 0.6f) - 0.22f * length * t * t;
+                    Vector3 c = root + dir * (length * t) + Vector3.up * y;
+                    float w = width * Mathf.Sin(Mathf.Lerp(0.25f, 1f, t) * Mathf.PI) * (1f + Jitter(0.15f));
+                    vertices.Add(c - side * w); normals.Add(Vector3.up);
+                    vertices.Add(c + side * w); normals.Add(Vector3.up);
+                }
+                for (int i = 0; i < steps; i++)
+                {
+                    int k = start + i * 2;
+                    triangles[sub].AddRange(new[] { k, k + 2, k + 1, k + 1, k + 2, k + 3 });
+                    triangles[sub].AddRange(new[] { k, k + 1, k + 2, k + 1, k + 3, k + 2 });
+                }
             }
 
             public Mesh ToMesh(string name)

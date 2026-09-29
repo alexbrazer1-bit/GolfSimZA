@@ -106,36 +106,66 @@ namespace GolfSimZA.Courses
             return result;
         }
 
-        /// <summary>Range: tree lines along both sides and a wood behind the range.</summary>
+        /// <summary>
+        /// Range: palms and desert scrub beside the range (in the sandy area outside the rough),
+        /// palm groves behind the end of the range, and 3D grass in the rough only.
+        /// </summary>
         public static void ImproveRange(GameObject host, Camera camera, float fairwayWidth)
         {
+            RangeEnvironment range = host.GetComponent<RangeEnvironment>();
             TreeField field = host.GetComponent<TreeField>();
             if (field == null) field = host.AddComponent<TreeField>();
             field.Clear();
-            if (AppSettings.Current.addTrees > 0)
+            if (AppSettings.Current.addTrees > 0 && range != null)
             {
                 var random = new System.Random(4242);
                 float density = Mathf.Clamp(AppSettings.Current.treeDensity, 0.2f, 1f);
-                float step = Mathf.Lerp(26f, 9f, density);
-                for (float z = -30f; z < 430f; z += step)
+                float step = Mathf.Lerp(30f, 12f, density);
+                for (float z = -20f; z < 470f; z += step)
                     for (int side = -1; side <= 1; side += 2)
                     {
-                        float x = side * (fairwayWidth * 0.5f + 22f + (float)random.NextDouble() * 50f);
-                        Plant(field, random, new Vector3(x, 0f, z + (float)(random.NextDouble() * 2 - 1) * step * 0.4f), 1.0f);
+                        float edge = side < 0 ? range.LeftEdge(z) : range.RightEdge(z);
+                        // Palms just outside the rough, scrub and more palms further out.
+                        float x = side * (edge + 20f + (float)random.NextDouble() * 14f);
+                        PlantRange(field, random, range, new Vector3(x, 0f, z + (float)(random.NextDouble() * 2 - 1) * step * 0.4f), 0.75);
+                        float far = side * (edge + 45f + (float)random.NextDouble() * 90f);
+                        PlantRange(field, random, range, new Vector3(far, 0f, z + (float)random.NextDouble() * step), 0.45);
                     }
-                for (float x = -260f; x <= 260f; x += step * 1.4f)
-                    Plant(field, random, new Vector3(x, 0f, 440f + (float)random.NextDouble() * 70f), 1.2f);
+                // Groves behind the far end of the range.
+                for (float x = -320f; x <= 320f; x += step * 0.9f)
+                    PlantRange(field, random, range, new Vector3(x, 0f, 500f + (float)random.NextDouble() * 110f), 0.6);
             }
             field.Commit();
 
-            // Rough grass beside the range fairway (never on the mown bands or the tee).
-            float half = fairwayWidth * 0.5f + 1.5f;
+            // 3D grass in the rough only (not on the striped fairway or the desert).
             GolfSimZA.Visual.GrassField grass = GolfSimZA.Visual.GrassField.Ensure(host);
-            grass.Exclude = p => Mathf.Abs(p.x) < half && p.z > -12f && p.z < RangeEnvironment.MaxTarget + 80f || (Mathf.Abs(p.x) < 4f && Mathf.Abs(p.z) < 4f);
+            float half = fairwayWidth * 0.5f + 1.5f;
+            grass.Exclude = p => range != null ? range.SurfaceAt(p) != 1 : Mathf.Abs(p.x) < half;
 
             GolfSimZA.Visual.CloudDome.Ensure(camera);
             GolfSimZA.Visual.ColorGrade.Attach(camera);
             GolfSimZA.Visual.GraphicsQuality.ApplySceneLighting(camera);
+        }
+
+        /// <summary>A small group on the range: tall palms (chance) or dusty desert bushes, never in play.</summary>
+        private static void PlantRange(TreeField field, System.Random random, RangeEnvironment range, Vector3 p, double palmChance)
+        {
+            int count = 1 + random.Next(3);
+            for (int i = 0; i < count; i++)
+            {
+                Vector3 spot = p + new Vector3((float)(random.NextDouble() * 2 - 1) * 9f, 0f, (float)(random.NextDouble() * 2 - 1) * 9f);
+                if (range.SurfaceAt(spot) != 2 || field.IsNear(spot, 5f)) continue;
+                if (random.NextDouble() < palmChance)
+                {
+                    float h = 9f + (float)random.NextDouble() * 9f;
+                    field.Add(TreeField.Kind.Palm, spot, h, (float)random.NextDouble() * 360f, 0.9f + (float)random.NextDouble() * 0.3f, random.Next(3));
+                }
+                else
+                {
+                    float h = 1.6f + (float)random.NextDouble() * 2.4f;
+                    field.Add(TreeField.Kind.Bush, spot, h, (float)random.NextDouble() * 360f, 1.4f + (float)random.NextDouble() * 0.5f, random.Next(3));
+                }
+            }
         }
 
         /// <summary>Demo holes: grass off the fairway strip and green, sun and picture.</summary>
