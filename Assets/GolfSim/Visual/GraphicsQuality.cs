@@ -28,7 +28,7 @@ namespace GolfSimZA.Visual
             QualitySettings.shadows = ShadowQuality.All;
             QualitySettings.shadowProjection = ShadowProjection.StableFit;
             QualitySettings.shadowResolution = q >= 3 ? ShadowResolution.VeryHigh : q == 2 ? ShadowResolution.High : ShadowResolution.Medium;
-            QualitySettings.shadowDistance = q >= 3 ? 450f : q == 2 ? 300f : q == 1 ? 180f : 110f;
+            QualitySettings.shadowDistance = q >= 3 ? 320f : q == 2 ? 220f : q == 1 ? 150f : 100f;
             QualitySettings.shadowCascades = q >= 1 ? 4 : 2;
             // Sharp shadows close to the golfer, softer further away.
             QualitySettings.shadowCascade4Split = new Vector3(0.04f, 0.13f, 0.38f);
@@ -37,7 +37,7 @@ namespace GolfSimZA.Visual
             Texture.SetGlobalAnisotropicFilteringLimits(q >= 3 ? 16 : q == 2 ? 8 : 4, 16);
             QualitySettings.globalTextureMipmapLimit = q == 0 ? 1 : 0;
             QualitySettings.antiAliasing = q >= 3 ? 8 : q == 2 ? 4 : q == 1 ? 2 : 0;
-            QualitySettings.lodBias = q >= 3 ? 3f : q == 2 ? 2f : 1.5f;
+            QualitySettings.lodBias = q >= 3 ? 2f : q == 2 ? 1.5f : 1.2f;
             QualitySettings.maximumLODLevel = 0;
             QualitySettings.softParticles = q >= 2;
             QualitySettings.skinWeights = SkinWeights.FourBones;

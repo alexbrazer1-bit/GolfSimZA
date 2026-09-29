@@ -165,7 +165,7 @@ namespace GolfSimZA.UI
             }
             dispersion?.Show(range.TeePosition, flight.AimYawDegrees, !GameMenuOverlay.IsOpen);
 
-            int count = simulator.History != null ? simulator.History.Count : 0;
+            int count = simulator.TotalShots;
             if (count > lastShotCount)
             {
                 lastShotCount = count;

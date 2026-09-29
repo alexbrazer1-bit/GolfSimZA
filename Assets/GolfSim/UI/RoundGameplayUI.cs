@@ -77,6 +77,8 @@ namespace GolfSimZA.UI
         private int[] teamNextHitter = { -1 };
         /// <summary>Team that must pick its ball before play goes on (-1 = none).</summary>
         private int pendingSelection = -1;
+        private bool awaitingFinish;
+        private int awaitingSince;
 
         private bool TeamFormat => format.Team;
         /// <summary>Formats where the team picks a drive / shot (scramble, shamble, greensomes).</summary>
@@ -204,7 +206,7 @@ namespace GolfSimZA.UI
                 ClubBar.HandleKeys();
             }
 
-            int shotCount = simulatorController.History != null ? simulatorController.History.Count : 0;
+            int shotCount = simulatorController.TotalShots;
             if (shotCount > lastObservedShotCount)
             {
                 // A shot while the team is still choosing its ball: take the recommended ball first.
@@ -215,6 +217,8 @@ namespace GolfSimZA.UI
                 puttGrid?.Hide();
                 AddStrokes(activePlayerIndex, newShots);
                 lastObservedShotCount = shotCount;
+                awaitingFinish = true;
+                awaitingSince = Time.frameCount;
                 shotFinished = false;
                 waitingForNextPlayer = false;
                 status = "SHOT IN PROGRESS";
@@ -222,8 +226,15 @@ namespace GolfSimZA.UI
             }
 
             bool inFlight = ballFlightSimulator.IsInFlight;
-            if (wasInFlight && !inFlight && playerHoleStrokes[activePlayerIndex] > 0)
+            if (inFlight) awaitingFinish = false;
+            // A shot that was over before this screen saw it fly (a tiny tap, or a ball that
+            // stopped at once) still has to finish - otherwise the same player would hit again.
+            bool missedFinish = awaitingFinish && !inFlight && Time.frameCount > awaitingSince + 2;
+            if ((wasInFlight || missedFinish) && !inFlight && playerHoleStrokes[activePlayerIndex] > 0)
+            {
+                awaitingFinish = false;
                 OnShotFinished();
+            }
             wasInFlight = inFlight;
             UpdateMarkers();
         }
@@ -1064,7 +1075,8 @@ namespace GolfSimZA.UI
             activePlayerIndex = 0;
             shotFinished = false;
             waitingForNextPlayer = false;
-            lastObservedShotCount = simulatorController != null && simulatorController.History != null ? simulatorController.History.Count : 0;
+            lastObservedShotCount = simulatorController != null ? simulatorController.TotalShots : 0;
+            awaitingFinish = false;
             wasInFlight = false;
 
             if (playerTees.Length != playerNames.Length) playerTees = new Vector3[playerNames.Length];
@@ -1210,7 +1222,8 @@ namespace GolfSimZA.UI
                 ShowBanner("UP NEXT  •  " + playerNames[activePlayerIndex].ToUpperInvariant() + "  •  " + Units.DistanceText(HorizontalDistance(pinPosition, playerPositions[activePlayerIndex])) + " TO THE PIN");
             shotFinished = false;
             waitingForNextPlayer = false;
-            lastObservedShotCount = simulatorController != null && simulatorController.History != null ? simulatorController.History.Count : lastObservedShotCount;
+            lastObservedShotCount = simulatorController != null ? simulatorController.TotalShots : lastObservedShotCount;
+            awaitingFinish = false;
             status = "READY • " + playerNames[activePlayerIndex];
             PrepareActivePlayer(true);
         }

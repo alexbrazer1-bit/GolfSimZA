@@ -24,29 +24,62 @@ namespace GolfSimZA.Courses
 
         public static string ImproveCourse(Scene scene, CourseDefinition course, GameObject host, Camera camera)
         {
-            // 1. Terrain drawing: trees, grass and ground detail visible further away.
+            // 1. Terrain drawing: trees, grass and ground detail visible further away - scaled to how
+            //    many trees the course has, so tree-heavy courses keep a smooth frame rate.
+            int courseTrees = 0;
+            foreach (GameObject root in scene.GetRootGameObjects())
+                foreach (Terrain t in root.GetComponentsInChildren<Terrain>(true))
+                    if (t.terrainData != null) courseTrees += t.terrainData.treeInstanceCount;
+            int quality = AppSettings.Current.graphicsQuality;
+            float qualityScale = quality >= 3 ? 1f : quality == 2 ? 0.75f : quality == 1 ? 0.55f : 0.4f;
+            float treeReach = (courseTrees > 12000 ? 750f : courseTrees > 6000 ? 1000f : courseTrees > 2500 ? 1500f : 2000f) * qualityScale;
+            int fullTrees = Mathf.RoundToInt((courseTrees > 12000 ? 3500 : courseTrees > 6000 ? 5000 : 8000) * qualityScale);
+
             foreach (GameObject root in scene.GetRootGameObjects())
                 foreach (Terrain t in root.GetComponentsInChildren<Terrain>(true))
                 {
                     t.drawTreesAndFoliage = true;
-                    t.treeDistance = Mathf.Max(t.treeDistance, 2000f);
-                    // Course trees made for GSPro's tree add-on have no working far-away (billboard)
-                    // version here - they vanish at the billboard distance. Draw them as real trees
-                    // (GPU instanced) as far as the quality setting allows.
-                    int quality = AppSettings.Current.graphicsQuality;
                     t.drawInstanced = true;
-                    t.treeBillboardDistance = Mathf.Max(t.treeBillboardDistance, quality >= 3 ? 2000f : quality == 2 ? 1200f : 600f);
+                    // Course trees made for GSPro's tree add-on have no working far-away (billboard)
+                    // version here - they vanish at the billboard distance - so they are drawn as real
+                    // trees (GPU instanced) up to the tree distance, which fog softens.
+                    t.treeDistance = treeReach;
+                    t.treeBillboardDistance = treeReach;
                     t.treeCrossFadeLength = Mathf.Max(t.treeCrossFadeLength, 30f);
-                    t.treeMaximumFullLODCount = Mathf.Max(t.treeMaximumFullLODCount, quality >= 3 ? 20000 : quality == 2 ? 6000 : 1500);
-                    t.treeLODBiasMultiplier = Mathf.Max(t.treeLODBiasMultiplier, 1.5f);
-                    t.detailObjectDistance = Mathf.Max(t.detailObjectDistance, 120f);
-                    t.detailObjectDensity = Mathf.Max(t.detailObjectDensity, 0.8f);
+                    t.treeMaximumFullLODCount = Mathf.Max(t.treeMaximumFullLODCount, fullTrees);
+                    t.treeLODBiasMultiplier = Mathf.Max(t.treeLODBiasMultiplier, 1.2f);
+                    // Terrain grass / flowers: the course's own setting, at most 90 m (heavy on big courses).
+                    t.detailObjectDistance = Mathf.Clamp(t.detailObjectDistance, 40f, quality >= 3 ? 90f : 60f);
                     t.basemapDistance = Mathf.Max(t.basemapDistance, 1500f);
-                    t.heightmapPixelError = Mathf.Min(t.heightmapPixelError, 4f);
+                    t.heightmapPixelError = Mathf.Min(t.heightmapPixelError, quality >= 2 ? 4f : 8f);
+                }
+
+            // 1b. Course objects (bushes, trees, rocks placed as objects - some courses have tens of
+            //     thousands): draw repeated ones together (GPU instancing) and let small plants skip
+            //     casting shadows. Keeps big courses smooth.
+            int instanced = 0, shadowless = 0;
+            var seen = new HashSet<Material>();
+            foreach (GameObject root in scene.GetRootGameObjects())
+                foreach (MeshRenderer r in root.GetComponentsInChildren<MeshRenderer>(true))
+                {
+                    foreach (Material m in r.sharedMaterials)
+                        if (m != null && seen.Add(m) && !m.enableInstancing && m.shader != null && m.shader.isSupported)
+                        {
+                            m.enableInstancing = true;
+                            instanced++;
+                        }
+                    float size = r.bounds.size.magnitude;
+                    string n = r.gameObject.name.ToLowerInvariant();
+                    if (size < 4f && r.shadowCastingMode != UnityEngine.Rendering.ShadowCastingMode.Off &&
+                        (n.Contains("bush") || n.Contains("grass") || n.Contains("flower") || n.Contains("plant") || n.Contains("fern") || n.Contains("weed") || n.Contains("shrub") || n.Contains("rock")))
+                    {
+                        r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+                        shadowless++;
+                    }
                 }
 
             CourseSurvey.Stats stats = CourseSurvey.Inspect(scene);
-            string result = $"course trees: {stats.TerrainTrees} terrain trees, {stats.TreeObjects} tree objects";
+            string result = $"course trees: {stats.TerrainTrees} terrain trees, {stats.TreeObjects} tree objects, trees drawn to {treeReach:0} m, {instanced} materials instanced, {shadowless} small plants without shadows";
 
             // 2. GolfSim ZA trees.
             int mode = AppSettings.Current.addTrees;

@@ -293,6 +293,10 @@ namespace GolfSimZA.Editor
                 added++;
             }
 
+            // Keep GPU-instancing shader variants: course objects are drawn instanced (CourseScenery).
+            SerializedProperty stripping = serialized.FindProperty("m_InstancingStripping");
+            if (stripping != null && stripping.intValue != 2) { stripping.intValue = 2; added++; }
+
             if (added > 0)
             {
                 serialized.ApplyModifiedPropertiesWithoutUndo();

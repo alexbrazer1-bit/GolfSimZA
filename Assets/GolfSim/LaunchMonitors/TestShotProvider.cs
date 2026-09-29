@@ -24,6 +24,9 @@ namespace GolfSimZA.LaunchMonitors
 
         private void Awake() => TryConnect();
 
+        /// <summary>Sends a shot as if it came from the launch monitor (automated round test).</summary>
+        public void Inject(ShotData shot) => ShotReceived?.Invoke(shot);
+
         private void Update()
         {
             if (!IsConnected || Keyboard.current == null || GameMenuOverlay.IsOpen) return;

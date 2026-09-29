@@ -17,6 +17,12 @@ namespace GolfSimZA.Core
 
         public ShotData LastShot => lastShot;
         public ShotHistory History => shotHistory;
+
+        /// <summary>
+        /// Every valid shot since the scene started. The HUDs use this to notice a new shot -
+        /// History.Count stops growing once the history is full (a long round or range session).
+        /// </summary>
+        public int TotalShots { get; private set; }
         public BallFlightSimulator BallFlight => ballFlightSimulator;
         public string LaunchMonitorName => launchMonitor?.DeviceName ?? "Not configured";
         public bool IsLaunchMonitorConnected => launchMonitor != null && launchMonitor.IsConnected;
@@ -86,6 +92,7 @@ namespace GolfSimZA.Core
             }
 
             lastShot = shot;
+            if (shot.IsValid) TotalShots++;
             shotHistory.Add(shot);
             ballFlightSimulator?.Launch(shot);
             Debug.Log($"[GolfSimZA] Shot: {shot.ClubName}, ball {shot.BallSpeedMps:F1} m/s, club {shot.ClubSpeedMps:F1} m/s, launch {shot.LaunchAngleDeg:F1}°, spin {shot.BackSpinRpm:F0} rpm, R10 carry {shot.CarryMeters:F1} m");
