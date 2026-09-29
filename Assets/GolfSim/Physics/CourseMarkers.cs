@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 
 namespace GolfSimZA.Physics
@@ -18,7 +19,7 @@ namespace GolfSimZA.Physics
         public static readonly Color TwoPuttColor = new Color(1f, 1f, 1f, 0.85f);
 
         /// <summary>True while the putt circles are drawn (the HUD labels them).</summary>
-        public bool PuttCirclesVisible => onePutt != null && onePutt.gameObject.activeSelf;
+        public bool PuttCirclesVisible => puttVisible;
 
         public static readonly Color[] GimmeColors = { new Color(0.95f, 0.22f, 0.20f, 0.9f), new Color(0.25f, 0.60f, 1f, 0.9f), new Color(1f, 1f, 1f, 0.9f) };
 
@@ -42,31 +43,108 @@ namespace GolfSimZA.Physics
             if (cam == null) return;
             float d = Vector3.Distance(cam.transform.position, puttCentre);
             float width = Mathf.Clamp(d * 0.0022f, 0.05f, 0.7f);
-            if (onePutt != null && onePutt.gameObject.activeSelf) onePutt.widthMultiplier = width;
-            if (twoPutt != null && twoPutt.gameObject.activeSelf) twoPutt.widthMultiplier = width;
+            foreach (LineRenderer l in onePuttParts) if (l != null && l.gameObject.activeSelf) l.widthMultiplier = width;
+            foreach (LineRenderer l in twoPuttParts) if (l != null && l.gameObject.activeSelf) l.widthMultiplier = width;
             if (circle != null && circle.gameObject.activeSelf) circle.widthMultiplier = Mathf.Clamp(d * 0.0018f, 0.05f, 0.5f);
         }
 
-        /// <summary>Auto putt circles around the hole (radii in metres).</summary>
-        public void ShowPuttCircles(Vector3 hole, float oneRadius, float twoRadius)
+        /// <summary>
+        /// Auto putt circles around the hole (radii in metres). With onGreen given, only the parts
+        /// of each circle that lie on the putting green are drawn (the circles never leave the green).
+        /// </summary>
+        public void ShowPuttCircles(Vector3 hole, float oneRadius, float twoRadius, System.Func<Vector3, bool> onGreen = null)
         {
             if (onePutt == null) return;
-            bool moved = (hole - puttCentre).sqrMagnitude > 0.0001f || !onePutt.gameObject.activeSelf
-                         || Mathf.Abs(lastOne - oneRadius) > 0.001f || Mathf.Abs(lastTwo - twoRadius) > 0.001f;
+            bool changed = (hole - puttCentre).sqrMagnitude > 0.0001f || !puttVisible
+                           || Mathf.Abs(lastOne - oneRadius) > 0.001f || Mathf.Abs(lastTwo - twoRadius) > 0.001f;
             puttCentre = hole;
-            onePutt.gameObject.SetActive(true);
-            twoPutt.gameObject.SetActive(true);
-            if (!moved) return;
+            puttVisible = true;
+            if (!changed) return;
             lastOne = oneRadius;
             lastTwo = twoRadius;
-            DrawCircle(onePutt, hole, oneRadius, OnePuttColor, 0.03f);
-            DrawCircle(twoPutt, hole, twoRadius, TwoPuttColor, 0.03f);
+            DrawClipped(onePuttParts, onePutt, hole, oneRadius, OnePuttColor, onGreen);
+            DrawClipped(twoPuttParts, twoPutt, hole, twoRadius, TwoPuttColor, onGreen);
         }
 
+        private bool puttVisible;
+        private readonly List<LineRenderer> onePuttParts = new List<LineRenderer>();
+        private readonly List<LineRenderer> twoPuttParts = new List<LineRenderer>();
         private float lastOne = -1f, lastTwo = -1f;
+
+        /// <summary>Right-hand point of a circle that lies on the green (for its label), if any.</summary>
+        public bool LabelPoint(Vector3 hole, float radius, Vector3 right, System.Func<Vector3, bool> onGreen, out Vector3 point)
+        {
+            for (int i = 0; i < 24; i++)
+            {
+                float a = i * 15f * (i % 2 == 0 ? 1f : -1f) * 0.5f;
+                point = hole + Quaternion.Euler(0f, a, 0f) * right * radius;
+                if (onGreen == null || onGreen(point)) return true;
+            }
+            point = hole;
+            return false;
+        }
+
+        /// <summary>A circle split into the arcs that are on the green (one line per arc).</summary>
+        private void DrawClipped(List<LineRenderer> parts, LineRenderer first, Vector3 centre, float radius, Color color, System.Func<Vector3, bool> onGreen)
+        {
+            if (parts.Count == 0) parts.Add(first);
+            const int n = CircleSegments * 2;
+            var points = new Vector3[n];
+            var on = new bool[n];
+            bool all = true;
+            for (int i = 0; i < n; i++)
+            {
+                float a = i / (float)n * Mathf.PI * 2f;
+                Vector3 p = centre + new Vector3(Mathf.Cos(a) * radius, 0f, Mathf.Sin(a) * radius);
+                p.y = GroundProbe.HeightAt(p) + 0.03f;
+                points[i] = p;
+                on[i] = onGreen == null || onGreen(p);
+                all &= on[i];
+            }
+
+            var runs = new List<List<Vector3>>();
+            if (all)
+            {
+                var loop = new List<Vector3>(points) { points[0] };
+                runs.Add(loop);
+            }
+            else
+            {
+                // Start just after an off-green point so every arc is continuous.
+                int start = 0;
+                for (int i = 0; i < n; i++) if (!on[i]) { start = i; break; }
+                List<Vector3> run = null;
+                for (int k = 1; k <= n; k++)
+                {
+                    int i = (start + k) % n;
+                    if (on[i])
+                    {
+                        if (run == null) { run = new List<Vector3>(); runs.Add(run); }
+                        run.Add(points[i]);
+                    }
+                    else run = null;
+                }
+            }
+
+            while (parts.Count < runs.Count) parts.Add(MakeLine("GolfSimZA_PuttArc", 2, 0.06f));
+            for (int r = 0; r < parts.Count; r++)
+            {
+                LineRenderer line = parts[r];
+                bool show = r < runs.Count && runs[r].Count >= 2;
+                line.gameObject.SetActive(show);
+                if (!show) continue;
+                line.loop = false;
+                line.startColor = line.endColor = color;
+                line.positionCount = runs[r].Count;
+                line.SetPositions(runs[r].ToArray());
+            }
+        }
 
         public void HidePuttCircles()
         {
+            puttVisible = false;
+            foreach (LineRenderer l in onePuttParts) if (l != null) l.gameObject.SetActive(false);
+            foreach (LineRenderer l in twoPuttParts) if (l != null) l.gameObject.SetActive(false);
             if (onePutt != null) onePutt.gameObject.SetActive(false);
             if (twoPutt != null) twoPutt.gameObject.SetActive(false);
         }

@@ -160,9 +160,16 @@ namespace GolfSimZA.Physics
         }
 
         /// <summary>Sets the current hole so greens roll faster and the ball can drop in the cup.</summary>
+        /// <summary>
+        /// True when this hole's green can be recognised from the course surface (then only the
+        /// real green counts as "on the green"); otherwise a circle round the pin is used.
+        /// </summary>
+        public bool GreenFromSurface { get; private set; }
+
         public void SetHole(Vector3 pinPosition, float greenRadiusMeters)
         {
             hasHole = true;
+            GreenFromSurface = GreenSurface.At(pinPosition) == GreenSurface.Kind.Green;
             holePosition = pinPosition;
             greenRadius = Mathf.Max(4f, greenRadiusMeters);
         }
@@ -187,7 +194,9 @@ namespace GolfSimZA.Physics
             if (!hasHole) return false;
             Vector3 d = position - holePosition;
             d.y = 0f;
-            return d.magnitude <= greenRadius;
+            if (!GreenFromSurface) return d.magnitude <= greenRadius;
+            // The real green: the surface under the ball, and near this hole's pin (another hole's green does not count).
+            return d.magnitude <= greenRadius + 15f && GreenSurface.At(position) == GreenSurface.Kind.Green;
         }
 
         public void Launch(ShotData shot)

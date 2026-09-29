@@ -11,7 +11,7 @@ namespace GolfSimZA.Players
         private const string MapModeKey = "GolfSimZA.MapMode";
         private const string PlayerKey = "GolfSimZA.MapPlayer";
         private const string ClubKey = "GolfSimZA.MapClubIndex";
-        private const int RequiredShots = 6;
+        public const int RequiredShots = 6;
 
         private BallFlightSimulator ballFlight;
         private bool subscribed;
@@ -22,9 +22,6 @@ namespace GolfSimZA.Players
         private readonly float[] totals = new float[RequiredShots];
         private int shotCount;
         private bool completed;
-        private GUIStyle title, subtitle, big, metric, button, muted, active;
-        private Texture2D panelTexture, darkTexture, blueTexture, blueBrightTexture;
-        private bool stylesReady;
 
         public static bool IsActive => PlayerPrefs.GetInt(MapModeKey, 0) == 1;
 
@@ -36,6 +33,8 @@ namespace GolfSimZA.Players
             DontDestroyOnLoad(go);
             go.AddComponent<ClubMappingSession>();
         }
+
+        private void Awake() => Instance = this;
 
         private void OnEnable() => SceneManager.sceneLoaded += OnSceneLoaded;
 
@@ -148,98 +147,32 @@ namespace GolfSimZA.Players
             SceneManager.LoadScene("GolfSimZA_0_5_Players");
         }
 
-        private void EnsureStyles()
+        // ---------------------------------------------------------------- For the range HUD (TrackMan-style 6-shot block)
+
+        /// <summary>The mapping session (the range HUD draws its 6-shot block above the club selector).</summary>
+        public static ClubMappingSession Instance { get; private set; }
+        public string PlayerName => playerName ?? "";
+        public string ClubName => clubName ?? "";
+        public int ShotCount => shotCount;
+        public float Carry(int i) => i >= 0 && i < RequiredShots ? carries[i] : 0f;
+        public float AverageCarry
         {
-            if (stylesReady) return;
-            panelTexture = MakeTexture(new Color(0.02f, 0.055f, 0.065f, 0.97f));
-            darkTexture = MakeTexture(new Color(0.005f, 0.025f, 0.03f, 0.98f));
-            blueTexture = MakeTexture(new Color(0.03f, 0.48f, 0.82f, 1f));
-            blueBrightTexture = MakeTexture(new Color(0.08f, 0.64f, 1f, 1f));
-            title = MakeLabel(24, FontStyle.Bold, Color.white);
-            subtitle = MakeLabel(13, FontStyle.Normal, new Color(0.74f, 0.82f, 0.85f));
-            big = MakeLabel(30, FontStyle.Bold, Color.white, TextAnchor.MiddleCenter);
-            metric = MakeLabel(15, FontStyle.Bold, Color.white, TextAnchor.MiddleCenter);
-            muted = MakeLabel(12, FontStyle.Normal, new Color(0.70f, 0.78f, 0.81f), TextAnchor.MiddleCenter);
-            active = MakeLabel(18, FontStyle.Bold, new Color(0.08f, 0.64f, 1f), TextAnchor.MiddleCenter);
-            button = MakeButton(14, blueTexture);
-            stylesReady = true;
-        }
-
-        private GUIStyle MakeLabel(int size, FontStyle style, Color color, TextAnchor alignment = TextAnchor.MiddleLeft)
-        {
-            GUIStyle s = new GUIStyle(GUI.skin.label);
-            s.fontSize = size;
-            s.fontStyle = style;
-            s.alignment = alignment;
-            s.normal.textColor = color;
-            return s;
-        }
-
-        private GUIStyle MakeButton(int size, Texture2D background)
-        {
-            GUIStyle s = new GUIStyle(GUI.skin.button);
-            s.fontSize = size;
-            s.fontStyle = FontStyle.Bold;
-            s.alignment = TextAnchor.MiddleCenter;
-            s.normal.background = background;
-            s.hover.background = blueBrightTexture;
-            s.active.background = blueTexture;
-            s.normal.textColor = Color.white;
-            s.hover.textColor = Color.white;
-            s.active.textColor = Color.white;
-            return s;
-        }
-
-        private Texture2D MakeTexture(Color color)
-        {
-            Texture2D t = new Texture2D(1, 1);
-            t.SetPixel(0, 0, color);
-            t.Apply();
-            return t;
-        }
-
-        private void OnGUI()
-        {
-            if (!IsActive || completed) return;
-            EnsureStyles();
-            GUI.depth = -1000;
-
-            float panelWidth = Mathf.Min(720f, Screen.width - 70f);
-            float panelHeight = Mathf.Min(520f, Screen.height - 70f);
-            Rect area = new Rect((Screen.width - panelWidth) * 0.5f, (Screen.height - panelHeight) * 0.5f, panelWidth, panelHeight);
-            GUI.Box(area, GUIContent.none, new GUIStyle(GUI.skin.box) { normal = { background = panelTexture }, padding = new RectOffset(24, 24, 20, 20) });
-
-            GUI.Label(new Rect(area.x + 24f, area.y + 18f, area.width - 48f, 34f), "MAP MY BAG", title);
-            GUI.Label(new Rect(area.x + 24f, area.y + 54f, area.width - 48f, 24f), playerName + "  •  " + clubName, subtitle);
-            GUI.Label(new Rect(area.x + 24f, area.y + 88f, area.width - 48f, 24f), "HIT 6 SHOTS WITH THIS CLUB", metric);
-
-            float startY = area.y + 132f;
-            float cardWidth = (area.width - 48f - 25f) / 2f;
-            for (int i = 0; i < RequiredShots; i++)
+            get
             {
-                float col = i % 2;
-                float row = i / 2;
-                Rect r = new Rect(area.x + 24f + col * (cardWidth + 25f), startY + row * 48f, cardWidth, 40f);
-                GUI.Box(r, GUIContent.none, new GUIStyle(GUI.skin.box) { normal = { background = darkTexture } });
-                string value = i < shotCount ? carries[i].ToString("F1") + " m carry" : "WAITING";
-                GUI.Label(new Rect(r.x + 10f, r.y, 80f, r.height), "SHOT " + (i + 1), muted);
-                GUI.Label(new Rect(r.x + 90f, r.y, r.width - 100f, r.height), value, i < shotCount ? active : muted);
+                if (shotCount == 0) return 0f;
+                float sum = 0f;
+                for (int i = 0; i < shotCount; i++) sum += carries[i];
+                return sum / shotCount;
             }
+        }
 
-            float average = 0f;
-            for (int i = 0; i < shotCount; i++) average += carries[i];
-            if (shotCount > 0) average /= shotCount;
-            GUI.Label(new Rect(area.x + 24f, area.y + 288f, area.width - 48f, 25f), "CURRENT AVERAGE", muted);
-            GUI.Label(new Rect(area.x + 24f, area.y + 312f, area.width - 48f, 45f), shotCount > 0 ? average.ToString("F1") + " m" : "—", big);
-            GUI.Label(new Rect(area.x + 24f, area.y + 360f, area.width - 48f, 22f), shotCount < RequiredShots ? "Press SPACE after each shot. The ball must come to rest before the next shot." : "Mapping complete — saving your 6-shot average…", subtitle);
-
-            if (GUI.Button(new Rect(area.x + 24f, area.yMax - 62f, area.width - 48f, 42f), "CANCEL MAPPING", button))
-            {
-                PlayerPrefs.SetInt(MapModeKey, 0);
-                PlayerPrefs.Save();
-                completed = true;
-                SceneManager.LoadScene("GolfSimZA_0_5_Players");
-            }
+        /// <summary>CANCEL: stop mapping and go back to the player's bag.</summary>
+        public void Cancel()
+        {
+            PlayerPrefs.SetInt(MapModeKey, 0);
+            PlayerPrefs.Save();
+            completed = true;
+            SceneManager.LoadScene("GolfSimZA_0_5_Players");
         }
     }
 }

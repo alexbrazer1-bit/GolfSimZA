@@ -71,6 +71,10 @@ namespace GolfSimZA.UI
                 if (old != null) old.SetActive(false);
             }
 
+            // MAP MY BAG: the golfer whose bag is being mapped is the player on the mat.
+            if (GolfSimZA.Players.ClubMappingSession.IsActive)
+                ActiveClub.Player = PlayerPrefs.GetString("GolfSimZA.MapPlayer", ActiveClub.Player);
+
             AppSettings s = AppSettings.Current;
             targetSlider = s.rangeTargetMeters;
             widthSlider = s.rangeFairwayWidth;
@@ -102,6 +106,8 @@ namespace GolfSimZA.UI
         /// <summary>True when the selected "course" is the practice range.</summary>
         public static bool IsRangeSession()
         {
+            // MAP MY BAG is hit on the driving range (same screen, same look).
+            if (GolfSimZA.Players.ClubMappingSession.IsActive) return true;
             if (CourseSession.IsImportedCourse) return false;
             string name = CourseSession.CourseName ?? string.Empty;
             return name.IndexOf("range", StringComparison.OrdinalIgnoreCase) >= 0 ||

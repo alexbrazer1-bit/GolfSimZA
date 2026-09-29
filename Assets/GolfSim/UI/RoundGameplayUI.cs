@@ -117,6 +117,7 @@ namespace GolfSimZA.UI
                 return;
             }
 
+            Current = this;
             LoadPlayers();
             holeIndex = FirstHole;
             TryResumeRound();
@@ -159,6 +160,7 @@ namespace GolfSimZA.UI
 
         private void OnDestroy()
         {
+            if (Current == this) Current = null;
             GameOptions.ScorecardRequested -= ToggleScorecard;
             GameOptions.MulliganRequested -= Mulligan;
             GameOptions.FlyoverRequested -= Flyover;
@@ -175,6 +177,7 @@ namespace GolfSimZA.UI
         {
             course = loaded;
             waitingForCourse = false;
+            GreenSurface.Reset();
             if (ballFlightSimulator != null) ballFlightSimulator.AltitudeMeters = loaded.altitudeMeters;
             if (green != null) green.gameObject.SetActive(false);
             StartHole();
@@ -236,6 +239,7 @@ namespace GolfSimZA.UI
                 OnShotFinished();
             }
             wasInFlight = inFlight;
+            UpdateAutoAdvance();
             UpdateMarkers();
         }
 
@@ -250,7 +254,7 @@ namespace GolfSimZA.UI
             // Auto putt: 1-putt (gold) and 2-putt (white) circles around the hole.
             bool holeLive = !roundComplete && !AllHoled() && !(presentation != null && presentation.IsFlyingOver);
             if (s.autoPutt && s.showPuttCircles && holeLive)
-                markers.ShowPuttCircles(pinPosition, s.autoPuttOneMeters, Mathf.Max(s.autoPuttTwoMeters, s.autoPuttOneMeters + 0.5f));
+                markers.ShowPuttCircles(pinPosition, s.autoPuttOneMeters, Mathf.Max(s.autoPuttTwoMeters, s.autoPuttOneMeters + 0.5f), OnGreenPoint);
             else
                 markers.HidePuttCircles();
 
@@ -366,10 +370,17 @@ namespace GolfSimZA.UI
                     int putts = AutoPutts(toPin);
                     if (putts > 0)
                     {
+                        Debug.Log("[GolfSimZA] Auto putt: " + playerNames[shooter] + " on the green " + toPin.ToString("0.0") + " m from the hole -> " + putts + " putt(s)");
                         AddStrokes(shooter, putts);
                         MarkHoled(shooter, "AUTO PUTT  •  " + putts + (putts == 1 ? " PUTT" : " PUTTS"));
                     }
                     else ShowBanner("OUTSIDE THE 2 PUTT CIRCLE  •  PUTT IT  •  " + Units.DistanceText(toPin, "0.0"));
+                }
+                else if (AppSettings.Current.autoPutt && toPin <= Mathf.Max(AppSettings.Current.autoPuttTwoMeters, AppSettings.Current.autoPuttOneMeters + 0.5f))
+                {
+                    // Close to the hole but off the putting surface: the circles only count on the green.
+                    Debug.Log("[GolfSimZA] Just off the green: " + playerNames[shooter] + " " + toPin.ToString("0.0") + " m from the hole -> no auto putt");
+                    ShowBanner("JUST OFF THE GREEN  •  NO AUTO PUTT  •  PLAY YOUR SHOT  •  " + Units.DistanceText(toPin, "0.0"));
                 }
             }
 
@@ -379,6 +390,9 @@ namespace GolfSimZA.UI
             if (TeamAfterShot(shooter, reallyHoled)) return; // the team picks its ball first
             ContinueAfterShot();
         }
+
+        /// <summary>Is this point on the current hole's putting green (the real green when the course shows it)?</summary>
+        private bool OnGreenPoint(Vector3 p) => ballFlightSimulator != null && ballFlightSimulator.IsOnGreen(p);
 
         /// <summary>Putts for a ball this far from the hole, or 0 when the player putts it themselves.</summary>
         private static int AutoPutts(float toPin)
@@ -681,38 +695,19 @@ namespace GolfSimZA.UI
         }
 
         /// <summary>
-        /// Who plays next: the player furthest from the hole among those allowed to hit (format
-        /// rules: team rounds, alternate shot), with the PLAY OUT HOLE / PUTT OUT rotation styles.
+        /// Who plays next: on the tee the players hit in order (player 1, 2, 3 ...), after that the
+        /// player furthest from the pin plays, among those allowed to hit (format rules: team
+        /// rounds, alternate shot).
         /// </summary>
         private int NextPlayerToHit()
         {
-            int style = AppSettings.Current.rotationStyle;
-            bool teamTurn = SelectFormat && !PracticeMode && activePlayerIndex < playerNames.Length &&
-                            (teamRoundActive[playerTeam[activePlayerIndex]] || format.AlternateAfterDrive);
-            bool activeInPlay = activePlayerIndex < playerNames.Length && CanHit(activePlayerIndex) && playerHoleStrokes[activePlayerIndex] > 0;
-
-            if (!teamTurn)
-            {
-                // PLAY OUT HOLE: the player keeps hitting until holed, then the next player in order.
-                if (style == 1)
-                {
-                    if (activeInPlay) return activePlayerIndex;
-                    for (int i = 0; i < playerNames.Length; i++) if (CanHit(i)) return i;
-                    return activePlayerIndex;
-                }
-
-                // PUTT OUT: once on the green a player keeps putting until holed.
-                if (style == 2 && activeInPlay && ballFlightSimulator != null && ballFlightSimulator.IsOnGreen(playerPositions[activePlayerIndex]))
-                    return activePlayerIndex;
-            }
-
             int best = activePlayerIndex;
             float bestDistance = -1f;
             for (int i = 0; i < playerNames.Length; i++)
             {
                 if (!CanHit(i)) continue;
                 float d = HorizontalDistance(playerPositions[i], pinPosition);
-                if (playerHoleStrokes[i] == 0) d = float.MaxValue - i; // nobody has teed off yet
+                if (playerHoleStrokes[i] == 0) d = float.MaxValue - i; // still to tee off: in player order
                 if (d > bestDistance)
                 {
                     bestDistance = d;
@@ -728,6 +723,119 @@ namespace GolfSimZA.UI
             if (setting.StartsWith("Off", StringComparison.OrdinalIgnoreCase)) return 0f;
             string number = setting.Replace("m", "").Trim();
             return float.TryParse(number, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float v) ? v : 0f;
+        }
+
+        // ---------------------------------------------------------------- Add a player mid round
+
+        /// <summary>The round being played (null on other screens).</summary>
+        public static RoundGameplayUI Current { get; private set; }
+
+        public string[] RoundPlayers => (string[])playerNames.Clone();
+        public bool CanAddPlayers => !roundComplete && playerNames.Length < CourseSession.MaxPlayers;
+        /// <summary>Players pick a team when they join (team formats).</summary>
+        public bool JoinNeedsTeam => TeamFormat && !PracticeMode;
+        public int TeamCount => teamCount;
+        public int TeamSize(int t) => t >= 0 && t < teamCount ? teamMembers[t].Count : 0;
+        public int MaxTeamSize => format.MaxTeamSize;
+        public string FormatName => format.Name;
+
+        /// <summary>
+        /// ADD PLAYER (game menu): a golfer joins the round being played. They tee off on this hole
+        /// (or start on the next hole when this one is already finished); holes played before they
+        /// joined show "-" and do not count for them. Team formats: they join team <paramref name="team"/>.
+        /// Returns null when added, else why not.
+        /// </summary>
+        public string AddPlayer(string name, int team)
+        {
+            name = GolfSimZA.Players.PlayerRoster.Clean(name);
+            if (string.IsNullOrEmpty(name)) return "Type a name or pick a player.";
+            if (roundComplete) return "The round is finished.";
+            if (playerNames.Length >= CourseSession.MaxPlayers) return "A round has at most " + CourseSession.MaxPlayers + " players.";
+            foreach (string existing in playerNames)
+                if (string.Equals(existing, name, StringComparison.OrdinalIgnoreCase)) return name + " is already playing.";
+            if (ballFlightSimulator != null && ballFlightSimulator.IsInFlight) return "Wait until the ball has stopped.";
+            if (JoinNeedsTeam)
+            {
+                if (team < 0 || team >= teamCount) return "Pick a team.";
+                if (teamMembers[team].Count >= format.MaxTeamSize) return "TEAM " + GameFormats.TeamLetters[team] + " is full (" + format.MaxTeamSize + " players in " + format.Name + ").";
+            }
+            else team = 0;
+
+            // Every golfer has a profile (golf bag, colour, tees).
+            var roster = GolfSimZA.Players.PlayerRoster.Current;
+            var profile = roster.Find(name);
+            if (profile == null) profile = roster.Add(name);
+            name = profile.name;
+            profile.selected = true;
+            roster.Save();
+
+            bool holeFinished = AllHoled();
+            int n = playerNames.Length;
+            int p = n;
+            Array.Resize(ref playerNames, n + 1);
+            Array.Resize(ref playerPositions, n + 1);
+            Array.Resize(ref playerPreviousPositions, n + 1);
+            Array.Resize(ref playerTotalStrokes, n + 1);
+            Array.Resize(ref playerHoleStrokes, n + 1);
+            Array.Resize(ref playerHoled, n + 1);
+            Array.Resize(ref mulligansUsed, n + 1);
+            Array.Resize(ref hitThisRound, n + 1);
+            Array.Resize(ref playerTeam, n + 1);
+            Array.Resize(ref playerTees, n + 1);
+            Array.Resize(ref playerHoleLengths, n + 1);
+            playerNames[p] = name;
+            playerTeam[p] = team;
+            teamMembers[team].Add(p);
+
+            // Their tee on this hole.
+            if (UsingCourse)
+            {
+                HoleDefinition hole = course.GetHole(holeIndex);
+                string teeName = PlayerTeeName(p);
+                TeeDefinition own = hole.GetTee(teeName);
+                playerTees[p] = own != null ? own.position : teePosition;
+                playerHoleLengths[p] = own != null ? hole.LengthMeters(teeName) : currentHoleDistance;
+            }
+            else
+            {
+                float length = DemoHoleDistance(holeIndex, PlayerTeeName(p));
+                playerTees[p] = new Vector3(0f, 0f, currentHoleDistance - length);
+                playerHoleLengths[p] = length;
+            }
+            playerPositions[p] = playerTees[p];
+            playerPreviousPositions[p] = playerTees[p];
+            playerHoleStrokes[p] = 0;
+            playerTotalStrokes[p] = 0;
+            mulligansUsed[p] = 0;
+            hitThisRound[p] = false;
+
+            string where;
+            if (holeFinished)
+            {
+                // This hole is over: they start on the next one (0 strokes = did not play this hole).
+                playerHoled[p] = true;
+                where = "STARTS ON THE NEXT HOLE";
+            }
+            else
+            {
+                playerHoled[p] = false;
+                where = "TEES OFF ON HOLE " + (holeIndex + 1);
+                if (SelectFormat && !PracticeMode && teamDriveChosen[team])
+                {
+                    // The team already plays one ball on this hole: the new member plays on with it.
+                    int mate = teamMembers[team][0];
+                    SyncTeam(team, mate);
+                    hitThisRound[p] = hitThisRound[mate];
+                    where = "PLAYS ON WITH TEAM " + GameFormats.TeamLetters[team] + "'S BALL";
+                }
+            }
+
+            CourseSession.SetPlayers(playerNames);
+            if (JoinNeedsTeam) CourseSession.Teams = playerTeam;
+            SaveRoundProgress();
+            ShowBanner(name.ToUpperInvariant() + " JOINS THE ROUND" + (JoinNeedsTeam ? "  •  TEAM " + GameFormats.TeamLetters[team] : "") + "  •  " + where);
+            Debug.Log("[GolfSimZA] " + name + " joined the round on hole " + (holeIndex + 1) + (JoinNeedsTeam ? " (team " + GameFormats.TeamLetters[team] + ")" : ""));
+            return null;
         }
 
         // ---------------------------------------------------------------- Holes
@@ -857,13 +965,15 @@ namespace GolfSimZA.UI
             if (scores == null) return -1;
             int best = int.MaxValue, winner = -1;
             bool tie = false;
+            int played = 0;
             for (int p = 0; p < scores.Length; p++)
             {
-                if (scores[p] <= 0) return -1;
+                if (scores[p] <= 0) continue; // did not play this hole (joined the round later)
+                played++;
                 if (scores[p] < best) { best = scores[p]; winner = p; tie = false; }
                 else if (scores[p] == best) tie = true;
             }
-            return tie ? -1 : winner;
+            return tie || played < 2 ? -1 : winner;
         }
 
         private int[] HolesWon()
@@ -919,7 +1029,7 @@ namespace GolfSimZA.UI
             int best = int.MaxValue;
             foreach (int m in teamMembers[side])
             {
-                if (m >= scores.Length || scores[m] <= 0) return 0;
+                if (m >= scores.Length || scores[m] <= 0) continue; // joined the round after this hole
                 best = Mathf.Min(best, scores[m]);
             }
             return best == int.MaxValue ? 0 : best;
@@ -934,7 +1044,7 @@ namespace GolfSimZA.UI
             foreach (int m in teamMembers[side])
             {
                 if (!playerHoled[m]) return 0;
-                best = Mathf.Min(best, playerHoleStrokes[m]);
+                if (playerHoleStrokes[m] > 0) best = Mathf.Min(best, playerHoleStrokes[m]);
             }
             return best == int.MaxValue ? 0 : best;
         }
@@ -1092,6 +1202,8 @@ namespace GolfSimZA.UI
                 float greenRadius = hole.hasGreenCenter ? Mathf.Max(12f, HorizontalDistance(hole.greenCenter, pinPosition) + 9f) : 15f;
                 pinPosition.y = GroundProbe.HeightAt(pinPosition);
                 ballFlightSimulator?.SetHole(pinPosition, greenRadius);
+                if (ballFlightSimulator != null)
+                    Debug.Log("[GolfSimZA] Hole " + (holeIndex + 1) + " green: " + (ballFlightSimulator.GreenFromSurface ? "the course's own green surface" : "a " + greenRadius.ToString("0") + " m circle round the pin (green not recognised)"));
 
                 // Each player can play their own tees (Round Settings → player tile).
                 for (int i = 0; i < playerNames.Length; i++)
@@ -1683,8 +1795,10 @@ namespace GolfSimZA.UI
                 Vector3 right = cam.transform.right;
                 right.y = 0f;
                 right = right.sqrMagnitude > 0.001f ? right.normalized : Vector3.right;
-                GroundLabel(cam, pinPosition + right * s.autoPuttOneMeters, "1 PUTT", CourseMarkers.OnePuttColor);
-                GroundLabel(cam, pinPosition + right * Mathf.Max(s.autoPuttTwoMeters, s.autoPuttOneMeters + 0.5f), "2 PUTTS", CourseMarkers.TwoPuttColor);
+                if (markers.LabelPoint(pinPosition, s.autoPuttOneMeters, right, OnGreenPoint, out Vector3 p1))
+                    GroundLabel(cam, p1, "1 PUTT", CourseMarkers.OnePuttColor);
+                if (markers.LabelPoint(pinPosition, Mathf.Max(s.autoPuttTwoMeters, s.autoPuttOneMeters + 0.5f), right, OnGreenPoint, out Vector3 p2))
+                    GroundLabel(cam, p2, "2 PUTTS", CourseMarkers.TwoPuttColor);
             }
             if (aimPointer != null && aimPointer.Visible && ball != null)
             {
@@ -1898,40 +2012,57 @@ namespace GolfSimZA.UI
 
             if (holeDone || (shotFinished && waitingForNextPlayer))
             {
+                // Play moves on by itself (countdown on the button); pressing it goes on at once.
                 string text = !holeDone
                     ? "NEXT PLAYER  •  " + playerNames[NextPlayerToHit()]
                     : (PracticeMode || holeIndex + 1 < EndHole ? "NEXT HOLE" : "FINISH ROUND");
+                if (autoAdvanceAt > 0f) text += "  •  " + Mathf.CeilToInt(Mathf.Max(0f, autoAdvanceAt - Time.time)) + " s";
 
                 if (GUI.Button(new Rect(x, y, width, 40f), text, actionStyle))
                 {
+                    autoAdvanceAt = -1f;
                     if (!holeDone) AdvancePlayer();
                     else AdvanceHole();
                 }
+            }
+        }
+
+        /// <summary>When play moves on by itself (-1 = nothing waiting).</summary>
+        private float autoAdvanceAt = -1f;
+
+        /// <summary>
+        /// AUTO NEXT PLAYER / AUTO NEXT HOLE: a few seconds after a shot the next player is set up
+        /// (tee: player order, then furthest from the pin); a few seconds after the last player
+        /// holes out the next hole starts (the scorecard shows in between when that is switched on).
+        /// Waits while the menu or the scorecard is open, a team is picking its ball, or a flyover runs.
+        /// </summary>
+        private void UpdateAutoAdvance()
+        {
+            bool holeDone = AllHoled();
+            bool waiting = holeDone || (shotFinished && waitingForNextPlayer);
+            bool paused = GameMenuOverlay.IsOpen || showScorecard || pendingSelection >= 0
+                          || ballFlightSimulator.IsInFlight || (presentation != null && presentation.IsFlyingOver);
+            if (!waiting || roundComplete)
+            {
+                autoAdvanceAt = -1f;
                 return;
             }
-
-            // Pick the ball up (counts one more stroke) to move on, like conceding a putt.
-            if (playerHoleStrokes[activePlayerIndex] > 0 && !playerHoled[activePlayerIndex])
+            if (paused)
             {
-                if (GUI.Button(new Rect(x + width * 0.5f - 70f, y, 140f, 40f), "PICK UP", actionStyle))
-                {
-                    int p = activePlayerIndex;
-                    AddStrokes(p, 1);
-                    MarkHoled(p, "PICKED UP");
-                    if (SelectFormat && !PracticeMode && (teamRoundActive[playerTeam[p]] || format.AlternateAfterDrive))
-                    {
-                        // Team ball: the whole team picks up.
-                        int t = playerTeam[p];
-                        SyncTeam(t, p);
-                        teamRoundActive[t] = false;
-                        foreach (int m in teamMembers[t]) hitThisRound[m] = false;
-                        if (pendingSelection == t) pendingSelection = -1;
-                    }
-                    shotFinished = true;
-                    if (AllHoled()) status = "HOLE COMPLETE";
-                    else AdvancePlayer();
-                }
+                // Start the countdown again once the menu / scorecard is closed.
+                if (autoAdvanceAt > 0f) autoAdvanceAt = Mathf.Max(autoAdvanceAt, Time.time + 1f);
+                return;
             }
+            AppSettings s = AppSettings.Current;
+            if (autoAdvanceAt < 0f)
+            {
+                autoAdvanceAt = Time.time + Mathf.Max(0.5f, holeDone ? s.autoNextHoleSeconds : s.autoNextPlayerSeconds);
+                return;
+            }
+            if (Time.time < autoAdvanceAt) return;
+            autoAdvanceAt = -1f;
+            if (holeDone) AdvanceHole();
+            else AdvancePlayer();
         }
 
         /// <summary>CHOOSE panel: the team picks which ball it plays on from.</summary>
@@ -1978,75 +2109,154 @@ namespace GolfSimZA.UI
             return strokes;
         }
 
+        private GUIStyle cardTitle, cardHead, cardCell, cardName, cardTotal, cardFoot;
+        private static Texture2D cardRowTex, cardRowAltTex, cardHeadTex, underParTex, overParTex;
+        private int cardStyleHeight = -1;
+
+        /// <summary>Scorecard fonts scaled to the screen (big and readable from the hitting bay).</summary>
+        private void EnsureCardStyles(float k)
+        {
+            int key = Mathf.RoundToInt(k * 100f);
+            if (cardStyleHeight == key && cardTitle != null) return;
+            cardStyleHeight = key;
+            cardTitle = MakeLabel(Mathf.RoundToInt(30 * k), FontStyle.Bold, Color.white, TextAnchor.MiddleCenter);
+            cardHead = MakeLabel(Mathf.RoundToInt(17 * k), FontStyle.Bold, muted, TextAnchor.MiddleCenter);
+            cardCell = MakeLabel(Mathf.RoundToInt(23 * k), FontStyle.Bold, Color.white, TextAnchor.MiddleCenter);
+            cardName = MakeLabel(Mathf.RoundToInt(21 * k), FontStyle.Bold, Color.white, TextAnchor.MiddleLeft);
+            cardTotal = MakeLabel(Mathf.RoundToInt(23 * k), FontStyle.Bold, GolfSimTheme.Gold, TextAnchor.MiddleCenter);
+            cardFoot = MakeLabel(Mathf.RoundToInt(20 * k), FontStyle.Bold, GolfSimTheme.Gold, TextAnchor.MiddleLeft);
+            if (cardRowTex == null)
+            {
+                cardRowTex = GolfSimTheme.Tex(new Color(0.07f, 0.13f, 0.15f, 1f));
+                cardRowAltTex = GolfSimTheme.Tex(new Color(0.05f, 0.10f, 0.12f, 1f));
+                cardHeadTex = GolfSimTheme.Tex(new Color(0.03f, 0.30f, 0.21f, 1f));
+                underParTex = GolfSimTheme.Tex(new Color(0.80f, 0.16f, 0.14f, 1f));
+                overParTex = GolfSimTheme.Tex(new Color(0.16f, 0.36f, 0.72f, 1f));
+            }
+        }
+
+        /// <summary>
+        /// Full-screen scorecard: big rows and fonts scaled to the screen, one column per hole,
+        /// OUT / IN sub-totals on 18 holes, birdies (and better) red, bogeys (and worse) blue.
+        /// </summary>
         private void DrawScorecard()
         {
             if (scorecardBackdrop == null) scorecardBackdrop = GolfSimTheme.Tex(new Color(0.02f, 0.05f, 0.06f, 0.97f));
             GUI.DrawTexture(new Rect(0, 0, Screen.width, Screen.height), scorecardBackdrop);
             int holes = HoleCount;
             int first = FirstHole;
-            float cellW = Mathf.Clamp((Screen.width - 340f) / (holes + 2), 30f, 52f);
-            float extraW = format.Id == GameFormatId.Stableford || format.Id == GameFormatId.Skins ? 70f : 0f;
-            float tableW = 160f + cellW * (holes + 1) + 40f + extraW;
+            bool split = holes == 18;
             int[] skins = format.Id == GameFormatId.Skins ? SkinsWon(out _, out _, out _) : null;
+            bool extra = format.Id == GameFormatId.Stableford || format.Id == GameFormatId.Skins;
+
+            int rows = 2 + playerNames.Length + (TeamFormat ? teamCount : 0) + (format.Id == GameFormatId.Skins && playerNames.Length >= 2 ? 1 : 0) + (MatchPlay ? 2 : 1);
+            float k = Mathf.Clamp(Screen.height / 1080f, 0.75f, 2f);
+            float rowH = Mathf.Min(54f * k, (Screen.height * 0.78f - 160f * k) / Mathf.Max(1, rows));
+            k = Mathf.Clamp(Mathf.Min(k, rowH / 54f * 1.05f), 0.6f, 2f);
+            EnsureCardStyles(k);
+
+            float margin = Mathf.Max(20f, Screen.width * 0.025f);
+            float tableW = Screen.width - margin * 2f;
+            float nameW = Mathf.Clamp(tableW * 0.15f, 150f, 320f);
+            float subW = split ? 70f * k : 0f;              // OUT and IN columns
+            float totW = 150f * k;
+            float extraW = extra ? 90f * k : 0f;
+            float cellW = (tableW - nameW - subW * 2f - totW - extraW) / holes;
+            cellW = Mathf.Min(cellW, 110f * k);
+            tableW = nameW + cellW * holes + subW * 2f + totW + extraW;
             float x = (Screen.width - tableW) * 0.5f;
-            float y = Screen.height * 0.18f;
+            float y = Mathf.Max(70f * k, (Screen.height - rows * rowH - 150f * k) * 0.45f);
 
-            GUI.Label(new Rect(x, y - 50f, tableW, 34f), (roundComplete ? "ROUND COMPLETE  •  " : "SCORECARD  •  ") + (UsingCourse ? course.name : CourseSession.CourseName) + "  •  " + format.Name.ToUpperInvariant(), bannerStyle);
+            GUI.Label(new Rect(x, y - 62f * k, tableW, 50f * k), (roundComplete ? "ROUND COMPLETE  •  " : "SCORECARD  •  ") + (UsingCourse ? course.name : CourseSession.CourseName) + "  •  " + format.Name.ToUpperInvariant(), cardTitle);
 
-            GUI.Label(new Rect(x, y, 160f, 24f), "HOLE", cellHeaderStyle);
-            for (int h = 0; h < holes; h++) GUI.Label(new Rect(x + 160f + cellW * h, y, cellW, 24f), (first + h + 1).ToString(), cellHeaderStyle);
-            GUI.Label(new Rect(x + 160f + cellW * holes, y, cellW + 40f, 24f), "TOT", cellHeaderStyle);
-            if (extraW > 0f) GUI.Label(new Rect(x + 200f + cellW * (holes + 1), y, extraW, 24f), format.Id == GameFormatId.Stableford ? "PTS" : "SKINS", cellHeaderStyle);
+            // Column x position of hole column c (0-based), leaving room for OUT after the 9th.
+            System.Func<int, float> colX = c => x + nameW + cellW * c + (split && c >= 9 ? subW : 0f);
+            float outX = x + nameW + cellW * 9f;
+            float inX = x + nameW + cellW * 18f + subW;
+            float totX = x + nameW + cellW * holes + subW * 2f;
+            float extraX = totX + totW;
 
-            y += 26f;
-            GUI.Label(new Rect(x, y, 160f, 24f), "PAR", cellHeaderStyle);
-            int parTotal = 0;
-            for (int h = 0; h < holes; h++)
+            // Header rows: HOLE and PAR
+            GUI.DrawTexture(new Rect(x, y, tableW, rowH * 2f), cardHeadTex);
+            GUI.Label(new Rect(x + 14f * k, y, nameW, rowH), "HOLE", new GUIStyle(cardHead) { alignment = TextAnchor.MiddleLeft, normal = { textColor = Color.white } });
+            for (int c = 0; c < holes; c++) GUI.Label(new Rect(colX(c), y, cellW, rowH), (first + c + 1).ToString(), new GUIStyle(cardHead) { normal = { textColor = Color.white } });
+            if (split) { GUI.Label(new Rect(outX, y, subW, rowH), "OUT", cardHead); GUI.Label(new Rect(inX, y, subW, rowH), "IN", cardHead); }
+            GUI.Label(new Rect(totX, y, totW, rowH), "TOTAL", cardHead);
+            if (extra) GUI.Label(new Rect(extraX, y, extraW, rowH), format.Id == GameFormatId.Stableford ? "PTS" : "SKINS", cardHead);
+            y += rowH;
+            GUI.Label(new Rect(x + 14f * k, y, nameW, rowH), "PAR", new GUIStyle(cardHead) { alignment = TextAnchor.MiddleLeft });
+            int parTotal = 0, parOut = 0;
+            for (int c = 0; c < holes; c++)
             {
-                parTotal += ParForHole(first + h);
-                GUI.Label(new Rect(x + 160f + cellW * h, y, cellW, 24f), ParForHole(first + h).ToString(), cellHeaderStyle);
+                int par = ParForHole(first + c);
+                parTotal += par;
+                if (c < 9) parOut += par;
+                GUI.Label(new Rect(colX(c), y, cellW, rowH), par.ToString(), cardHead);
             }
-            GUI.Label(new Rect(x + 160f + cellW * holes, y, cellW, 24f), parTotal.ToString(), cellHeaderStyle);
+            if (split) { GUI.Label(new Rect(outX, y, subW, rowH), parOut.ToString(), cardHead); GUI.Label(new Rect(inX, y, subW, rowH), (parTotal - parOut).ToString(), cardHead); }
+            GUI.Label(new Rect(totX, y, totW, rowH), parTotal.ToString(), cardHead);
+            y += rowH;
 
+            // One row per player
             for (int p = 0; p < playerNames.Length; p++)
             {
-                y += 30f;
-                GUI.Label(new Rect(x, y, 160f, 26f), (TeamFormat ? GameFormats.TeamLetters[playerTeam[p]] + "  " : "") + playerNames[p], new GUIStyle(cellStyle) { normal = { textColor = PlayerColor(p) } });
-                int total = 0, parPlayed = 0;
+                GUI.DrawTexture(new Rect(x, y, tableW, rowH), p % 2 == 0 ? cardRowTex : cardRowAltTex);
+                GUI.color = PlayerColor(p);
+                GUI.DrawTexture(new Rect(x, y + 4f, 7f * k, rowH - 8f), whiteTexture);
+                GUI.color = Color.white;
+                string name = (TeamFormat ? GameFormats.TeamLetters[playerTeam[p]] + "  " : "") + playerNames[p];
+                GUI.Label(new Rect(x + 16f * k, y, nameW - 18f * k, rowH), GolfSimTheme.Ellipsize(name, cardName, nameW - 18f * k), new GUIStyle(cardName) { normal = { textColor = PlayerColor(p) } });
+                int total = 0, outTotal = 0, parPlayed = 0;
                 for (int c = 0; c < holes; c++)
                 {
                     int h = first + c;
                     int strokes = h < scorecard.Count && scorecard[h] != null && p < scorecard[h].Length ? scorecard[h][p] : (h == holeIndex && !roundComplete ? playerHoleStrokes[p] : 0);
                     total += strokes;
+                    if (c < 9) outTotal += strokes;
                     bool finished = (h < scorecard.Count && scorecard[h] != null) || (h == holeIndex && !roundComplete && playerHoled[p]);
                     if (strokes > 0 && finished) parPlayed += ParForHole(h);
-                    GUI.Label(new Rect(x + 160f + cellW * c, y, cellW, 26f), strokes > 0 ? strokes.ToString() : "-", cellStyle);
+                    ScoreCell(new Rect(colX(c), y, cellW, rowH), strokes, finished ? strokes - ParForHole(h) : 0, finished, k);
                 }
-                GUI.Label(new Rect(x + 160f + cellW * holes, y, cellW + 40f, 26f), total + " (" + FormatScore(ScoredStrokes(p) - parPlayed) + ")", cellStyle);
-                if (extraW > 0f)
-                    GUI.Label(new Rect(x + 200f + cellW * (holes + 1), y, extraW, 26f), format.Id == GameFormatId.Stableford ? StablefordTotal(p).ToString() : skins[p].ToString(), new GUIStyle(cellStyle) { normal = { textColor = GolfSimTheme.Gold } });
+                if (split)
+                {
+                    GUI.Label(new Rect(outX, y, subW, rowH), outTotal > 0 ? outTotal.ToString() : "-", cardCell);
+                    GUI.Label(new Rect(inX, y, subW, rowH), total - outTotal > 0 ? (total - outTotal).ToString() : "-", cardCell);
+                }
+                GUI.Label(new Rect(totX, y, totW, rowH), total + " (" + FormatScore(ScoredStrokes(p) - parPlayed) + ")", cardTotal);
+                if (extra)
+                    GUI.Label(new Rect(extraX, y, extraW, rowH), format.Id == GameFormatId.Stableford ? StablefordTotal(p).ToString() : skins[p].ToString(), cardTotal);
+                y += rowH;
             }
 
             // Team formats: one line per team with the score that counts on each hole.
             if (TeamFormat)
                 for (int t = 0; t < teamCount; t++)
                 {
-                    y += 30f;
-                    GUI.Label(new Rect(x, y, 160f, 26f), "TEAM " + GameFormats.TeamLetters[t], new GUIStyle(cellStyle) { normal = { textColor = GameFormats.TeamColors[t] } });
+                    GUI.DrawTexture(new Rect(x, y, tableW, rowH), cardRowAltTex);
+                    var teamStyle = new GUIStyle(cardCell) { normal = { textColor = GameFormats.TeamColors[t] } };
+                    GUI.Label(new Rect(x + 16f * k, y, nameW, rowH), "TEAM " + GameFormats.TeamLetters[t], new GUIStyle(cardName) { normal = { textColor = GameFormats.TeamColors[t] } });
+                    int outTeam = 0, allTeam = 0;
                     for (int c = 0; c < holes; c++)
                     {
                         int h = first + c;
                         int sc = HoleRecorded(h) ? SideScore(scorecard[h], t) : (h == holeIndex ? LiveSideScore(t) : 0);
-                        GUI.Label(new Rect(x + 160f + cellW * c, y, cellW, 26f), sc > 0 ? sc.ToString() : "-", new GUIStyle(cellStyle) { normal = { textColor = GameFormats.TeamColors[t] } });
+                        allTeam += sc;
+                        if (c < 9) outTeam += sc;
+                        GUI.Label(new Rect(colX(c), y, cellW, rowH), sc > 0 ? sc.ToString() : "-", teamStyle);
                     }
-                    GUI.Label(new Rect(x + 160f + cellW * holes, y, cellW + 40f, 26f), SideStrokes(t) + " (" + FormatScore(SideRelativeToPar(t)) + ")", new GUIStyle(cellStyle) { normal = { textColor = GameFormats.TeamColors[t] } });
+                    if (split)
+                    {
+                        GUI.Label(new Rect(outX, y, subW, rowH), outTeam > 0 ? outTeam.ToString() : "-", teamStyle);
+                        GUI.Label(new Rect(inX, y, subW, rowH), allTeam - outTeam > 0 ? (allTeam - outTeam).ToString() : "-", teamStyle);
+                    }
+                    GUI.Label(new Rect(totX, y, totW, rowH), SideStrokes(t) + " (" + FormatScore(SideRelativeToPar(t)) + ")", teamStyle);
+                    y += rowH;
                 }
 
-            // Skins: who won each hole ("–" = carried over).
+            // Skins: who won each hole ("→" = carried over).
             if (format.Id == GameFormatId.Skins && playerNames.Length >= 2)
             {
-                y += 30f;
-                GUI.Label(new Rect(x, y, 160f, 26f), "SKIN", cellHeaderStyle);
+                GUI.Label(new Rect(x + 14f * k, y, nameW, rowH), "SKIN", new GUIStyle(cardHead) { alignment = TextAnchor.MiddleLeft });
                 for (int c = 0; c < holes; c++)
                 {
                     int h = first + c;
@@ -2056,14 +2266,14 @@ namespace GolfSimZA.UI
                         int w = HoleWinner(scorecard[h]);
                         cell = w >= 0 ? (playerNames[w].Length > 3 ? playerNames[w].Substring(0, 3) : playerNames[w]).ToUpperInvariant() : "→";
                     }
-                    GUI.Label(new Rect(x + 160f + cellW * c, y, cellW, 26f), cell, cellHeaderStyle);
+                    GUI.Label(new Rect(colX(c), y, cellW, rowH), cell, cardHead);
                 }
+                y += rowH;
             }
 
             if (MatchPlay)
             {
-                y += 30f;
-                GUI.Label(new Rect(x, y, 160f, 26f), "MATCH", cellHeaderStyle);
+                GUI.Label(new Rect(x + 14f * k, y, nameW, rowH), "MATCH", new GUIStyle(cardHead) { alignment = TextAnchor.MiddleLeft });
                 for (int c = 0; c < holes; c++)
                 {
                     int h = first + c;
@@ -2074,26 +2284,55 @@ namespace GolfSimZA.UI
                         int w = HoleWinner(scores);
                         cell = w >= 0 ? (playerNames[w].Length > 3 ? playerNames[w].Substring(0, 3) : playerNames[w]).ToUpperInvariant() : "½";
                     }
-                    GUI.Label(new Rect(x + 160f + cellW * c, y, cellW, 26f), cell, cellHeaderStyle);
+                    GUI.Label(new Rect(colX(c), y, cellW, rowH), cell, cardHead);
                 }
-                y += 30f;
-                GUI.Label(new Rect(x, y, tableW, 26f), MatchStatusText(), new GUIStyle(cellHeaderStyle) { alignment = TextAnchor.MiddleLeft, normal = { textColor = GolfSimTheme.Gold } });
+                y += rowH + 8f * k;
+                GUI.Label(new Rect(x, y, tableW, rowH), MatchStatusText(), cardFoot);
             }
-
-            if (!MatchPlay && !PracticeMode)
+            else if (!PracticeMode)
             {
-                y += 34f;
-                GUI.Label(new Rect(x, y, tableW, 26f), ResultText(), new GUIStyle(cellHeaderStyle) { alignment = TextAnchor.MiddleLeft, fontSize = 13, normal = { textColor = GolfSimTheme.Gold } });
+                y += 8f * k;
+                GUI.Label(new Rect(x, y, tableW, rowH), ResultText(), cardFoot);
             }
+            y += rowH + 14f * k;
 
+            float bw = 320f * k, bh = 56f * k;
+            var buttonStyle = new GUIStyle(actionStyle) { fontSize = Mathf.RoundToInt(18 * k) };
             if (!roundComplete)
             {
-                if (GUI.Button(new Rect((Screen.width - 260f) * 0.5f, y + 60f, 260f, 44f), "CLOSE SCORECARD", actionStyle))
+                if (GUI.Button(new Rect((Screen.width - bw) * 0.5f, Mathf.Min(y, Screen.height - bh - 16f), bw, bh), "CLOSE SCORECARD", buttonStyle))
+                {
                     showScorecard = false;
+                    scorecardUntil = -1f;
+                }
                 return;
             }
-            if (GUI.Button(new Rect((Screen.width - 260f) * 0.5f, y + 60f, 260f, 44f), "BACK TO HOME", actionStyle))
+            if (GUI.Button(new Rect((Screen.width - bw) * 0.5f, Mathf.Min(y, Screen.height - bh - 16f), bw, bh), "BACK TO HOME", buttonStyle))
                 SceneManager.LoadScene("GolfSimZA_0_5_CourseSelection");
+        }
+
+        /// <summary>One hole score: red box for birdie or better, blue for bogey or worse.</summary>
+        private void ScoreCell(Rect r, int strokes, int toPar, bool finished, float k)
+        {
+            if (strokes > 0 && finished && toPar != 0)
+            {
+                float size = Mathf.Min(r.width, r.height) - 10f * k;
+                Rect box = new Rect(r.center.x - size * 0.5f, r.center.y - size * 0.5f, size, size);
+                GUI.DrawTexture(box, toPar < 0 ? underParTex : overParTex);
+                if (toPar <= -2 || toPar >= 2)
+                {
+                    // Eagle / double bogey: a second frame inside.
+                    GUI.color = new Color(1f, 1f, 1f, 0.55f);
+                    float b = 2f;
+                    Rect inner = new Rect(box.x + 4f * k, box.y + 4f * k, box.width - 8f * k, box.height - 8f * k);
+                    GUI.DrawTexture(new Rect(inner.x, inner.y, inner.width, b), whiteTexture);
+                    GUI.DrawTexture(new Rect(inner.x, inner.yMax - b, inner.width, b), whiteTexture);
+                    GUI.DrawTexture(new Rect(inner.x, inner.y, b, inner.height), whiteTexture);
+                    GUI.DrawTexture(new Rect(inner.xMax - b, inner.y, b, inner.height), whiteTexture);
+                    GUI.color = Color.white;
+                }
+            }
+            GUI.Label(r, strokes > 0 ? strokes.ToString() : "-", strokes > 0 && !finished ? new GUIStyle(cardCell) { normal = { textColor = muted } } : cardCell);
         }
     }
 }

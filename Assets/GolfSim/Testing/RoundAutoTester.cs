@@ -44,6 +44,62 @@ namespace GolfSimZA.Testing
             catch (Exception ex) { trace.AppendLine("trace failed: " + ex.Message); }
         }
         private float nextActionAt;
+        private int loggedHole = -1;
+        private float waitSince;
+        private bool waitingForAuto;
+        private int autoAdvances;
+        private bool guestTried, guestAdded, guestExistedBefore;
+        private int guestHole = -1, guestIndex = -1;
+        private string savedPlayers;
+        private int[] savedTeams;
+        private const string GuestName = "Test Guest";
+
+        private int FirstHoleOfRound() => Mathf.Clamp(CourseSession.RoundStartHole, 0, 17);
+
+        /// <summary>Nobody has hit yet on this hole.</summary>
+        private bool holeStartsNow()
+        {
+            foreach (int strokes in Get<int[]>("playerHoleStrokes")) if (strokes > 0) return false;
+            return true;
+        }
+
+        private void AddGuest(int hole)
+        {
+            guestTried = true;
+            if (!round.CanAddPlayers) { report.AppendLine("  (add player test skipped: round is full)"); return; }
+            int team = 0;
+            if (round.JoinNeedsTeam)
+            {
+                team = -1;
+                for (int t = 0; t < round.TeamCount; t++)
+                    if (round.TeamSize(t) < round.MaxTeamSize && (team < 0 || round.TeamSize(t) < round.TeamSize(team))) team = t;
+                if (team < 0) { report.AppendLine("  (add player test skipped: every team is full in " + round.FormatName + ")"); return; }
+            }
+            string why = round.AddPlayer(GuestName, team);
+            if (why != null) { problems.Add("ADD PLAYER failed on hole " + (hole + 1) + ": " + why); return; }
+            guestAdded = true;
+            guestHole = hole;
+            guestIndex = round.RoundPlayers.Length - 1;
+            report.AppendLine("  ADD PLAYER: " + GuestName + " joined on hole " + (hole + 1) + (round.JoinNeedsTeam ? " (team " + GameFormats.TeamLetters[team] + ")" : ""));
+            Trace("guest added");
+        }
+
+        /// <summary>The guest has no score before joining and a score on every hole from then on.</summary>
+        private void CheckGuest()
+        {
+            if (!guestAdded) return;
+            var card = Get<List<int[]>>("scorecard");
+            int end = Mathf.Min(card.Count, 18);
+            for (int h = FirstHoleOfRound(); h < end; h++)
+            {
+                int[] sc = card[h];
+                if (sc == null) continue;
+                int v = guestIndex < sc.Length ? sc[guestIndex] : 0;
+                if (h < guestHole && v != 0) problems.Add("ADD PLAYER: guest has a score (" + v + ") on hole " + (h + 1) + " before joining");
+                if (h >= guestHole && v <= 0) problems.Add("ADD PLAYER: guest has no score on hole " + (h + 1) + " after joining");
+            }
+            report.AppendLine("ADD PLAYER check done (guest joined on hole " + (guestHole + 1) + ")");
+        }
         private int shotsThisHole, lastHole = -1, totalShots;
         private float stateSince;
         private string lastState = "";
@@ -70,6 +126,9 @@ namespace GolfSimZA.Testing
         private void Start()
         {
             Application.logMessageReceived += OnLog;
+            savedPlayers = CourseSession.PlayerNames;
+            savedTeams = CourseSession.Teams;
+            guestExistedBefore = GolfSimZA.Players.PlayerRoster.Current.Find(GuestName) != null;
             AppSettings s = AppSettings.Current;
             savedAutoFlyover = s.autoFlyover;
             savedScorecardSeconds = s.scorecardAfterHoleSeconds;
@@ -94,6 +153,8 @@ namespace GolfSimZA.Testing
                 string line = type + ": " + message + (string.IsNullOrEmpty(stack) ? "" : "  @ " + stack.Split('\n')[0]);
                 if (problems.Count < 200) problems.Add(line);
             }
+            else if ((message.StartsWith("[GolfSimZA] Hole ") && message.Contains(" green: ")) || message.StartsWith("[GolfSimZA] Auto putt:") || message.StartsWith("[GolfSimZA] Just off the green:"))
+                report.AppendLine("  " + message.Substring(12));
         }
 
         private T Get<T>(string name)
@@ -181,22 +242,42 @@ namespace GolfSimZA.Testing
                 nextActionAt = Time.unscaledTime + 0.4f;
                 return;
             }
+            // AUTO NEXT HOLE / AUTO NEXT PLAYER: the round must move on by itself within the set time.
+            AppSettings st = AppSettings.Current;
             if (allHoled)
             {
-                LogHole(hole);
-                Trace("advance hole");
-                Call("AdvanceHole");
-                Trace("hole started");
-                nextActionAt = Time.unscaledTime + 0.6f;
+                if (loggedHole != hole) { loggedHole = hole; LogHole(hole); Trace("hole complete - waiting for auto next hole"); waitSince = Time.time; }
+                if (Time.time - waitSince > st.autoNextHoleSeconds + 4f)
+                {
+                    problems.Add("Hole " + (hole + 1) + ": AUTO NEXT HOLE did not start the next hole (waited " + (Time.time - waitSince).ToString("0.0") + " s)");
+                    Call("AdvanceHole");
+                    waitSince = Time.time;
+                }
+                nextActionAt = Time.unscaledTime + 0.2f;
                 return;
             }
             if (waitingNext && shotFinished)
             {
-                Call("AdvancePlayer");
-                Trace("next player");
-                nextActionAt = Time.unscaledTime + 0.4f;
+                if (!waitingForAuto) { waitingForAuto = true; waitSince = Time.time; Trace("waiting for auto next player"); }
+                if (Time.time - waitSince > st.autoNextPlayerSeconds + 4f)
+                {
+                    problems.Add("Hole " + (hole + 1) + ": AUTO NEXT PLAYER did not move on (waited " + (Time.time - waitSince).ToString("0.0") + " s)");
+                    Call("AdvancePlayer");
+                    waitSince = Time.time;
+                }
+                nextActionAt = Time.unscaledTime + 0.2f;
                 return;
             }
+            if (waitingForAuto)
+            {
+                waitingForAuto = false;
+                autoAdvances++;
+                Trace("auto next player");
+            }
+
+            // ADD PLAYER mid round: a guest joins at the start of the round's third hole.
+            if (!guestTried && hole == Get<int>("holeIndex") && hole >= FirstHoleOfRound() + 2 && holeStartsNow())
+                AddGuest(hole);
 
             bool[] holed = Get<bool[]>("playerHoled");
             if (holed[active])
@@ -340,6 +421,8 @@ namespace GolfSimZA.Testing
         private void Finish()
         {
             finished = true;
+            CheckGuest();
+            report.AppendLine("Auto next player moves: " + autoAdvances);
             report.AppendLine();
             report.AppendLine("Result: " + (Call("ResultText") as string));
             report.AppendLine("Total shots hit: " + totalShots);
@@ -364,6 +447,11 @@ namespace GolfSimZA.Testing
                 File.WriteAllText(path, report.ToString());
                 File.WriteAllText(Path.Combine(Application.persistentDataPath, "autoplay-trace.txt"), trace.ToString());
                 File.AppendAllText(Path.Combine(Application.persistentDataPath, "autoplay-all.txt"), report + "\n==========================================\n\n");
+                // A copy in the project's Logs folder as well, so it is easy to find.
+                string logs = Path.Combine(Directory.GetParent(Application.dataPath).FullName, "Logs");
+                Directory.CreateDirectory(logs);
+                File.WriteAllText(Path.Combine(logs, "autoplay-report.txt"), report.ToString());
+                File.WriteAllText(Path.Combine(logs, "autoplay-trace.txt"), trace.ToString());
             } catch (Exception ex) { Debug.LogWarning(ex.Message); }
             Debug.Log("[GolfSimZA] Auto-play finished:\n" + report);
         }
@@ -374,6 +462,12 @@ namespace GolfSimZA.Testing
             s.autoFlyover = savedAutoFlyover;
             s.scorecardAfterHoleSeconds = savedScorecardSeconds;
             s.Save();
+            // The guest was only for the test: the round's players and the roster go back as they were.
+            if (savedPlayers != null) CourseSession.SetPlayers(savedPlayers.Split('|'));
+            CourseSession.Teams = savedTeams;
+            var roster = GolfSimZA.Players.PlayerRoster.Current;
+            var guest = roster.Find(GuestName);
+            if (guest != null && !guestExistedBefore) { roster.players.Remove(guest); roster.Save(); CourseSession.SetPlayers(savedPlayers.Split('|')); }
             PlayerPrefs.SetInt(FlagKey, 0);
             PlayerPrefs.Save();
             Time.timeScale = 1f;

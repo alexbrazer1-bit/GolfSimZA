@@ -68,6 +68,7 @@ namespace GolfSimZA.Core
 
             lastShot.CarryMeters = ballFlightSimulator.CarryMeters;
             lastShot.TotalMeters = ballFlightSimulator.TotalMeters;
+            LaunchMonitorStatus.UpdateShot(lastShot);
         }
 
         private void OnDestroy()
@@ -104,6 +105,7 @@ namespace GolfSimZA.Core
 
             lastShot = shot;
             if (shot.IsValid) TotalShots++;
+            LaunchMonitorStatus.RecordShot(shot);
             shotHistory.Add(shot);
             ballFlightSimulator?.Launch(shot);
             Debug.Log($"[GolfSimZA] Shot: {shot.ClubName}, ball {shot.BallSpeedMps:F1} m/s, club {shot.ClubSpeedMps:F1} m/s, launch {shot.LaunchAngleDeg:F1}°, spin {shot.BackSpinRpm:F0} rpm, R10 carry {shot.CarryMeters:F1} m");
@@ -123,6 +125,7 @@ namespace GolfSimZA.Core
             }
             lastShot = completed;
             shotHistory.ReplaceLast(completed);
+            LaunchMonitorStatus.UpdateShot(completed);
 
             Debug.Log($"[GolfSimZA] Landing: carry {carryMeters:F1} m, total {totalMeters:F1} m, apex {maxHeightMeters:F1} m, flight {flightTimeSeconds:F2} s");
         }

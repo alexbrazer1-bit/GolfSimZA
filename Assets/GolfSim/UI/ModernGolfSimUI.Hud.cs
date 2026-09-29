@@ -6,11 +6,12 @@ using UnityEngine;
 namespace GolfSimZA.UI
 {
     /// <summary>
-    /// Driving range HUD in the style of a tour launch-monitor practice screen:
-    /// header (player, range settings) and shot data tiles top-left, the session panel for the
-    /// selected club bottom-left (average, target hits, every shot), club and target distance at
-    /// the bottom, and on the right a live target view plus a top-down range map with distance
-    /// arcs, side markers, the target circle and every shot of the session.
+    /// Driving range (and MAP MY BAG) HUD in the style of a TrackMan practice screen:
+    /// header (player, range settings) top-left, the session panel for the selected club on the
+    /// left, and bottom-left a compact block of 6 shot data tiles sitting right above the club
+    /// selector (MAP MY BAG adds its 6-shot block above that) so the range stays in view; target
+    /// distance next to the club selector, and on the right a live target view plus a top-down
+    /// range map with distance arcs, side markers, the target circle and every shot of the session.
     /// </summary>
     public sealed partial class ModernGolfSimUI
     {
@@ -173,19 +174,22 @@ namespace GolfSimZA.UI
             DrawWindAt(Mathf.Max(Screen.width * 0.5f - 115f, headerEnd + 12f), m);
             GUI.Label(new Rect(Screen.width * 0.5f - 150f, m + 42f, 300f, 20f), status, new GUIStyle(small) { alignment = TextAnchor.MiddleCenter, normal = { textColor = Color.white } });
 
-            // Shot data tiles, top-left.
-            float tilesBottom = DrawRangeTiles(m, m + 48f, simulator != null ? simulator.LastShot : default(ShotData));
-
-            // Session panel, bottom-left.
-            float sessionW = 244f;
-            DrawSession(new Rect(m, tilesBottom + 10f, sessionW, Screen.height - m - tilesBottom - 10f));
-
-            // Club selector and the target distance, bottom.
+            // Bottom-left stack (TrackMan style): club selector at the bottom, the 6 shot data
+            // tiles right above it, and MAP MY BAG's 6-shot block above those.
             bool clubBar = settings.clubSelectorMode == 0 || (settings.clubSelectorMode == 2 && !flying);
-            float clubX = m + sessionW + 12f;
-            if (clubBar) ClubBar.Draw(clubX, Screen.height - m);
+            float stackTop = Screen.height - m - ClubBar.Height - 8f;
+            stackTop = DrawRangeTiles(m, stackTop, simulator != null ? simulator.LastShot : default(ShotData));
+            if (GolfSimZA.Players.ClubMappingSession.IsActive) stackTop = DrawMapMyBag(m, stackTop - 8f);
+
+            // Session panel: left side, from the header down to the tiles.
+            float sessionW = RangeTilesWidth;
+            float sessionTop = m + 48f;
+            DrawSession(new Rect(m, sessionTop, sessionW, stackTop - 10f - sessionTop));
+
+            // Club selector (drawn last so its club list opens over the tiles) and the target distance.
+            if (clubBar) ClubBar.Draw(m, Screen.height - m);
             else ClubBar.Close();
-            Rect pillRect = new Rect(clubX + (clubBar ? 180f : 0f), Screen.height - m - 44f, 170f, 40f);
+            Rect pillRect = new Rect(m + (clubBar ? 180f : 0f), Screen.height - m - 44f, 170f, 40f);
             GUI.Box(pillRect, "TARGET  " + Units.DistanceText(TargetOrAimDistance()), new GUIStyle(tmChip) { fontSize = 18 });
 
             if (settings.showBallReady && !flying && status == "READY")
@@ -222,29 +226,68 @@ namespace GolfSimZA.UI
             GUI.Label(new Rect(r.x + 44f, r.y, r.width - 52f, r.height), calm ? "NO WIND" : Wind.SpeedText() + "   " + Wind.Describe(forward), new GUIStyle(small) { fontSize = 13, fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleLeft, normal = { textColor = Color.white } });
         }
 
-        /// <summary>Two columns of tiles: orange caption, big white value (the first 8 chosen data tiles).</summary>
-        private float DrawRangeTiles(float x, float y, ShotData shot)
+        private const float RangeTileW = 94f, RangeTileH = 50f, RangeTileGap = 5f;
+        private static float RangeTilesWidth => RangeTileW * 3f + RangeTileGap * 2f;
+
+        /// <summary>
+        /// Compact block of the first 6 chosen data tiles (3 across, 2 rows: orange caption, white
+        /// value) whose bottom edge is at <paramref name="bottom"/>. Returns the block's top edge.
+        /// </summary>
+        private float DrawRangeTiles(float x, float bottom, ShotData shot)
         {
-            const float w = 119f, h = 64f, gap = 6f;
-            if (GUI.Button(new Rect(x, y, 2f * w + gap, 22f), GameOptions.ShowDataTiles ? "HIDE DATA  ▲" : "SHOW DATA  ▼", GolfSimTheme.SmallButton))
-                GameOptions.ShowDataTiles = !GameOptions.ShowDataTiles;
-            y += 28f;
-            if (!GameOptions.ShowDataTiles) return y;
             List<string> ids = ShotDataTiles.Selected;
-            int count = Mathf.Min(8, ids.Count);
-            int rows = (count + 1) / 2;
-            float maxRowsH = Screen.height * 0.42f;
-            float tileH = Mathf.Min(h, (maxRowsH - rows * gap) / Mathf.Max(1, rows));
+            int count = GameOptions.ShowDataTiles ? Mathf.Min(6, ids.Count) : 0;
+            int rows = (count + 2) / 3;
+            float blockH = rows * RangeTileH + Mathf.Max(0, rows - 1) * RangeTileGap;
+            float y = bottom - blockH;
             for (int i = 0; i < count; i++)
             {
                 ShotDataTiles.TileDef def = ShotDataTiles.Find(ids[i]);
                 if (def == null) continue;
-                Rect r = new Rect(x + (i % 2) * (w + gap), y + (i / 2) * (tileH + gap), w, tileH);
+                Rect r = new Rect(x + (i % 3) * (RangeTileW + RangeTileGap), y + (i / 3) * (RangeTileH + RangeTileGap), RangeTileW, RangeTileH);
                 Box(r, tmPanel);
-                GUI.Label(new Rect(r.x, r.y + 5f, r.width, 16f), def.Caption(), tmTileCaption);
-                GUI.Label(new Rect(r.x, r.y + 16f, r.width, r.height - 16f), def.Value(shot), new GUIStyle(tmTileValue) { fontSize = tileH >= 58f ? 26 : 20 });
+                GUI.Label(new Rect(r.x, r.y + 3f, r.width, 14f), def.Caption(), new GUIStyle(tmTileCaption) { fontSize = 10 });
+                GUI.Label(new Rect(r.x, r.y + 14f, r.width, r.height - 14f), def.Value(shot), new GUIStyle(tmTileValue) { fontSize = 20 });
             }
-            return y + rows * (tileH + gap);
+            float toggleY = (count > 0 ? y : bottom) - 34f;
+            if (GUI.Button(new Rect(x, toggleY, RangeTilesWidth, 30f), GameOptions.ShowDataTiles ? "HIDE DATA  ▼" : "SHOW DATA  ▲", GolfSimTheme.SmallButton))
+                GameOptions.ShowDataTiles = !GameOptions.ShowDataTiles;
+            return toggleY;
+        }
+
+        /// <summary>
+        /// MAP MY BAG (6 shots with one club): compact block above the data tiles - player and
+        /// club, the 6 shot boxes (carry), the running average and CANCEL. Returns its top edge.
+        /// </summary>
+        private float DrawMapMyBag(float x, float bottom)
+        {
+            var map = GolfSimZA.Players.ClubMappingSession.Instance;
+            if (map == null) return bottom;
+            float w = RangeTilesWidth;
+            const float cellH = 34f, gap = 5f;
+            float h = 30f + 2f * cellH + gap + 8f + 30f + 8f;
+            Rect r = new Rect(x, bottom - h, w, h);
+            Box(r, tmPanelDark);
+            GUI.color = Orange;
+            GUI.DrawTexture(new Rect(r.x, r.y, r.width, 3f), tmWhite);
+            GUI.color = Color.white;
+            GUI.Label(new Rect(r.x + 8f, r.y + 4f, w - 16f, 22f), GolfSimTheme.Ellipsize("MAP MY BAG  •  " + map.PlayerName.ToUpperInvariant() + "  •  " + map.ClubName.ToUpperInvariant(), tmHeader, w - 16f), new GUIStyle(tmHeader) { fontSize = 13 });
+            float cw = (w - 16f - 2f * gap) / 3f;
+            float cy = r.y + 30f;
+            for (int i = 0; i < GolfSimZA.Players.ClubMappingSession.RequiredShots; i++)
+            {
+                Rect c = new Rect(r.x + 8f + (i % 3) * (cw + gap), cy + (i / 3) * (cellH + gap), cw, cellH);
+                bool done = i < map.ShotCount;
+                Box(c, done ? tmRowActive : tmRow);
+                GUI.Label(new Rect(c.x, c.y + 1f, c.width, 12f), "SHOT " + (i + 1), new GUIStyle(tmMuted) { fontSize = 9 });
+                GUI.Label(new Rect(c.x, c.y + 11f, c.width, c.height - 11f), done ? Units.DistanceText(map.Carry(i), "0.0") : (i == map.ShotCount ? "HIT NOW" : "—"),
+                    new GUIStyle(tmSmall) { fontSize = done ? 14 : 11, normal = { textColor = done ? Color.white : i == map.ShotCount ? Orange : new Color(1f, 1f, 1f, 0.45f) } });
+            }
+            float fy = cy + 2f * cellH + gap + 8f;
+            GUI.Label(new Rect(r.x + 8f, fy, w * 0.6f, 30f), "AVG CARRY  " + (map.ShotCount > 0 ? Units.DistanceText(map.AverageCarry, "0.0") : "—") + "   " + map.ShotCount + "/" + GolfSimZA.Players.ClubMappingSession.RequiredShots,
+                new GUIStyle(tmSmall) { alignment = TextAnchor.MiddleLeft, fontSize = 12 });
+            if (GUI.Button(new Rect(r.xMax - 88f, fy + 2f, 80f, 26f), "CANCEL", GolfSimTheme.SmallButton)) map.Cancel();
+            return r.y;
         }
 
         /// <summary>Session for the selected club: average (total / carry), target hits and every shot.</summary>

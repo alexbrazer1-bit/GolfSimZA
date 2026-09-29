@@ -39,6 +39,7 @@ namespace GolfSimZA.LaunchMonitors.GarminR10
         private volatile bool resetShotStateRequested;
         private float nextHeartbeat;
         private string lastPacketSummary = "None";
+        private string shownPacketSummary;
 
         public string DeviceName => "Garmin Approach R10";
         public bool IsConnected { get; private set; }
@@ -266,6 +267,17 @@ namespace GolfSimZA.LaunchMonitors.GarminR10
             while (shots.TryDequeue(out ShotData shot))
                 ShotReceived?.Invoke(shot);
 
+            // Second screen: receiver / bridge state.
+            LaunchMonitorStatus.DeviceName = DeviceName;
+            LaunchMonitorStatus.Listening = IsListening;
+            LaunchMonitorStatus.ListenPort = listenPort;
+            LaunchMonitorStatus.BridgeConnected = IsConnected;
+            if (lastPacketSummary != shownPacketSummary)
+            {
+                shownPacketSummary = lastPacketSummary;
+                LaunchMonitorStatus.Packet(lastPacketSummary);
+            }
+
             if (sendReadyHeartbeat && IsConnected && client != null && client.Connected && Time.unscaledTime >= nextHeartbeat)
             {
                 SendHeartbeat();
@@ -311,6 +323,10 @@ namespace GolfSimZA.LaunchMonitors.GarminR10
 
                     bool hasBall = ball != null && ball.Speed > 0.01;
                     bool hasClub = club != null && club.Speed > 0.01;
+
+                    // Ready / ball detected flags (heartbeats and shots carry them).
+                    if (options != null && (heartbeat || options.LaunchMonitorIsReady || options.LaunchMonitorBallDetected))
+                        LaunchMonitorStatus.SetReady(options.LaunchMonitorIsReady, options.LaunchMonitorBallDetected);
 
                     if (heartbeat)
                     {
@@ -528,6 +544,7 @@ namespace GolfSimZA.LaunchMonitors.GarminR10
         private void OnDestroy()
         {
             Disconnect();
+            LaunchMonitorStatus.Closed();
         }
     }
 }

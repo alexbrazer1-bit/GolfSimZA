@@ -162,6 +162,8 @@ namespace GolfSimZA.UI
 
         // ------------------------------------------------------------ GAME pages
 
+        private bool screensChanged;
+
         private float GamePage(AppSettings s, float x, float y, float w)
         {
             int units = s.metricUnits ? 0 : 1;
@@ -173,14 +175,53 @@ namespace GolfSimZA.UI
                 s.homeAltitudeMeters = alt;
             Hint(ref y, x, w, "Thinner air flies further. Johannesburg is about 1 750 m. Imported courses use their own altitude.");
 
+            // SCREENS: game monitor and the second screen (R10 status and swing data).
+            Section(ref y, x, w, "SCREENS");
+            int monitors = Mathf.Max(1, DisplaySetup.Monitors.Count);
+            if (monitors > 1)
+            {
+                var names = new string[monitors];
+                for (int i = 0; i < monitors; i++) names[i] = "DISPLAY " + (i + 1);
+                int game = s.gameDisplay >= 0 && s.gameDisplay < monitors ? s.gameDisplay : DisplaySetup.CurrentGameMonitor;
+                if (Choice(ref y, x, w, "PLAY THE GAME ON", names, ref game)) { s.gameDisplay = game; screensChanged = true; }
+                bool second = s.secondScreen;
+                Switch(ref y, x, w, "SECOND SCREEN  (Garmin R10 status and swing data on the other monitor)", ref s.secondScreen);
+                if (second != s.secondScreen) screensChanged = true;
+                if (s.secondScreen)
+                {
+                    if (monitors > 2)
+                    {
+                        // 3 or more monitors: pick which one shows the swing data (never display 1, the game's).
+                        var secondNames = new string[monitors];
+                        secondNames[0] = "AUTO";
+                        for (int i = 1; i < monitors; i++) secondNames[i] = "DISPLAY " + (i + 1);
+                        int pick = s.secondScreenDisplay >= 1 && s.secondScreenDisplay < monitors ? s.secondScreenDisplay : 0;
+                        if (Choice(ref y, x, w, "SECOND SCREEN ON", secondNames, ref pick)) { s.secondScreenDisplay = pick == 0 ? -1 : pick; screensChanged = true; }
+                    }
+                }
+                if (s.secondScreen && game != 0)
+                    Hint(ref y, x, w, "With the second screen on, the game plays on DISPLAY 1 (the Windows main display). To swap them, make the other monitor the main display in Windows Settings → Display.");
+                Switch(ref y, x, w, "ASK WHICH SCREEN TO USE WHEN THE GAME STARTS", ref s.askDisplayOnLaunch);
+                if (screensChanged && Event.current.type == EventType.Repaint)
+                {
+                    screensChanged = false;
+                    s.Save();
+                    DisplaySetup.Apply(true);
+                }
+            }
+            else
+            {
+                Hint(ref y, x, w, "One monitor found. Connect a second monitor to choose the game screen and use the second screen (Garmin R10 status and swing data).");
+            }
+
             int map = s.miniMapRight ? 1 : 0;
             if (Choice(ref y, x, w, "MINI MAP LOCATION", new[] { "LEFT", "RIGHT" }, ref map)) s.miniMapRight = map == 1;
 
-            int rot = s.rotationStyle;
-            if (Choice(ref y, x, w, "PLAYER ROTATION STYLE", new[] { "CLASSIC", "PLAY OUT HOLE", "PUTT OUT" }, ref rot)) s.rotationStyle = rot;
-            Hint(ref y, x, w, rot == 0 ? "Classic: the player furthest from the hole plays next."
-                : rot == 1 ? "Play out hole: each player holes out before the next player tees off."
-                : "Putt out: furthest from the hole plays, but once on the green a player keeps putting until holed.");
+            Hint(ref y, x, w, "Play order: on the tee players hit in order, after that the player furthest from the pin plays next. Play moves on by itself.");
+            float nextPlayer = s.autoNextPlayerSeconds;
+            if (Slider(ref y, x, w, "AUTO NEXT PLAYER AFTER", ref nextPlayer, 0.5f, 10f, nextPlayer.ToString("0.0") + " s", 0.5f)) s.autoNextPlayerSeconds = nextPlayer;
+            float nextHole = s.autoNextHoleSeconds;
+            if (Slider(ref y, x, w, "AUTO NEXT HOLE AFTER", ref nextHole, 1f, 15f, nextHole.ToString("0") + " s", 1f)) s.autoNextHoleSeconds = nextHole;
 
             Switch(ref y, x, w, "AUTO PUTT  (a ball that stops on the green is holed automatically)", ref s.autoPutt);
             if (s.autoPutt)

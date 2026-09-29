@@ -37,11 +37,26 @@ namespace GolfSimZA.Core
         public float rangeGreenWidth = 12f;
         public bool rangeRandomizer;
 
+        // ---------------- SCREENS
+        /// <summary>Monitor the game runs on (0 = display 1, 1 = display 2 ...; -1 = where Windows opens it).</summary>
+        public int gameDisplay = -1;
+        /// <summary>Show the display picker every time the game starts (only with 2 or more monitors).</summary>
+        public bool askDisplayOnLaunch = true;
+        /// <summary>Second screen with the Garmin R10 status and the swing data of the last shot.</summary>
+        public bool secondScreen;
+        /// <summary>Monitor for the second screen (-1 = the other monitor, automatically).</summary>
+        public int secondScreenDisplay = -1;
+
         // ---------------- GAME
         /// <summary>Hole map on the right (true) or the left (false) of the play screen.</summary>
         public bool miniMapRight = true;
-        /// <summary>0 = classic (furthest from the hole plays), 1 = play out hole, 2 = putt out.</summary>
-        public int rotationStyle;
+        /// <summary>
+        /// Seconds after a shot before play moves on to the next player by itself (tee: player order,
+        /// then the player furthest from the pin).
+        /// </summary>
+        public float autoNextPlayerSeconds = 2.5f;
+        /// <summary>Seconds after everyone has holed out before the next hole starts by itself.</summary>
+        public float autoNextHoleSeconds = 3f;
         /// <summary>Auto putt: a ball that stops on the green is holed in 1 or 2 putts inside these distances.</summary>
         public bool autoPutt;
         public float autoPuttOneMeters = 3.0f;

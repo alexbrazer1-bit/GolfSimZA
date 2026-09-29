@@ -18,7 +18,7 @@ namespace GolfSimZA.UI
         private const string HomeScene = "GolfSimZA_0_5_CourseSelection";
         private const string PlayersScene = "GolfSimZA_0_5_Players";
 
-        private enum Page { Grid, Settings, Shortcuts, AutoPutt, ConfirmEnd, ConfirmQuit }
+        private enum Page { Grid, Settings, Shortcuts, AutoPutt, AddPlayer, ConfirmEnd, ConfirmQuit }
 
         private bool open;
         private Page page;
@@ -118,6 +118,7 @@ namespace GolfSimZA.UI
                 case Page.Grid: DrawGrid(body); break;
                 case Page.Shortcuts: DrawShortcuts(body); break;
                 case Page.AutoPutt: DrawAutoPutt(body); break;
+                case Page.AddPlayer: DrawAddPlayer(body); break;
                 case Page.ConfirmEnd: DrawConfirm(body, OnRange ? "Leave the driving range?" : (CourseSession.PracticeMode ? "End practice and go home?" : "End this round? Finished holes are saved - turn on RESUME ROUND in Round Settings to carry on later."), () => Load(HomeScene)); break;
                 case Page.ConfirmQuit: DrawConfirm(body, "Quit GolfSim ZA?", Quit); break;
             }
@@ -134,6 +135,7 @@ namespace GolfSimZA.UI
                 case Page.Settings: return "SETTINGS";
                 case Page.Shortcuts: return "SHORTCUTS";
                 case Page.AutoPutt: return "AUTO PUTT";
+                case Page.AddPlayer: return "ADD PLAYER";
                 case Page.ConfirmEnd: return OnRange ? "LEAVE RANGE" : "END ROUND";
                 case Page.ConfirmQuit: return "QUIT";
                 default: return "GAME MENU";
@@ -145,7 +147,7 @@ namespace GolfSimZA.UI
             bool round = !OnRange;
             float gap = 8f;
             float cw = (body.width - gap) * 0.5f;
-            float ch = Mathf.Min(62f, (body.height - 110f - gap * 6f) / 7f);
+            float ch = Mathf.Min(62f, (body.height - 110f - gap * 7f) / 8f);
             int i = 0;
 
             if (Cell(body, ref i, cw, ch, gap, "DATA TILES", GameOptions.ShowDataTiles ? tileOn : tile)) GameOptions.ShowDataTiles = !GameOptions.ShowDataTiles;
@@ -164,6 +166,9 @@ namespace GolfSimZA.UI
             else if (Cell(body, ref i, cw, ch, gap, "PLAYERS & BAGS", tile)) Load(PlayersScene);
             AppSettings st = AppSettings.Current;
             if (Cell(body, ref i, cw, ch, gap, "AUTO PUTT\n" + (st.autoPutt ? "ON  •  " + Units.Distance(st.autoPuttOneMeters).ToString("0.#") + " / " + Units.Distance(st.autoPuttTwoMeters).ToString("0.#") + " " + Units.DistanceUnit : "OFF"), round ? (st.autoPutt ? tileOn : tile) : tileOff) && round) page = Page.AutoPutt;
+            RoundGameplayUI roundUi = RoundGameplayUI.Current;
+            bool canAdd = round && roundUi != null && roundUi.CanAddPlayers;
+            if (Cell(body, ref i, cw, ch, gap, "ADD PLAYER\n(join this round)", canAdd ? tile : tileOff) && canAdd) { OpenAddPlayer(); }
             if (Cell(body, ref i, cw, ch, gap, "RESUME", tile)) SetOpen(false);
 
             float y = body.y + Mathf.Ceil(i / 2f) * (ch + gap) + 6f;
@@ -244,6 +249,96 @@ namespace GolfSimZA.UI
             GUI.enabled = true;
             if (changed) s.Save();
             if (GUI.Button(new Rect(body.x, body.yMax - 44f, body.width, 44f), "BACK", GolfSimTheme.Button)) page = Page.Grid;
+        }
+
+        // ---------------------------------------------------------------- ADD PLAYER (mid round)
+
+        private string newPlayerName = "";
+        private int joinTeam;
+        private string addMessage;
+        private Vector2 addScroll;
+
+        private void OpenAddPlayer()
+        {
+            newPlayerName = "";
+            addMessage = null;
+            joinTeam = 0;
+            RoundGameplayUI r = RoundGameplayUI.Current;
+            if (r != null && r.JoinNeedsTeam)
+            {
+                // Default: the smallest team.
+                for (int t = 1; t < r.TeamCount; t++) if (r.TeamSize(t) < r.TeamSize(joinTeam)) joinTeam = t;
+            }
+            page = Page.AddPlayer;
+        }
+
+        /// <summary>A golfer joins the round being played: pick a saved player or type a new name (team formats: pick the team).</summary>
+        private void DrawAddPlayer(Rect body)
+        {
+            RoundGameplayUI round = RoundGameplayUI.Current;
+            if (round == null) { page = Page.Grid; return; }
+            string[] playing = round.RoundPlayers;
+            float y = body.y;
+            GUI.Label(new Rect(body.x, y, body.width, 22f), playing.Length + " of " + CourseSession.MaxPlayers + " players  •  " + round.FormatName.ToUpperInvariant(), new GUIStyle(GolfSimTheme.Label) { normal = { textColor = GolfSimTheme.Gold } });
+            y += 28f;
+
+            if (round.JoinNeedsTeam)
+            {
+                GUI.Label(new Rect(body.x, y, body.width, 20f), "JOIN TEAM", GolfSimTheme.Label);
+                y += 22f;
+                float tw = (body.width - 6f * (round.TeamCount - 1)) / Mathf.Max(1, round.TeamCount);
+                for (int t = 0; t < round.TeamCount; t++)
+                {
+                    bool full = round.TeamSize(t) >= round.MaxTeamSize;
+                    string label = "TEAM " + GameFormats.TeamLetters[t] + "  (" + round.TeamSize(t) + "/" + round.MaxTeamSize + ")";
+                    GUI.enabled = !full;
+                    if (GUI.Button(new Rect(body.x + t * (tw + 6f), y, tw, 38f), label, joinTeam == t ? GolfSimTheme.TabActive : GolfSimTheme.Button)) joinTeam = t;
+                    GUI.enabled = true;
+                }
+                y += 48f;
+            }
+
+            GUI.Label(new Rect(body.x, y, body.width, 20f), "NEW PLAYER NAME", GolfSimTheme.Label);
+            y += 22f;
+            GUI.SetNextControlName("GolfSimZA_NewPlayer");
+            newPlayerName = GUI.TextField(new Rect(body.x, y, body.width - 110f, 40f), newPlayerName ?? "", 24, GolfSimTheme.TextField);
+            if (GUI.Button(new Rect(body.xMax - 102f, y, 102f, 40f), "ADD", GolfSimTheme.AccentButton)) Join(round, newPlayerName);
+            y += 50f;
+
+            // Saved players who are not in this round.
+            var others = new System.Collections.Generic.List<string>();
+            foreach (PlayerProfile p in PlayerRoster.Current.players)
+            {
+                bool inRound = false;
+                foreach (string n in playing) if (string.Equals(n, p.name, System.StringComparison.OrdinalIgnoreCase)) inRound = true;
+                if (!inRound) others.Add(p.name);
+            }
+            GUI.Label(new Rect(body.x, y, body.width, 20f), others.Count > 0 ? "OR PICK A SAVED PLAYER" : "NO OTHER SAVED PLAYERS", GolfSimTheme.Label);
+            y += 24f;
+            float listBottom = body.yMax - 100f;
+            Rect view = new Rect(body.x, y, body.width, Mathf.Max(44f, listBottom - y));
+            Rect content = new Rect(0f, 0f, body.width - 18f, others.Count * 46f);
+            addScroll = GUI.BeginScrollView(view, addScroll, content);
+            for (int i = 0; i < others.Count; i++)
+            {
+                Rect b = new Rect(0f, i * 46f, content.width, 40f);
+                if (GUI.Button(b, GUIContent.none, GolfSimTheme.Button)) { Join(round, others[i]); break; }
+                GUI.color = PlayerRoster.ColorFor(others[i]);
+                GUI.DrawTexture(new Rect(b.x + 10f, b.y + 10f, 6f, 20f), Texture2D.whiteTexture);
+                GUI.color = Color.white;
+                GUI.Label(new Rect(b.x + 26f, b.y, b.width - 30f, b.height), others[i].ToUpperInvariant(), new GUIStyle(GolfSimTheme.Label) { alignment = TextAnchor.MiddleLeft, fontSize = 15 });
+            }
+            GUI.EndScrollView();
+
+            if (!string.IsNullOrEmpty(addMessage))
+                GUI.Label(new Rect(body.x, body.yMax - 94f, body.width, 42f), addMessage, new GUIStyle(GolfSimTheme.Label) { wordWrap = true, normal = { textColor = new Color(1f, 0.55f, 0.45f) } });
+            if (GUI.Button(new Rect(body.x, body.yMax - 44f, body.width, 44f), "BACK", GolfSimTheme.Button)) page = Page.Grid;
+        }
+
+        private void Join(RoundGameplayUI round, string name)
+        {
+            addMessage = round.AddPlayer(name, joinTeam);
+            if (addMessage == null) SetOpen(false);
         }
 
         private static bool Stepper(Rect r, string text, out int direction)
