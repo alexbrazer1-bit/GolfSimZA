@@ -153,7 +153,9 @@ namespace GolfSimZA.UI
             string tee = PickTee(e);
             int holes = Mathf.Clamp(Mathf.Min(roundHoles, e.Holes), 1, 18);
             if (e.Holes < 18 && roundHoles == 18) holes = e.Holes;
-            PlayerRoster.Current.ApplyToSession();
+            // Players are chosen fresh in Round Settings for every course (nothing carried over from home).
+            CourseSession.SetPlayers(new string[0]);
+            CourseSession.Teams = null;
             CourseSession.PracticeMode = false;
             CourseSession.SetSession(e.Name, tee, holes);
             CourseSession.SetCourse(e.Id, e.Demo ? null : e.Tees);
@@ -191,7 +193,7 @@ namespace GolfSimZA.UI
 
         private static void OpenBag(string playerName)
         {
-            PlayerPrefs.SetString("GolfSimZA.OpenBagFor", playerName);
+            PlayerPrefs.SetString("GolfSimZA.OpenBagFor", playerName ?? "");
             PlayerPrefs.SetInt("GolfSimZA.BagReturnHome", 1);
             PlayerPrefs.Save();
             SceneManager.LoadScene("GolfSimZA_0_5_Players");
@@ -286,8 +288,7 @@ namespace GolfSimZA.UI
 
             GUI.Label(new Rect(heroRect.x + 40f, heroRect.y + 30f, 700f, 60f), "WELCOME", new GUIStyle(GolfSimTheme.Title) { fontSize = 52 });
             GUI.Label(new Rect(heroRect.x + 44f, heroRect.y + 92f, 700f, 26f), "Your home course, your swing, your numbers.", new GUIStyle(GolfSimTheme.Heading) { fontStyle = FontStyle.Normal });
-            string players = string.Join(",  ", Array.ConvertAll(PlayerRoster.Current.Selected.ToArray(), p => p.name));
-            GUI.Label(new Rect(heroRect.x + 44f, heroRect.y + 124f, 900f, 22f), "Playing next:  " + players, GolfSimTheme.Label);
+            GUI.Label(new Rect(heroRect.x + 44f, heroRect.y + 124f, 900f, 22f), "Pick a course, then choose who plays and the format in Round Settings.", GolfSimTheme.Label);
 
             string[] names = { "LOCAL MATCH", "PRACTICE", "MAP MY BAG", "IMPORT COURSES" };
             string[] subs = { "Play a full round", "Range & on-course practice", "Six-shot club distances", "Add courses from a folder" };
@@ -330,7 +331,7 @@ namespace GolfSimZA.UI
             {
                 case 0: screen = Screen_.LocalMatch; search = ""; break;
                 case 1: screen = Screen_.Practice; break;
-                case 2: OpenBag(PlayerRoster.Current.Selected[0].name); break;
+                case 2: OpenBag(""); break; // choose the player first
                 case 3: screen = Screen_.Import; importPanel.Open(); break;
             }
         }
@@ -414,7 +415,7 @@ namespace GolfSimZA.UI
                 if (GUI.Button(new Rect(x, y, w * 0.5f - 2f, 40f), "9 HOLES", roundHoles == 9 ? GolfSimTheme.TabActive : GolfSimTheme.Button)) roundHoles = 9;
                 if (GUI.Button(new Rect(x + w * 0.5f + 2f, y, w * 0.5f - 2f, 40f), "18 HOLES", roundHoles == 18 ? GolfSimTheme.TabActive : GolfSimTheme.Button)) roundHoles = 18;
                 y += 56f;
-                GUI.Label(new Rect(x, y, w, 60f), "Players: " + string.Join(", ", Array.ConvertAll(PlayerRoster.Current.Selected.ToArray(), p => p.name)), GolfSimTheme.Body);
+                GUI.Label(new Rect(x, y, w, 60f), "After you pick a course you choose the players (up to " + PlayerRoster.MaxPlayersInRound + "), teams and the format.", GolfSimTheme.Body);
             }
             else
             {

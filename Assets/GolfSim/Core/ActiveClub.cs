@@ -201,6 +201,20 @@ namespace GolfSimZA.Core
             return 0;
         }
 
+        /// <summary>
+        /// Expected carry of a club for the current player: their mapped carry (MAP MY BAG) when
+        /// there is one, otherwise a typical amateur carry from the loft. 0 for the putter.
+        /// </summary>
+        public static float ExpectedCarry(string clubName)
+        {
+            if (string.IsNullOrWhiteSpace(clubName) || IsPutter(clubName)) return 0f;
+            GolfBagProfile profile = GolfBagProfile.Load(Player);
+            int index = profile.FindClubIndex(clubName);
+            if (index >= 0 && profile.CarryMeters[index] > 1f) return profile.CarryMeters[index];
+            float loft = index >= 0 ? profile.Lofts[index] : LoftOf(clubName);
+            return Mathf.Clamp(215f - (loft - 10f) * 3.1f, 35f, 230f);
+        }
+
         public static bool IsPutter(string clubName)
         {
             return !string.IsNullOrEmpty(clubName) && clubName.IndexOf("putter", StringComparison.OrdinalIgnoreCase) >= 0;

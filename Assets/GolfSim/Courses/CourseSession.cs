@@ -18,6 +18,33 @@ namespace GolfSimZA.Courses
         private const string PracticeKey = "GolfSimZA.PracticeMode";
         private const string StartHoleKey = "GolfSimZA.RoundStartHole";
         private const string CourseHolesKey = "GolfSimZA.CourseHoles";
+        private const string TeamsKey = "GolfSimZA.Teams";
+
+        /// <summary>A round is for up to this many players (every screen and the round itself enforce it).</summary>
+        public const int MaxPlayers = 8;
+
+        /// <summary>Team (0 = A .. 3 = D) of each round player, in the order of PlayerNames. Empty when not set.</summary>
+        public static int[] Teams
+        {
+            get
+            {
+                string saved = PlayerPrefs.GetString(TeamsKey, "");
+                if (string.IsNullOrEmpty(saved)) return new int[0];
+                string[] parts = saved.Split('|');
+                var teams = new int[parts.Length];
+                for (int i = 0; i < parts.Length; i++)
+                    teams[i] = int.TryParse(parts[i], out int t) ? Mathf.Clamp(t, 0, GameFormats.MaxTeams - 1) : 0;
+                return teams;
+            }
+            set
+            {
+                if (value == null || value.Length == 0) { PlayerPrefs.DeleteKey(TeamsKey); PlayerPrefs.Save(); return; }
+                var parts = new string[value.Length];
+                for (int i = 0; i < value.Length; i++) parts[i] = Mathf.Clamp(value[i], 0, GameFormats.MaxTeams - 1).ToString();
+                PlayerPrefs.SetString(TeamsKey, string.Join("|", parts));
+                PlayerPrefs.Save();
+            }
+        }
 
         /// <summary>First hole of the round, 0-based (9 = back nine).</summary>
         public static int RoundStartHole => Mathf.Max(0, PlayerPrefs.GetInt(StartHoleKey, 0));
@@ -97,7 +124,8 @@ namespace GolfSimZA.Courses
 
         public static void SetPlayers(string[] names)
         {
-            PlayerPrefs.SetString(PlayersKey, string.Join("|", names));
+            if (names != null && names.Length > MaxPlayers) System.Array.Resize(ref names, MaxPlayers);
+            PlayerPrefs.SetString(PlayersKey, string.Join("|", names ?? new string[0]));
             PlayerPrefs.Save();
         }
     }

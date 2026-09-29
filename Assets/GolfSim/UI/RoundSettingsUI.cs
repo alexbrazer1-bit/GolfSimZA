@@ -9,9 +9,11 @@ using UnityEngine.SceneManagement;
 namespace GolfSimZA.UI
 {
     /// <summary>
-    /// ROUND SETTINGS for a Local Match: PLAYERS (up to 8 player tiles with tees and colour),
-    /// MATCH SETTINGS (game mode, pins, tees, gimme, mulligans, resume) and HOLES
-    /// (18 / front 9 / back 9). PLAY starts the round; HEAD TO THE RANGE goes to the range.
+    /// ROUND SETTINGS for a Local Match: PLAYERS (up to 8 player tiles with tees, colour and -
+    /// in team formats - the team), MATCH SETTINGS (format with its full definition, pins, tees,
+    /// gimme, mulligans, auto putt with the 1-putt / 2-putt circles, resume) and HOLES
+    /// (18 / front 9 / back 9). Players are chosen here for every course (nothing is carried over
+    /// from the home screen). PLAY starts the round; HEAD TO THE RANGE goes to the range.
     /// </summary>
     public sealed class RoundSettingsUI : MonoBehaviour
     {
@@ -19,7 +21,7 @@ namespace GolfSimZA.UI
         private static readonly string[] TabNames = { "PLAYERS", "MATCH SETTINGS", "HOLES" };
 
         private string[] tees = { "Red", "White", "Blue", "Black" };
-        private readonly string[] gameModes = { "Stroke Play", "Match Play" };
+        private readonly string[] gameModes = GameFormats.Names;
         private readonly string[] pins = { "Easy", "Standard", "Tournament" };
         private readonly string[] gimmies = { "Off", "1 m", "2 m", "3 m" };
         private readonly string[] mulligans = { "Off", "1", "2", "3", "Unlimited" };
@@ -30,6 +32,11 @@ namespace GolfSimZA.UI
         private bool resumeRound;
 
         private readonly List<string> roundPlayers = new List<string>();
+        /// <summary>Team (0 = A .. 3 = D) of each round player (team formats).</summary>
+        private readonly List<int> roundTeams = new List<int>();
+        private Vector2 matchScroll;
+        private GUIStyle defStyle, defHead;
+        private GameFormatInfo Format => GameFormats.All[Mathf.Clamp(selectedGameMode, 0, GameFormats.All.Length - 1)];
         private int pickerSlot = -2; // -2 closed, -1 add, >= 0 replace that slot
         private string newName = "";
         private string message = "";
@@ -43,7 +50,7 @@ namespace GolfSimZA.UI
         {
             tees = CourseSession.AvailableTees;
             selectedTee = Mathf.Max(0, Array.IndexOf(tees, CourseSession.TeeName));
-            selectedGameMode = Mathf.Max(0, Array.IndexOf(gameModes, CourseSession.GameMode));
+            selectedGameMode = GameFormats.IndexOf(CourseSession.GameMode);
             selectedPins = Mathf.Max(0, Array.IndexOf(pins, CourseSession.PinSetting));
             selectedGimmie = Mathf.Max(0, Array.IndexOf(gimmies, CourseSession.GimmieSetting));
             int m = Array.IndexOf(mulligans, CourseSession.MulliganSetting);
@@ -52,8 +59,16 @@ namespace GolfSimZA.UI
 
             course = CourseSession.IsImportedCourse ? CourseLibrary.Get(CourseSession.CourseId) : null;
 
-            foreach (PlayerProfile p in PlayerRoster.Current.Selected) roundPlayers.Add(p.name);
-            if (roundPlayers.Count == 0) roundPlayers.Add(PlayerRoster.Current.players[0].name);
+            // Only the players already chosen for this course (empty when a course was just picked).
+            int[] savedTeams = CourseSession.Teams;
+            string[] names = (CourseSession.PlayerNames ?? "").Split(new[] { '|' }, StringSplitOptions.RemoveEmptyEntries);
+            for (int i = 0; i < names.Length && roundPlayers.Count < PlayerRoster.MaxPlayersInRound; i++)
+            {
+                if (PlayerRoster.Current.Find(names[i]) == null) continue;
+                roundPlayers.Add(PlayerRoster.Current.Find(names[i]).name);
+                roundTeams.Add(i < savedTeams.Length ? savedTeams[i] : GameFormats.DefaultTeams(i + 1)[i]);
+            }
+            if (roundPlayers.Count == 0) message = "Add the players for this round (tap +).";
         }
 
         private void EnsureStyles()
@@ -70,6 +85,8 @@ namespace GolfSimZA.UI
             plusStyle = new GUIStyle(GolfSimTheme.Button) { fontSize = 44, fixedHeight = 0, normal = { textColor = new Color(1f, 1f, 1f, 0.75f) } };
             cellStyle = new GUIStyle(GolfSimTheme.Center) { fontSize = 13 };
             cellHead = new GUIStyle(GolfSimTheme.Label) { alignment = TextAnchor.MiddleCenter, fontSize = 11 };
+            defStyle = new GUIStyle(GolfSimTheme.Body) { wordWrap = true, fontSize = 14 };
+            defHead = new GUIStyle(GolfSimTheme.Label) { fontSize = 12, normal = { textColor = GolfSimTheme.Gold } };
         }
 
         private void OnGUI()
@@ -98,7 +115,7 @@ namespace GolfSimZA.UI
                     pickerSlot = -2;
                 }
             y += 50f;
-            GUI.Label(new Rect(margin, y, width, 22f), CourseSession.CourseName + "  •  " + HolesText() + "  •  " + gameModes[selectedGameMode], GolfSimTheme.Subtitle);
+            GUI.Label(new Rect(margin, y, width, 22f), CourseSession.CourseName + "  •  " + HolesText() + "  •  " + gameModes[selectedGameMode] + "  •  " + roundPlayers.Count + (roundPlayers.Count == 1 ? " player" : " players"), GolfSimTheme.Subtitle);
             y += 30f;
 
             Rect body = new Rect(margin, y, width, Screen.height - y - 90f);
@@ -127,7 +144,7 @@ namespace GolfSimZA.UI
             const int cols = 4, rows = 2;
             float gap = 12f;
             float tw = (r.width - gap * (cols - 1)) / cols;
-            float th = Mathf.Min(190f, (r.height - gap * (rows - 1)) / rows);
+            float th = Mathf.Min(Format.Team ? 232f : 190f, (r.height - gap * (rows - 1)) / rows);
             for (int i = 0; i < cols * rows; i++)
             {
                 Rect t = new Rect(r.x + (i % cols) * (tw + gap), r.y + (i / cols) * (th + gap), tw, th);
@@ -138,7 +155,14 @@ namespace GolfSimZA.UI
                 }
                 else GUI.Box(t, GUIContent.none, GolfSimTheme.Card);
             }
-            GUI.Label(new Rect(r.x, r.y + (th + gap) * 2f + 4f, r.width, 20f), "Up to " + PlayerRoster.MaxPlayersInRound + " players. Tap a name to swap the player. Colours show beside each name on the course.", hintStyle);
+            string teamHint = Format.Team ? "  " + Format.Name + ": teams of " + (Format.MinTeamSize == Format.MaxTeamSize ? Format.MinTeamSize.ToString() : Format.MinTeamSize + "-" + Format.MaxTeamSize) + " - set each player's TEAM on the tile." : "";
+            GUI.Label(new Rect(r.x, r.y + (th + gap) * 2f + 4f, r.width - 190f, 36f), "Up to " + PlayerRoster.MaxPlayersInRound + " players. Tap a name to swap the player. Colours show beside each name on the course." + teamHint, hintStyle);
+            if (Format.Team && GUI.Button(new Rect(r.xMax - 180f, r.y + (th + gap) * 2f + 2f, 180f, 34f), "AUTO TEAMS", GolfSimTheme.SmallButton))
+            {
+                int[] t = GameFormats.DefaultTeams(roundPlayers.Count, Mathf.Max(2, Format.MinTeamSize));
+                for (int i = 0; i < roundTeams.Count; i++) roundTeams[i] = t[i];
+                SaveDraft();
+            }
         }
 
         private void DrawPlayerTile(Rect t, int slot, PlayerRoster roster)
@@ -155,9 +179,7 @@ namespace GolfSimZA.UI
 
             float x = t.x + 12f, w = t.width - 24f, y = t.y + 16f;
             if (GUI.Button(new Rect(x, y, w - 40f, 36f), "  " + name.ToUpperInvariant() + "  ▾", GolfSimTheme.Button)) { pickerSlot = slot; newName = ""; }
-            GUI.enabled = roundPlayers.Count > 1;
-            if (GUI.Button(new Rect(x + w - 36f, y, 36f, 36f), "✕", GolfSimTheme.SmallButton)) { roundPlayers.RemoveAt(slot); GUI.enabled = true; return; }
-            GUI.enabled = true;
+            if (GUI.Button(new Rect(x + w - 36f, y, 36f, 36f), "✕", GolfSimTheme.SmallButton)) { roundPlayers.RemoveAt(slot); roundTeams.RemoveAt(slot); SaveDraft(); return; }
             y += 44f;
 
             // Tees: "MATCH TEES" or one of the course's tees for this player.
@@ -184,6 +206,21 @@ namespace GolfSimZA.UI
             GUI.DrawTexture(new Rect(t.center.x - 56f, y + 9f, 16f, 16f), swatch);
             GUI.color = Color.white;
             y += 42f;
+
+            // Team (team formats only).
+            if (Format.Team)
+            {
+                int team = roundTeams[slot];
+                if (Arrows(new Rect(x, y, w, 34f), "TEAM " + GameFormats.TeamLetters[team], out int tdir))
+                {
+                    roundTeams[slot] = (team + tdir + GameFormats.MaxTeams) % GameFormats.MaxTeams;
+                    SaveDraft();
+                }
+                GUI.color = GameFormats.TeamColors[roundTeams[slot]];
+                GUI.DrawTexture(new Rect(t.center.x - 50f, y + 9f, 16f, 16f), swatch);
+                GUI.color = Color.white;
+                y += 42f;
+            }
 
             bool left = p != null && p.leftHanded;
             if (y + 30f <= t.yMax && GUI.Button(new Rect(x, y, w, 30f), left ? "LEFT HANDED" : "RIGHT HANDED", GolfSimTheme.SmallButton) && p != null)
@@ -242,9 +279,16 @@ namespace GolfSimZA.UI
 
         private void UsePlayer(string name)
         {
+            if (roundPlayers.Exists(n => string.Equals(n, name, StringComparison.OrdinalIgnoreCase))) { pickerSlot = -2; return; }
             if (pickerSlot >= 0 && pickerSlot < roundPlayers.Count) roundPlayers[pickerSlot] = name;
-            else if (roundPlayers.Count < PlayerRoster.MaxPlayersInRound) roundPlayers.Add(name);
+            else if (roundPlayers.Count < PlayerRoster.MaxPlayersInRound)
+            {
+                roundPlayers.Add(name);
+                roundTeams.Add(NextTeam());
+                message = "";
+            }
             else message = "A round has up to " + PlayerRoster.MaxPlayersInRound + " players.";
+            SaveDraft();
             pickerSlot = -2;
         }
 
@@ -253,20 +297,106 @@ namespace GolfSimZA.UI
         private void DrawMatch(Rect r)
         {
             float gap = 14f;
-            float cw = (r.width - gap * 2f) / 3f, ch = 112f;
-            SettingCard(new Rect(r.x, r.y, cw, ch), "GAME MODE", gameModes, ref selectedGameMode,
-                selectedGameMode == 1 ? (roundPlayers.Count >= 2 ? "Lowest score wins each hole" : "Needs 2+ players - plays as stroke play") : "Total strokes over the round");
-            SettingCard(new Rect(r.x + cw + gap, r.y, cw, ch), "MATCH TEES", tees, ref selectedTee, "Players on MATCH TEES use these");
-            SettingCard(new Rect(r.x + (cw + gap) * 2f, r.y, cw, ch), "PINS", pins, ref selectedPins, "Pin position on every green");
-            float y2 = r.y + ch + gap;
-            SettingCard(new Rect(r.x, y2, cw, ch), "GIMME / AUTO PUTT", gimmies, ref selectedGimmie, "Balls this close are holed (+1 stroke)");
-            SettingCard(new Rect(r.x + cw + gap, y2, cw, ch), "MULLIGANS", mulligans, ref selectedMulligan, "Per player per round (Menu → MULLIGAN)");
-            ResumeCard(new Rect(r.x + (cw + gap) * 2f, y2, cw, ch));
-            if (GUI.Button(new Rect(r.x, y2 + ch + gap, 260f, 42f), "RECOMMENDED SETTINGS", GolfSimTheme.Button))
+            float innerW = r.width - 20f;
+            float cw = (innerW - gap * 2f) / 3f, ch = 112f;
+            float defH = 200f, puttH = 150f;
+            float contentH = ch + gap + defH + gap + ch + gap + puttH + gap + 110f;
+            matchScroll = GUI.BeginScrollView(r, matchScroll, new Rect(0, 0, innerW, contentH));
+            float y = 0f;
+
+            // Row 1: format, match tees, pins.
+            int before = selectedGameMode;
+            SettingCard(new Rect(0, y, cw, ch), "FORMAT", gameModes, ref selectedGameMode, Format.Short);
+            if (before != selectedGameMode && Format.Team && !GameFormats.All[before].Team)
+            {
+                int[] t = GameFormats.DefaultTeams(roundPlayers.Count, Mathf.Max(2, Format.MinTeamSize));
+                for (int i = 0; i < roundTeams.Count; i++) roundTeams[i] = t[i];
+            }
+            SettingCard(new Rect(cw + gap, y, cw, ch), "MATCH TEES", tees, ref selectedTee, "Players on MATCH TEES use these");
+            SettingCard(new Rect((cw + gap) * 2f, y, cw, ch), "PINS", pins, ref selectedPins, "Pin position on every green");
+            y += ch + gap;
+
+            // Row 2: the chosen format explained.
+            DrawDefinition(new Rect(0, y, innerW, defH));
+            y += defH + gap;
+
+            // Row 3: gimme, mulligans, resume.
+            SettingCard(new Rect(0, y, cw, ch), "GIMME", gimmies, ref selectedGimmie, "Balls this close are holed (+1 stroke)");
+            SettingCard(new Rect(cw + gap, y, cw, ch), "MULLIGANS", mulligans, ref selectedMulligan, "Per player per round (Menu → MULLIGAN)");
+            ResumeCard(new Rect((cw + gap) * 2f, y, cw, ch));
+            y += ch + gap;
+
+            // Row 4: auto putt and the putt circles.
+            DrawAutoPutt(new Rect(0, y, innerW, puttH));
+            y += puttH + gap;
+
+            if (GUI.Button(new Rect(0, y, 260f, 42f), "RECOMMENDED SETTINGS", GolfSimTheme.Button))
             {
                 selectedGameMode = 0; selectedPins = 1; selectedGimmie = 1; selectedMulligan = 4; resumeRound = false;
             }
-            GUI.Label(new Rect(r.x, y2 + ch + gap + 52f, r.width, 40f), "Wind, green speed, fairway firmness, auto putt and player rotation are in SETTINGS → GAME.", hintStyle);
+            GUI.Label(new Rect(0, y + 52f, innerW, 40f), "Wind, green speed, fairway firmness and player rotation are in SETTINGS → GAME.", hintStyle);
+            GUI.EndScrollView();
+        }
+
+        /// <summary>How the selected format works, how it is scored and why to play it.</summary>
+        private void DrawDefinition(Rect r)
+        {
+            GameFormatInfo f = Format;
+            GUI.Box(r, GUIContent.none, GolfSimTheme.Card);
+            float x = r.x + 18f, w = r.width - 36f, y = r.y + 12f;
+            GUI.Label(new Rect(x, y, w, 26f), f.Name.ToUpperInvariant() + (f.Team ? "   •   TEAM FORMAT" : "   •   INDIVIDUAL"), GolfSimTheme.Heading);
+            y += 30f;
+            float colW = (w - 24f) / 3f;
+            string[] heads = { "HOW IT WORKS", "SCORING", "WHY PLAY IT" };
+            string[] texts = { f.HowItWorks, f.Scoring, f.WhyPlay };
+            for (int i = 0; i < 3; i++)
+            {
+                float cx = x + i * (colW + 12f);
+                GUI.Label(new Rect(cx, y, colW, 18f), heads[i], defHead);
+                GUI.Label(new Rect(cx, y + 20f, colW, r.yMax - y - 26f), texts[i], defStyle);
+            }
+            string problem = GameFormats.Problem(f, roundPlayers.Count, roundTeams.ToArray());
+            if (problem != null)
+                GUI.Label(new Rect(x, r.yMax - 24f, w, 20f), "⚠ " + problem, new GUIStyle(hintStyle) { normal = { textColor = GolfSimTheme.Warning } });
+        }
+
+        /// <summary>AUTO PUTT: on / off, the 1-putt and 2-putt circle sizes and what happens outside them.</summary>
+        private void DrawAutoPutt(Rect r)
+        {
+            AppSettings s = AppSettings.Current;
+            GUI.Box(r, GUIContent.none, GolfSimTheme.Card);
+            float x = r.x + 16f, y = r.y + 12f;
+            GUI.Label(new Rect(x, y, 400f, 18f), "AUTO PUTT", GolfSimTheme.Label);
+            GUI.Label(new Rect(x + 120f, y, r.width - 150f, 18f), "A ball that stops on the green is putted for you: inside the gold circle 1 putt, inside the white circle 2 putts.", hintStyle);
+            y += 28f;
+            bool changed = false;
+            if (GUI.Button(new Rect(x, y, 90f, 38f), s.autoPutt ? "ON" : "OFF", s.autoPutt ? GolfSimTheme.AccentButton : GolfSimTheme.Button)) { s.autoPutt = !s.autoPutt; changed = true; }
+            float col = (r.width - 140f) / 3f;
+            float cx = x + 110f;
+            GUI.enabled = s.autoPutt;
+            GUI.Label(new Rect(cx, y - 2f, col - 12f, 16f), "1 PUTT CIRCLE", new GUIStyle(hintStyle) { normal = { textColor = GolfSimTheme.Gold } });
+            if (Arrows(new Rect(cx, y + 14f, col - 12f, 34f), Units.DistanceText(s.autoPuttOneMeters, "0.0"), out int d1))
+            {
+                s.autoPuttOneMeters = Mathf.Clamp(s.autoPuttOneMeters + d1 * 0.5f, 0.5f, 10f);
+                if (s.autoPuttTwoMeters < s.autoPuttOneMeters + 0.5f) s.autoPuttTwoMeters = s.autoPuttOneMeters + 0.5f;
+                changed = true;
+            }
+            cx += col;
+            GUI.Label(new Rect(cx, y - 2f, col - 12f, 16f), "2 PUTT CIRCLE", hintStyle);
+            if (Arrows(new Rect(cx, y + 14f, col - 12f, 34f), Units.DistanceText(s.autoPuttTwoMeters, "0.0"), out int d2))
+            {
+                s.autoPuttTwoMeters = Mathf.Clamp(s.autoPuttTwoMeters + d2 * 0.5f, s.autoPuttOneMeters + 0.5f, 30f);
+                changed = true;
+            }
+            cx += col;
+            GUI.Label(new Rect(cx, y - 2f, col - 12f, 16f), "OUTSIDE THE 2 PUTT CIRCLE", hintStyle);
+            string[] beyond = { "3 PUTTS", "PUTT IT MYSELF" };
+            if (Arrows(new Rect(cx, y + 14f, col - 12f, 34f), beyond[Mathf.Clamp(s.autoPuttBeyond, 0, 1)], out int d3)) { s.autoPuttBeyond = s.autoPuttBeyond == 0 ? 1 : 0; changed = true; }
+            y += 58f;
+            if (GUI.Button(new Rect(x + 110f, y, 260f, 34f), s.showPuttCircles ? "CIRCLES ON THE GREEN: SHOWN" : "CIRCLES ON THE GREEN: HIDDEN", GolfSimTheme.SmallButton)) { s.showPuttCircles = !s.showPuttCircles; changed = true; }
+            GUI.enabled = true;
+            GUI.Label(new Rect(x + 390f, y + 6f, r.width - 420f, 30f), "Also in SETTINGS → GAME and in the game MENU → AUTO PUTT.", hintStyle);
+            if (changed) s.Save();
         }
 
         private void SettingCard(Rect r, string title, string[] values, ref int selected, string hint)
@@ -337,9 +467,12 @@ namespace GolfSimZA.UI
 
         // ------------------------------------------------------------ Start
 
-        private bool Apply()
+        private bool Apply(bool forRange = false)
         {
-            if (roundPlayers.Count == 0) { message = "Add at least one player."; return false; }
+            if (roundPlayers.Count == 0) { message = "Add at least one player."; tab = Tab.Players; return false; }
+            if (roundPlayers.Count > PlayerRoster.MaxPlayersInRound) { message = "A round has up to " + PlayerRoster.MaxPlayersInRound + " players."; return false; }
+            string problem = GameFormats.Problem(Format, roundPlayers.Count, roundTeams.ToArray());
+            if (problem != null && !forRange) { message = problem; return false; }
             int courseHoles = CourseSession.CourseHoles;
             int start = courseHoles > 9 && holesChoice == 2 ? 9 : 0;
             int length = courseHoles > 9 && holesChoice > 0 ? 9 : courseHoles;
@@ -348,13 +481,40 @@ namespace GolfSimZA.UI
             CourseSession.SetHoles(courseHoles, start, length);
             CourseSession.PracticeMode = false;
 
-            // The round's players become the selected players (in this order).
-            PlayerRoster roster = PlayerRoster.Current;
-            foreach (PlayerProfile p in roster.players)
-                p.selected = roundPlayers.Exists(n => string.Equals(n, p.name, StringComparison.OrdinalIgnoreCase));
-            roster.Save();
             CourseSession.SetPlayers(roundPlayers.ToArray());
+            CourseSession.Teams = Format.Team ? CompactTeams() : null;
             return true;
+        }
+
+        /// <summary>Keeps the chosen players and teams while the player visits other screens (PLAYERS, SETTINGS).</summary>
+        private void SaveDraft()
+        {
+            CourseSession.SetPlayers(roundPlayers.ToArray());
+            CourseSession.Teams = roundTeams.ToArray();
+        }
+
+        /// <summary>Team for a newly added player: the first team that still has room.</summary>
+        private int NextTeam()
+        {
+            int size = Mathf.Max(2, Format.MinTeamSize);
+            var counts = new int[GameFormats.MaxTeams];
+            foreach (int t in roundTeams) counts[t]++;
+            for (int t = 0; t < GameFormats.MaxTeams; t++) if (counts[t] < size) return t;
+            return GameFormats.MaxTeams - 1;
+        }
+
+        /// <summary>Teams renumbered so the used teams are A, B, C ... in order (no gaps).</summary>
+        private int[] CompactTeams()
+        {
+            var map = new int[GameFormats.MaxTeams];
+            for (int i = 0; i < map.Length; i++) map[i] = -1;
+            int next = 0;
+            var used = new bool[GameFormats.MaxTeams];
+            foreach (int t in roundTeams) used[t] = true;
+            for (int t = 0; t < GameFormats.MaxTeams; t++) if (used[t]) map[t] = next++;
+            var result = new int[roundTeams.Count];
+            for (int i = 0; i < result.Length; i++) result[i] = map[roundTeams[i]];
+            return result;
         }
 
         private void Play()
@@ -364,7 +524,7 @@ namespace GolfSimZA.UI
 
         private void HeadToRange()
         {
-            if (!Apply()) return;
+            if (!Apply(true)) return;
             CourseSession.SetSession("GolfSim ZA Practice Range", "Blue", 18);
             CourseSession.SetCourse("", null);
             CourseSession.SetHoles(18, 0, 18);

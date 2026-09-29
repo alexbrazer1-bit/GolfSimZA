@@ -75,6 +75,24 @@ namespace GolfSimZA.Physics
             HasImage = true;
         }
 
+        /// <summary>Position inside the map rect (GUI coordinates) → point on the ground, or false.</summary>
+        public bool FromMap(Vector2 guiPoint, Rect area, out Vector3 world)
+        {
+            world = Vector3.zero;
+            if (cam == null || !HasImage || area.width < 1f || area.height < 1f) return false;
+            Vector2 v = new Vector2((guiPoint.x - area.x) / area.width, 1f - (guiPoint.y - area.y) / area.height);
+            if (v.x < 0f || v.x > 1f || v.y < 0f || v.y > 1f) return false;
+            Ray ray = cam.ViewportPointToRay(new Vector3(v.x, v.y, 0f));
+            if (UnityEngine.Physics.Raycast(ray, out RaycastHit hit, 5000f, ~(1 << GroundProbe.IgnoreRaycastLayer), QueryTriggerInteraction.Ignore))
+                world = hit.point;
+            else
+            {
+                world = ray.origin;
+                world.y = GroundProbe.HeightAt(world);
+            }
+            return true;
+        }
+
         /// <summary>World point → position inside the map rect (GUI coordinates).</summary>
         public Vector2 ToMap(Vector3 world, Rect area)
         {

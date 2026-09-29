@@ -187,7 +187,10 @@ namespace GolfSimZA.UI
             {
                 float one = s.autoPuttOneMeters, two = s.autoPuttTwoMeters;
                 if (Slider(ref y, x, w, "ONE PUTT INSIDE", ref one, 0.5f, 10f, Units.DistanceText(one, "0.0"), 0.5f)) s.autoPuttOneMeters = one;
-                if (Slider(ref y, x, w, "TWO PUTTS INSIDE  (further away = three putts)", ref two, 2f, 30f, Units.DistanceText(two, "0.0"), 0.5f)) s.autoPuttTwoMeters = Mathf.Max(two, s.autoPuttOneMeters + 0.5f);
+                if (Slider(ref y, x, w, "TWO PUTTS INSIDE", ref two, 1f, 30f, Units.DistanceText(two, "0.0"), 0.5f)) s.autoPuttTwoMeters = Mathf.Max(two, s.autoPuttOneMeters + 0.5f);
+                int beyond = s.autoPuttBeyond;
+                if (Choice(ref y, x, w, "OUTSIDE THE 2 PUTT CIRCLE", new[] { "3 PUTTS", "PUTT IT MYSELF" }, ref beyond)) s.autoPuttBeyond = beyond;
+                Switch(ref y, x, w, "SHOW THE 1 PUTT (gold) AND 2 PUTT (white) CIRCLES ON THE GREEN", ref s.showPuttCircles);
             }
             return y;
         }

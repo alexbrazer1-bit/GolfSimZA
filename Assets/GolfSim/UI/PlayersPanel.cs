@@ -104,7 +104,7 @@ namespace GolfSimZA.UI
             GUI.Label(new Rect(x, y, w, 18f), PlayerRoster.ColorNames[current], new GUIStyle(GolfSimTheme.Label) { normal = { textColor = PlayerRoster.Colors[current] } });
             y += 28f;
 
-            GUI.Label(new Rect(x, y, w, 18f), "PLAYS IN THE NEXT ROUND (up to " + PlayerRoster.MaxPlayersInRound + ")", GolfSimTheme.Label);
+            GUI.Label(new Rect(x, y, w, 18f), "RANGE & PRACTICE PLAYER", GolfSimTheme.Label);
             y += 22f;
             if (GUI.Button(new Rect(x, y, w * 0.49f, 40f), "PLAYING", editing.selected ? GolfSimTheme.TabActive : GolfSimTheme.Button))
             {
@@ -122,7 +122,7 @@ namespace GolfSimZA.UI
                 if (GUI.Button(new Rect(x, y, w, 42f), "EDIT GOLF BAG  &  MAP MY BAG  →", GolfSimTheme.AccentButton)) openBag(editing.name);
                 y += 52f;
             }
-            GUI.Label(new Rect(x, y, w, 60f), "Selected players (●) play the next round in that order. Each player's clubs and mapped distances are kept with their name.", GolfSimTheme.Subtitle);
+            GUI.Label(new Rect(x, y, w, 60f), "Players marked PLAYING (●) are used on the driving range and in on-course practice. For a course round you choose the players in Round Settings. Each player's clubs and mapped distances are kept with their name.", GolfSimTheme.Subtitle);
         }
     }
 }

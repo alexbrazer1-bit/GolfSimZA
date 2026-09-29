@@ -46,6 +46,12 @@ namespace GolfSimZA.Core
         public bool autoPutt;
         public float autoPuttOneMeters = 3.0f;
         public float autoPuttTwoMeters = 12.0f;
+        /// <summary>Ball on the green outside the two-putt circle: 0 = counts three putts, 1 = putt it yourself.</summary>
+        public int autoPuttBeyond;
+        /// <summary>Show the one-putt and two-putt circles around the hole while auto putt is on.</summary>
+        public bool showPuttCircles = true;
+        /// <summary>Driving range: show the shot dispersion circle of the selected club.</summary>
+        public bool showDispersion = true;
 
         // ---------------- REALISM
         /// <summary>0 off, 1 light, 2 moderate, 3 strong, 4 custom.</summary>

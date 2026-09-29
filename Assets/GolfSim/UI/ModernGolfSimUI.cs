@@ -11,7 +11,9 @@ namespace GolfSimZA.UI
     /// <summary>
     /// Driving range screen: range settings (target distance, fairway and green width,
     /// randomizer) top-left, wind top-centre, shot data tiles top-right, club selector
-    /// bottom-left, recent shots bottom-right, flag distance marker on the range.
+    /// bottom-left, recent shots bottom-right, flag distance marker on the range, a gold aim
+    /// target the player drags (direction and distance) and the selected club's shot dispersion
+    /// circle.
     /// On a course this component switches itself off (RoundGameplayUI runs the round).
     /// </summary>
     public sealed class ModernGolfSimUI : MonoBehaviour
@@ -36,6 +38,9 @@ namespace GolfSimZA.UI
         private bool randomizer;
 
         private readonly List<ShotData> recent = new List<ShotData>();
+        private AimPointer aimPointer;
+        private bool aimMoved;
+        private GolfSimZA.Visual.ShotDispersion dispersion;
         private GUIStyle pill, flagBox, flagValue, flagSub, sliderValue, markerLabel, small, sliderTrack, sliderThumb, switchOn, switchOff;
 
         private void Awake()
@@ -77,6 +82,11 @@ namespace GolfSimZA.UI
             range.Build(targetSlider, widthSlider, greenSlider);
             CourseScenery.ImproveRange(root, Camera.main, widthSlider);
             Wind.NewHole(Vector3.forward);
+            aimPointer = gameObject.AddComponent<AimPointer>();
+            aimPointer.MaxDistance = RangeEnvironment.MaxTarget + 60f;
+            aimPointer.CanInteract = () => !GameMenuOverlay.IsOpen && flight != null && !flight.IsInFlight && !panelOpen;
+            aimPointer.Moved += p => { aimMoved = true; ApplyRangeAim(false); };
+            dispersion = GolfSimZA.Visual.ShotDispersion.Attach(gameObject, flight);
             // Range view: higher behind the mat, looking down the range (fairway, lines and flag all in view).
             presentation?.ConfigureAddressView(5f, 10f, 30f, 0f);
             if (Camera.main != null) Camera.main.fieldOfView = 48f; // slightly tele so the targets read well
@@ -97,13 +107,46 @@ namespace GolfSimZA.UI
             if (flight == null || range == null) return;
             flight.PlaceBall(range.TeePosition);
             flight.SetHole(range.TargetPosition, range.GreenWidth * 0.5f + 1f);
-            Vector3 aim = range.TargetPosition - range.TeePosition;
-            aim.y = 0f;
-            flight.AimYawDegrees = Mathf.Atan2(aim.x, aim.z) * Mathf.Rad2Deg;
-            presentation?.SetAddress(range.TeePosition, aim, snapCamera);
+            // The aim target stays where the player put it; otherwise it sits on the flag.
+            aimPointer?.Set(range.TeePosition, aimMoved ? aimPointer.Point : range.TargetPosition);
+            ApplyRangeAim(snapCamera);
             tracer?.Clear();
             status = "READY";
             GolfSimAudio.PlayReady();
+        }
+
+        /// <summary>Turns the shot towards the aim target (or the flag).</summary>
+        private void ApplyRangeAim(bool snapCamera)
+        {
+            if (flight == null || range == null) return;
+            Vector3 target = aimPointer != null && aimPointer.Visible ? aimPointer.Point : range.TargetPosition;
+            Vector3 aim = target - range.TeePosition;
+            aim.y = 0f;
+            if (aim.sqrMagnitude < 0.01f) aim = Vector3.forward;
+            flight.AimYawDegrees = Mathf.Atan2(aim.x, aim.z) * Mathf.Rad2Deg;
+            presentation?.SetAddress(range.TeePosition, aim, snapCamera);
+        }
+
+        /// <summary>← / → turn, ↑ / ↓ further / closer (Shift = bigger steps), Home = back on the flag.</summary>
+        private void HandleRangeAimKeys()
+        {
+            Keyboard k = Keyboard.current;
+            if (k == null || aimPointer == null || !aimPointer.Visible) return;
+            bool shift = k.shiftKey.isPressed;
+            float turn = 0f, move = 0f;
+            if (k.leftArrowKey.wasPressedThisFrame) turn = shift ? -5f : -1f;
+            if (k.rightArrowKey.wasPressedThisFrame) turn = shift ? 5f : 1f;
+            if (k.upArrowKey.wasPressedThisFrame) move = shift ? 10f : 2f;
+            if (k.downArrowKey.wasPressedThisFrame) move = shift ? -10f : -2f;
+            if (k.homeKey.wasPressedThisFrame) { aimMoved = false; aimPointer.Set(range.TeePosition, range.TargetPosition); ApplyRangeAim(false); return; }
+            if (turn == 0f && move == 0f) return;
+            Vector3 d = aimPointer.Point - range.TeePosition;
+            d.y = 0f;
+            float distance = Mathf.Clamp(d.magnitude + move, 5f, aimPointer.MaxDistance);
+            Vector3 dir = Quaternion.Euler(0f, turn, 0f) * (d.sqrMagnitude > 0.01f ? d.normalized : Vector3.forward);
+            aimPointer.Set(range.TeePosition, range.TeePosition + dir * distance);
+            aimMoved = true;
+            ApplyRangeAim(false);
         }
 
         private void Update()
@@ -111,7 +154,16 @@ namespace GolfSimZA.UI
             if (!isRange || simulator == null || flight == null) return;
 
             if (!GameMenuOverlay.IsOpen && !flight.IsInFlight)
+            {
                 ClubBar.HandleKeys();
+                HandleRangeAimKeys();
+            }
+            if (aimPointer != null)
+            {
+                if (flight.IsInFlight || GameMenuOverlay.IsOpen) { if (aimPointer.Visible) aimPointer.Hide(); }
+                else if (!aimPointer.Visible && status == "READY") { aimPointer.Set(range.TeePosition, aimMoved ? aimPointer.Point : range.TargetPosition); }
+            }
+            dispersion?.Show(range.TeePosition, flight.AimYawDegrees, !GameMenuOverlay.IsOpen);
 
             int count = simulator.History != null ? simulator.History.Count : 0;
             if (count > lastShotCount)
@@ -141,6 +193,7 @@ namespace GolfSimZA.UI
                 if (randomizer)
                 {
                     range.RandomTarget(targetSlider);
+                    aimMoved = false;
                     lastProximity = -1f;
                     Wind.NewHole(Vector3.forward);
                 }
@@ -183,6 +236,7 @@ namespace GolfSimZA.UI
 
             float margin = Mathf.Clamp(Screen.width * 0.015f, 10f, 24f);
             DrawRangePanel(margin + 132f, margin);
+            if (!panelOpen) DrawDispersionCard(margin + 132f, margin + 44f);
             DrawWind(margin);
             GUI.Label(new Rect(Screen.width * 0.5f - 150f, margin + 42f, 300f, 20f), status + "   •   " + ActiveClub.Player, new GUIStyle(small) { alignment = TextAnchor.MiddleCenter, normal = { textColor = Color.white } });
             if (settings.showBallReady && !flying && status == "READY")
@@ -236,6 +290,17 @@ namespace GolfSimZA.UI
                 string text = Units.Distance(d).ToString("0");
                 GUI.Label(new Rect(pl.x - 40f, pl.y - 12f, 80f, 24f), text, markerLabel);
                 GUI.Label(new Rect(pr.x - 40f, pr.y - 12f, 80f, 24f), text, markerLabel);
+            }
+
+            // Aim target distance.
+            if (aimPointer != null && aimPointer.Visible && ToScreen(cam, aimPointer.Point + Vector3.up * 1.2f, out Vector2 ap))
+            {
+                string t = Units.DistanceText(aimPointer.Distance);
+                var st = new GUIStyle(flagSub) { fontSize = 14 };
+                Vector2 sz = st.CalcSize(new GUIContent(t));
+                Rect r = new Rect(ap.x - sz.x * 0.5f - 6f, ap.y - sz.y - 6f, sz.x + 12f, sz.y + 4f);
+                GUI.Box(r, GUIContent.none, flagBox);
+                GUI.Label(r, t, st);
             }
 
             if (ToScreen(cam, range.TargetPosition + Vector3.up * 2.7f, out Vector2 flag))
@@ -300,10 +365,40 @@ namespace GolfSimZA.UI
                 s.Save();
                 range.Build(s.rangeTargetMeters, s.rangeFairwayWidth, s.rangeGreenWidth);
                 CourseScenery.ImproveRange(range.gameObject, Camera.main, s.rangeFairwayWidth);
+                aimMoved = false;
                 lastProximity = -1f;
                 ResetBall(true);
                 panelOpen = false;
             }
+        }
+
+        /// <summary>SHOT DISPERSION of the selected club: shots saved, average carry, spread; show / clear.</summary>
+        private void DrawDispersionCard(float x, float y)
+        {
+            if (dispersion == null) return;
+            AppSettings s = AppSettings.Current;
+            GolfSimZA.Visual.ShotDispersion.Stats st = dispersion.Current;
+            string club = ActiveClub.Resolve();
+            float w = 300f;
+            float h = s.showDispersion ? 118f : 44f;
+            Rect r = new Rect(x, y, w, h);
+            GUI.Box(r, GUIContent.none, GolfSimTheme.Card);
+            GUI.Label(new Rect(r.x + 12f, r.y + 8f, w - 110f, 20f), "DISPERSION  •  " + ActiveClub.ShortName(club), new GUIStyle(GolfSimTheme.Label) { normal = { textColor = new Color(0.35f, 0.85f, 1f) } });
+            if (GUI.Button(new Rect(r.xMax - 94f, r.y + 6f, 84f, 28f), s.showDispersion ? "HIDE" : "SHOW", GolfSimTheme.SmallButton)) { s.showDispersion = !s.showDispersion; s.Save(); }
+            if (!s.showDispersion) return;
+            string line1, line2;
+            if (ActiveClub.IsPutter(club)) { line1 = "Not recorded for the putter."; line2 = ""; }
+            else if (st.Shots == 0) { line1 = "Hit shots with this club to see its"; line2 = "dispersion circle on the range."; }
+            else
+            {
+                line1 = st.Shots + (st.Shots == 1 ? " SHOT" : " SHOTS") + "  •  CARRY " + Units.DistanceText(st.MeanCarry) + (st.Shots > 1 ? " ± " + Units.Distance(st.CarrySpread).ToString("0") : "");
+                string side = Mathf.Abs(st.MeanSide) < 0.5f ? "ON LINE" : Units.Distance(Mathf.Abs(st.MeanSide)).ToString("0") + " " + Units.DistanceUnit + (st.MeanSide < 0f ? " LEFT" : " RIGHT");
+                line2 = "AVERAGE " + side + (st.Shots > 1 ? "  •  SPREAD ± " + Units.Distance(st.SideSpread).ToString("0") + " " + Units.DistanceUnit : "");
+            }
+            GUI.Label(new Rect(r.x + 12f, r.y + 38f, w - 24f, 20f), line1, GolfSimTheme.Label);
+            GUI.Label(new Rect(r.x + 12f, r.y + 58f, w - 24f, 20f), line2, small);
+            if (st.Shots > 0 && GUI.Button(new Rect(r.x + 12f, r.y + 82f, 160f, 28f), "CLEAR THIS CLUB", GolfSimTheme.SmallButton)) dispersion.ClearCurrent();
+            GUI.Label(new Rect(r.x + 180f, r.y + 84f, w - 190f, 24f), "last " + GolfSimZA.Visual.ShotDispersion.MaxShots + " shots", small);
         }
 
         private float SliderRow(float x, ref float y, float w, string title, float value, float min, float max, string shown)

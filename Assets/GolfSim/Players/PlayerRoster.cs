@@ -25,7 +25,7 @@ namespace GolfSimZA.Players
     [Serializable]
     public sealed class PlayerRoster
     {
-        public const int MaxPlayersInRound = 8;
+        public const int MaxPlayersInRound = GolfSimZA.Courses.CourseSession.MaxPlayers;
 
         public static readonly string[] ColorNames = { "RED", "BLUE", "GREEN", "GOLD", "PURPLE", "ORANGE", "TEAL", "PINK" };
         public static readonly Color[] Colors =

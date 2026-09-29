@@ -19,38 +19,46 @@ namespace GolfSimZA.UI
         private int selectedPlayerIndex = -1;
         private GolfBagProfile bagProfile;
 
-        private bool returnHome;
 
         private void Start()
         {
-            // Players come from the home screen's roster / the current round.
+            // MAP MY BAG: every player in the roster can map their own bag.
             players.Clear();
-            foreach (string name in (CourseSession.PlayerNames ?? "Player 1").Split(new[] { '|' }, System.StringSplitOptions.RemoveEmptyEntries))
-                players.Add(name.Trim());
+            foreach (PlayerProfile p in PlayerRoster.Current.players) players.Add(p.name);
             if (players.Count == 0) players.Add("Player 1");
 
-            returnHome = PlayerPrefs.GetInt("GolfSimZA.BagReturnHome", 0) == 1;
             PlayerPrefs.DeleteKey("GolfSimZA.BagReturnHome");
-
+            // Opened for a player (home / players page) or coming back from mapping a club.
             string openFor = PlayerPrefs.GetString("GolfSimZA.OpenBagFor", "");
             PlayerPrefs.DeleteKey("GolfSimZA.OpenBagFor");
-            if (!string.IsNullOrWhiteSpace(openFor))
+            string mapped = PlayerPrefs.GetString("GolfSimZA.MapReturnPlayer", "");
+            PlayerPrefs.DeleteKey("GolfSimZA.MapReturnPlayer");
+            PlayerPrefs.Save();
+            string target = !string.IsNullOrWhiteSpace(openFor) ? openFor : mapped;
+            if (!string.IsNullOrWhiteSpace(target)) SelectPlayer(target);
+        }
+
+        /// <summary>Opens the bag of this player (added to the roster when new).</summary>
+        private void SelectPlayer(string name)
+        {
+            name = PlayerRoster.Clean(name);
+            if (string.IsNullOrWhiteSpace(name)) return;
+            if (editingBag) CloseBagEditor(true);
+            int index = players.FindIndex(p => string.Equals(p, name, System.StringComparison.OrdinalIgnoreCase));
+            if (index < 0)
             {
-                int index = players.FindIndex(p => string.Equals(p, openFor, System.StringComparison.OrdinalIgnoreCase));
-                if (index < 0)
-                {
-                    players.Insert(0, openFor);
-                    if (players.Count > 4) players.RemoveAt(players.Count - 1);
-                    index = 0;
-                }
-                selectedPlayerIndex = index;
-                OpenBagEditor();
+                PlayerProfile created = PlayerRoster.Current.Find(name) ?? PlayerRoster.Current.Add(name);
+                players.Add(created.name);
+                index = players.Count - 1;
             }
+            selectedPlayerIndex = index;
+            OpenBagEditor();
         }
 
         private void GoBack()
         {
-            SceneManager.LoadScene(returnHome ? "GolfSimZA_0_5_CourseSelection" : "GolfSimZA_0_5_RoundSettings");
+            if (editingBag) CloseBagEditor(true);
+            SceneManager.LoadScene("GolfSimZA_0_5_CourseSelection");
         }
 
         private void EnsureStyles()
@@ -97,119 +105,68 @@ namespace GolfSimZA.UI
             if (editingBag) DrawBagEditor(); else DrawPlayerSetup();
         }
 
+        private string newPlayerName = "";
+        private readonly Dictionary<string, Vector2Int> bagSummaries = new Dictionary<string, Vector2Int>();
+        private Vector2 chooseScroll;
+
+        /// <summary>MAP MY BAG: pick whose bag to map (or create a new player).</summary>
         private void DrawPlayerSetup()
         {
             float margin = Mathf.Max(28f, Screen.width * 0.035f);
             float width = Screen.width - margin * 2f;
-            GUILayout.BeginArea(new Rect(margin, 22f, width, Screen.height - 44f));
+            if (GUI.Button(new Rect(margin, 22f, 110f, 38f), "←  BACK", GolfSimTheme.TopBarButton)) GoBack();
+            GolfSimTheme.DrawLogo(new Rect(Screen.width * 0.5f - 150f, 20f, 300f, 40f));
+            GUI.DrawTexture(new Rect(margin, 68f, width, 2f), GolfSimTheme.AccentTex);
+            GUI.Label(new Rect(margin, 84f, width, 40f), "MAP MY BAG  •  CHOOSE A PLAYER", titleStyle);
+            GUI.Label(new Rect(margin, 124f, width, 22f), "Every player has their own golf bag and mapped distances. Pick the player whose bag you want to set up.", subtitleStyle);
 
-            GUILayout.BeginHorizontal();
-            if (GUILayout.Button("←  BACK", GolfSimTheme.TopBarButton, GUILayout.Width(110))) GoBack();
-            GUILayout.FlexibleSpace();
-            GolfSimTheme.DrawLogo(GUILayoutUtility.GetRect(300f, 40f, GUILayout.Width(300f)));
-            GUILayout.FlexibleSpace();
-            if (GUILayout.Button("PLAYERS", GolfSimTheme.TopBarButton, GUILayout.Width(110))) CourseSelectionUI.OpenHome("Players");
-            if (GUILayout.Button("SETTINGS", GolfSimTheme.TopBarButton, GUILayout.Width(110))) CourseSelectionUI.OpenHome("Settings");
-            GUILayout.EndHorizontal();
-            GUI.DrawTexture(GUILayoutUtility.GetRect(width, 2f), GolfSimTheme.AccentTex);
-            GUILayout.Space(10);
-
-            GUILayout.BeginHorizontal();
-            GUILayout.Label("PLAYERS", titleStyle, GUILayout.Width(210));
-            GUILayout.FlexibleSpace();
-            if (GUILayout.Button("01 COURSE", tabStyle, GUILayout.Width(130))) CourseSelectionUI.OpenHome("LocalMatch");
-            if (GUILayout.Button("02 ROUND", tabStyle, GUILayout.Width(130))) SceneManager.LoadScene("GolfSimZA_0_5_RoundSettings");
-            GUILayout.Button("03 PLAYERS", selectedTabStyle, GUILayout.Width(130));
-            GUILayout.EndHorizontal();
-            GUILayout.Space(8);
-            GUILayout.Label(CourseSession.CourseName + "  •  " + CourseSession.RoundLength + " holes  •  " + CourseSession.TeeName + " tees", subtitleStyle);
-            GUILayout.Space(18);
-
-            GUILayout.BeginHorizontal();
-            GUILayout.BeginVertical(GUILayout.Width(width * 0.68f));
-            GUILayout.Label("SELECT PLAYERS", titleStyle);
-            GUILayout.Label("Select a player first. Their personal golf bag and distance map will then become available.", subtitleStyle);
-            GUILayout.Space(10);
-
-            for (int i = 0; i < players.Count; i++)
+            PlayerRoster roster = PlayerRoster.Current;
+            const int cols = 4;
+            float gap = 12f, tileH = 86f;
+            float tileW = (width - gap * (cols - 1)) / cols;
+            int rows = Mathf.CeilToInt(roster.players.Count / (float)cols);
+            Rect view = new Rect(margin, 160f, width, Screen.height - 160f - 150f);
+            Rect content = new Rect(0, 0, width - 20f, Mathf.Max(view.height, rows * (tileH + gap)));
+            chooseScroll = GUI.BeginScrollView(view, chooseScroll, content);
+            tileW = (content.width - gap * (cols - 1)) / cols;
+            for (int i = 0; i < roster.players.Count; i++)
             {
-                bool selected = selectedPlayerIndex == i;
-                GUILayout.BeginHorizontal(selected ? selectedCardStyle : cardStyle);
-                if (GUILayout.Button(selected ? "✓" : "○", selected ? bagActiveStyle : bagButtonStyle, GUILayout.Width(48))) selectedPlayerIndex = i;
-                GUILayout.BeginVertical();
-                players[i] = GUILayout.TextField(players[i], fieldStyle);
-                GUILayout.Label(selected ? "PLAYER SELECTED  •  MAP MY BAG AVAILABLE" : "Select this player to manage their golf bag", bagMutedStyle);
-                GUILayout.EndVertical();
-                if (players.Count > 1 && GUILayout.Button("REMOVE", buttonStyle, GUILayout.Width(100)))
+                PlayerProfile p = roster.players[i];
+                Rect t = new Rect((i % cols) * (tileW + gap), (i / cols) * (tileH + gap), tileW, tileH);
+                if (GUI.Button(t, GUIContent.none, GolfSimTheme.Card)) { SelectPlayer(p.name); GUI.EndScrollView(); return; }
+                GUI.color = PlayerRoster.Colors[roster.ColorIndex(p)];
+                GUI.DrawTexture(new Rect(t.x + 3f, t.y + 3f, 8f, t.height - 6f), Texture2D.whiteTexture);
+                GUI.color = Color.white;
+                GUI.Label(new Rect(t.x + 22f, t.y + 12f, t.width - 30f, 28f), p.name.ToUpperInvariant(), GolfSimTheme.Heading);
+                if (!bagSummaries.TryGetValue(p.name, out Vector2Int counts))
                 {
-                    players.RemoveAt(i);
-                    if (selectedPlayerIndex == i) selectedPlayerIndex = -1;
-                    else if (selectedPlayerIndex > i) selectedPlayerIndex--;
-                    i--;
+                    GolfBagProfile bag = GolfBagProfile.Load(p.name);
+                    for (int c = 0; c < GolfBagProfile.ClubCount; c++)
+                        if (bag.InBag[c]) { counts.x++; if (bag.CarryMeters[c] > 0f) counts.y++; }
+                    bagSummaries[p.name] = counts;
                 }
-                GUILayout.EndHorizontal();
-                GUILayout.Space(7);
+                int inBag = counts.x, mapped = counts.y;
+                GUI.Label(new Rect(t.x + 22f, t.y + 46f, t.width - 30f, 22f), inBag + " clubs in bag  •  " + mapped + " mapped", subtitleStyle);
             }
+            GUI.EndScrollView();
 
-            GUILayout.BeginHorizontal();
-            if (players.Count < 4 && GUILayout.Button("＋  ADD PLAYER", buttonStyle, GUILayout.Width(190))) players.Add("Player " + (players.Count + 1));
-            GUILayout.FlexibleSpace();
-            GUI.enabled = selectedPlayerIndex >= 0 && selectedPlayerIndex < players.Count;
-            if (GUILayout.Button("MAP MY BAG  →", selectedPlayerIndex >= 0 ? bagActiveStyle : buttonStyle, GUILayout.Width(190))) OpenBagEditor();
-            GUI.enabled = true;
-            GUILayout.EndHorizontal();
+            float y = Screen.height - 130f;
+            GUI.Label(new Rect(margin, y, 400f, 20f), "NEW PLAYER", labelStyle);
+            newPlayerName = GUI.TextField(new Rect(margin, y + 24f, Mathf.Min(420f, width * 0.5f), 40f), newPlayerName ?? "", GolfSimTheme.TextField);
+            if (GUI.Button(new Rect(margin + Mathf.Min(420f, width * 0.5f) + 12f, y + 24f, 260f, 40f), "CREATE & MAP BAG  →", GolfSimTheme.AccentButton)
+                && !string.IsNullOrWhiteSpace(newPlayerName))
+            {
+                SelectPlayer(newPlayerName);
+                newPlayerName = "";
+            }
+        }
 
-            GUILayout.Space(12);
-            GUILayout.BeginHorizontal(cardStyle);
-            GUILayout.Label("GOLF BAG", GolfSimTheme.Heading, GUILayout.Width(130));
-            if (selectedPlayerIndex >= 0 && selectedPlayerIndex < players.Count)
-            {
-                string name = string.IsNullOrWhiteSpace(players[selectedPlayerIndex]) ? "Player " + (selectedPlayerIndex + 1) : players[selectedPlayerIndex].Trim();
-                GUILayout.Label(name + " is selected", labelStyle);
-            }
-            else
-            {
-                GUILayout.Label("Select a player above to map their clubs and distances.", subtitleStyle);
-            }
-            GUILayout.EndHorizontal();
-            GUILayout.EndVertical();
-
-            GUILayout.Space(22);
-            GUILayout.BeginVertical(cardStyle, GUILayout.Width(width * 0.28f));
-            GUILayout.Label("ROUND SUMMARY", GolfSimTheme.Heading);
-            GUILayout.Space(10);
-            Summary("COURSE", CourseSession.CourseName);
-            Summary("TEE", CourseSession.TeeName);
-            Summary("ROUND", CourseSession.RoundLength + " holes");
-            Summary("MODE", CourseSession.GameMode + (CourseSession.GameMode == "Match Play" && players.Count < 2 ? " (needs 2 players)" : ""));
-            Summary("GIMME / MULLIGANS", CourseSession.GimmieSetting + "  /  " + CourseSession.MulliganSetting);
-            Summary("PLAYERS", players.Count.ToString());
-            GUILayout.Space(12);
-            GUILayout.Label("PLAYER", labelStyle);
-            if (selectedPlayerIndex >= 0 && selectedPlayerIndex < players.Count)
-            {
-                string name = string.IsNullOrWhiteSpace(players[selectedPlayerIndex]) ? "Player " + (selectedPlayerIndex + 1) : players[selectedPlayerIndex].Trim();
-                GUILayout.Label(name, clubBigStyle);
-                GUILayout.Label("READY TO MAP BAG", clubRangeStyle);
-            }
-            else GUILayout.Label("NONE SELECTED", subtitleStyle);
-            GUILayout.FlexibleSpace();
-            if (GUILayout.Button("START ROUND  →", startStyle))
-            {
-                string[] names = new string[players.Count];
-                for (int i = 0; i < players.Count; i++) names[i] = string.IsNullOrWhiteSpace(players[i]) ? "Player " + (i + 1) : players[i].Trim();
-                CourseSession.SetPlayers(names);
-                // Keep the home screen's player list in step with players added here.
-                bool changed = false;
-                foreach (string n in names)
-                    if (PlayerRoster.Current.Find(n) == null) { PlayerRoster.Current.players.Add(new PlayerProfile { name = n, selected = false }); changed = true; }
-                if (changed) PlayerRoster.Current.Save();
-                CourseSession.SetPlayers(names);
-                SceneManager.LoadScene("GolfSimZA_0_6_PlayRound");
-            }
-            GUILayout.EndVertical();
-            GUILayout.EndHorizontal();
-            GUILayout.EndArea();
+        private void SwitchPlayer(int direction)
+        {
+            if (players.Count == 0) return;
+            CloseBagEditor(true);
+            selectedPlayerIndex = ((selectedPlayerIndex + direction) % players.Count + players.Count) % players.Count;
+            OpenBagEditor();
         }
 
         private void OpenBagEditor()
@@ -228,6 +185,7 @@ namespace GolfSimZA.UI
                 bagProfile.Save(name);
             }
             editingBag = false;
+            bagSummaries.Clear();
         }
 
         private void DrawBagEditor()
@@ -238,11 +196,15 @@ namespace GolfSimZA.UI
 
             GUILayout.BeginArea(new Rect(margin, 20f, width, Screen.height - 40f));
             GUILayout.BeginHorizontal();
-            if (GUILayout.Button("‹  PLAYERS", buttonStyle, GUILayout.Width(130))) CloseBagEditor(true);
+            if (GUILayout.Button("←  HOME", buttonStyle, GUILayout.Width(120))) { GoBack(); GUILayout.EndHorizontal(); GUILayout.EndArea(); return; }
+            if (GUILayout.Button("CHOOSE PLAYER", buttonStyle, GUILayout.Width(170))) { CloseBagEditor(true); GUILayout.EndHorizontal(); GUILayout.EndArea(); return; }
             GUILayout.FlexibleSpace();
             GUILayout.Label("MAP MY BAG", titleStyle);
             GUILayout.FlexibleSpace();
-            GUILayout.Label(playerName, labelStyle, GUILayout.Width(180));
+            // Switch straight to another player's bag.
+            if (GUILayout.Button("‹", buttonStyle, GUILayout.Width(44))) { SwitchPlayer(-1); GUILayout.EndHorizontal(); GUILayout.EndArea(); return; }
+            GUILayout.Label(playerName.ToUpperInvariant(), new GUIStyle(clubBigStyle) { normal = { textColor = PlayerRoster.ColorFor(playerName) } }, GUILayout.Width(200), GUILayout.Height(44));
+            if (GUILayout.Button("›", buttonStyle, GUILayout.Width(44))) { SwitchPlayer(1); GUILayout.EndHorizontal(); GUILayout.EndArea(); return; }
             GUILayout.EndHorizontal();
             GUILayout.Space(6);
             GUILayout.Label("TRACKMAN-STYLE CLUB DISTANCE MAPPING  •  " + CourseSession.CourseName, subtitleStyle);
@@ -420,13 +382,6 @@ namespace GolfSimZA.UI
             if (bagProfile == null) return max;
             for (int i = 0; i < GolfBagProfile.ClubCount; i++) if (bagProfile.InBag[i]) max = Mathf.Max(max, bagProfile.TotalMeters[i]);
             return max;
-        }
-
-        private void Summary(string key, string value)
-        {
-            GUILayout.Label(key, labelStyle);
-            GUILayout.Label(value, subtitleStyle);
-            GUILayout.Space(6);
         }
     }
 }
