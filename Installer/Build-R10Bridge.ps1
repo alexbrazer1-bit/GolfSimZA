@@ -50,6 +50,19 @@ try {
 
     Copy-Item -Force (Join-Path $root 'R10Bridge\settings.json') (Join-Path $source 'settings.json')
 
+    # GolfSimZA changes to the upstream source (R10 status + battery to GolfSimZA): R10Bridge\overrides mirrors
+    # the upstream folder layout and is copied over it before every build.
+    $overrides = Join-Path $root 'R10Bridge\overrides'
+    if (Test-Path $overrides) {
+        Get-ChildItem -Path $overrides -Recurse -File | ForEach-Object {
+            $relative = $_.FullName.Substring($overrides.Length).TrimStart('\')
+            $target = Join-Path $source $relative
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $target) | Out-Null
+            Copy-Item -Force $_.FullName $target
+            Write-Host "GolfSimZA override: $relative"
+        }
+    }
+
     $output = Join-Path $root 'R10Bridge\publish'
     if (Test-Path $output) { Remove-Item -Recurse -Force $output }
 

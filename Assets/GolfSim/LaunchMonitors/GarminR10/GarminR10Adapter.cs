@@ -59,6 +59,8 @@ namespace GolfSimZA.LaunchMonitors.GarminR10
             public BallData BallData;
             public ClubData ClubData;
             public ShotDataOptions ShotDataOptions;
+            /// <summary>GolfSimZA R10 bridge: Bluetooth link, battery and ready state of the R10.</summary>
+            public R10StatusData R10Status;
 
             // Legacy/bridge aliases. They are optional and only used when a
             // bridge emits R10-style fields outside the standard BallData object.
@@ -95,6 +97,19 @@ namespace GolfSimZA.LaunchMonitors.GarminR10
             public double VerticalFaceImpact;
             public double HorizontalFaceImpact;
             public double ClosureRate;
+        }
+
+        [Serializable]
+        private sealed class R10StatusData
+        {
+            public bool Connected;
+            public int Battery = -1;
+            public bool Ready;
+            public string State;
+            public string DeviceName;
+            public string Model;
+            public string Firmware;
+            public string Message;
         }
 
         [Serializable]
@@ -272,6 +287,12 @@ namespace GolfSimZA.LaunchMonitors.GarminR10
             LaunchMonitorStatus.Listening = IsListening;
             LaunchMonitorStatus.ListenPort = listenPort;
             LaunchMonitorStatus.BridgeConnected = IsConnected;
+            if (!IsConnected && LaunchMonitorStatus.R10Known)
+            {
+                LaunchMonitorStatus.R10Known = false;
+                LaunchMonitorStatus.R10Connected = false;
+                LaunchMonitorStatus.ReadyKnown = false;
+            }
             if (lastPacketSummary != shownPacketSummary)
             {
                 shownPacketSummary = lastPacketSummary;
@@ -324,9 +345,11 @@ namespace GolfSimZA.LaunchMonitors.GarminR10
                     bool hasBall = ball != null && ball.Speed > 0.01;
                     bool hasClub = club != null && club.Speed > 0.01;
 
-                    // Ready / ball detected flags (heartbeats and shots carry them).
-                    if (options != null && (heartbeat || options.LaunchMonitorIsReady || options.LaunchMonitorBallDetected))
-                        LaunchMonitorStatus.SetReady(options.LaunchMonitorIsReady, options.LaunchMonitorBallDetected);
+                    // The GolfSimZA bridge reports the R10 itself: Bluetooth link, battery, ready.
+                    // (A plain OpenConnect heartbeat always says "not ready", so it is not used for that.)
+                    R10StatusData r10 = message.R10Status;
+                    if (r10 != null && (r10.Connected || !string.IsNullOrEmpty(r10.Message) || r10.Battery >= 0))
+                        LaunchMonitorStatus.SetR10(r10.Connected, r10.Battery, r10.Ready, r10.State, r10.DeviceName, r10.Model, r10.Firmware, r10.Message);
 
                     if (heartbeat)
                     {

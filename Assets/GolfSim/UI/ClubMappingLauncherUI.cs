@@ -165,7 +165,7 @@ namespace GolfSimZA.UI
                 }
 
                 GUI.enabled = inBag;
-                if (GUI.Button(new Rect(area.width - 210f, y + 2f, 140f, 36f), "MAP 6 SHOTS", activeButtonStyle))
+                if (GUI.Button(new Rect(area.width - 210f, y + 2f, 140f, 36f), (profile.CarryMeters[i] > 0f ? "REMAP 6 SHOTS" : "MAP 6 SHOTS"), activeButtonStyle))
                 {
                     PlayerPrefs.SetInt("GolfSimZA.MapMode", 1);
                     PlayerPrefs.SetString("GolfSimZA.MapPlayer", SelectedPlayerName());

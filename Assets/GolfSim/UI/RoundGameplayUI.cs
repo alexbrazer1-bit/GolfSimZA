@@ -1777,6 +1777,8 @@ namespace GolfSimZA.UI
                 GUI.matrix = saved;
             }
             GUI.Label(new Rect(pill.x + 44f, pill.y, w - 52f, 38f), calm ? "NO WIND" : Wind.SpeedText() + "   " + Wind.Describe(forward), new GUIStyle(centerStyle) { fontSize = 13, alignment = TextAnchor.MiddleLeft });
+            // Garmin R10: connected / ready and battery, right of the wind.
+            R10Pill.Draw(pill.xMax + 8f, y);
             float angle = AimAngleFromLine();
             string aim = (Mathf.Abs(angle) < 0.5f ? "AIM ON LINE" : "AIM " + Mathf.Abs(angle).ToString("0") + "° " + (angle < 0f ? "LEFT" : "RIGHT"))
                          + (aimPointer != null && aimPointer.Visible ? "  •  " + Units.DistanceText(aimPointer.Distance) : "");

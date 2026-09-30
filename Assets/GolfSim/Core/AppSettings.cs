@@ -46,6 +46,8 @@ namespace GolfSimZA.Core
         public bool secondScreen;
         /// <summary>Monitor for the second screen (-1 = the other monitor, automatically).</summary>
         public int secondScreenDisplay = -1;
+        /// <summary>Second screen page: 0 = NUMBERS (16 data tiles), 1 = VISUAL (path / face, spin axis, launch and direction drawings), 2 = both, switching every 10 s.</summary>
+        public int secondScreenView = 1;
 
         // ---------------- GAME
         /// <summary>Hole map on the right (true) or the left (false) of the play screen.</summary>

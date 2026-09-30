@@ -59,12 +59,53 @@ namespace GolfSimZA.Core
             ReadyKnown = true;
         }
 
+        // ---------------- The R10 itself (sent by the GolfSimZA R10 bridge)
+        /// <summary>The bridge reports the R10's own state (newer bridge).</summary>
+        public static bool R10Known;
+        /// <summary>Bluetooth link to the R10 is up.</summary>
+        public static bool R10Connected;
+        /// <summary>R10 battery 0-100 (-1 = not known).</summary>
+        public static int Battery = -1;
+        public static string R10State = "";
+        public static string R10Name = "Approach R10";
+        public static string R10Model = "";
+        public static string R10Firmware = "";
+        /// <summary>What the bridge is doing ("Connecting (turn the R10 on)", "Not paired" ...).</summary>
+        public static string R10Message = "";
+        public static float R10StatusTime = -1f;
+
+        public static void SetR10(bool connected, int battery, bool ready, string state, string name, string model, string firmware, string message)
+        {
+            R10Known = true;
+            R10Connected = connected;
+            if (battery >= 0) Battery = Mathf.Clamp(battery, 0, 100);
+            R10State = state ?? "";
+            if (!string.IsNullOrEmpty(name)) R10Name = name;
+            if (!string.IsNullOrEmpty(model)) R10Model = model;
+            if (!string.IsNullOrEmpty(firmware)) R10Firmware = firmware;
+            R10Message = message ?? "";
+            R10StatusTime = Time.realtimeSinceStartup;
+            SetReady(connected && ready, connected && ready);
+        }
+
+        /// <summary>Short state for the HUD pill and the second screen.</summary>
+        public static string R10Summary()
+        {
+            if (!Listening) return "R10 • WAITING";
+            if (!BridgeConnected) return "R10 BRIDGE OFF";
+            if (!R10Known) return "R10 BRIDGE ON";
+            if (!R10Connected) return "R10 NOT CONNECTED";
+            return Ready ? "R10 READY" : "R10 CONNECTED";
+        }
+
         /// <summary>The receiver closed (leaving the play screen).</summary>
         public static void Closed()
         {
             Listening = false;
             BridgeConnected = false;
             ReadyKnown = false;
+            R10Known = false;
+            R10Connected = false;
         }
     }
 }

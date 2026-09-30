@@ -171,7 +171,10 @@ namespace GolfSimZA.UI
             DrawRangePanel(header.xMax + 8f, m + 1f);
 
             float headerEnd = header.xMax + 8f + 230f;
-            DrawWindAt(Mathf.Max(Screen.width * 0.5f - 115f, headerEnd + 12f), m);
+            float windX = Mathf.Max(Screen.width * 0.5f - 115f, headerEnd + 12f);
+            DrawWindAt(windX, m);
+            // Garmin R10: connected / ready and battery, right of the wind.
+            R10Pill.Draw(windX + 238f, m);
             GUI.Label(new Rect(Screen.width * 0.5f - 150f, m + 42f, 300f, 20f), status, new GUIStyle(small) { alignment = TextAnchor.MiddleCenter, normal = { textColor = Color.white } });
 
             // Bottom-left stack (TrackMan style): club selector at the bottom, the 6 shot data
@@ -265,7 +268,7 @@ namespace GolfSimZA.UI
             if (map == null) return bottom;
             float w = RangeTilesWidth;
             const float cellH = 34f, gap = 5f;
-            float h = 30f + 2f * cellH + gap + 8f + 30f + 8f;
+            float h = 30f + 2f * cellH + gap + 8f + 26f + 32f + 8f;
             Rect r = new Rect(x, bottom - h, w, h);
             Box(r, tmPanelDark);
             GUI.color = Orange;
@@ -284,9 +287,15 @@ namespace GolfSimZA.UI
                     new GUIStyle(tmSmall) { fontSize = done ? 14 : 11, normal = { textColor = done ? Color.white : i == map.ShotCount ? Orange : new Color(1f, 1f, 1f, 0.45f) } });
             }
             float fy = cy + 2f * cellH + gap + 8f;
-            GUI.Label(new Rect(r.x + 8f, fy, w * 0.6f, 30f), "AVG CARRY  " + (map.ShotCount > 0 ? Units.DistanceText(map.AverageCarry, "0.0") : "—") + "   " + map.ShotCount + "/" + GolfSimZA.Players.ClubMappingSession.RequiredShots,
+            GUI.Label(new Rect(r.x + 8f, fy, w - 16f, 26f), "AVG CARRY  " + (map.ShotCount > 0 ? Units.DistanceText(map.AverageCarry, "0.0") : "—") + "     " + map.ShotCount + " / " + GolfSimZA.Players.ClubMappingSession.RequiredShots + " SHOTS",
                 new GUIStyle(tmSmall) { alignment = TextAnchor.MiddleLeft, fontSize = 12 });
-            if (GUI.Button(new Rect(r.xMax - 88f, fy + 2f, 80f, 26f), "CANCEL", GolfSimTheme.SmallButton)) map.Cancel();
+            // Mishit? REDO LAST takes the last shot out; START AGAIN maps the club again from shot 1.
+            float by = fy + 28f, bw = (w - 16f - 2f * gap) / 3f;
+            GUI.enabled = map.ShotCount > 0;
+            if (GUI.Button(new Rect(r.x + 8f, by, bw, 28f), "REDO LAST", GolfSimTheme.SmallButton)) map.UndoLast();
+            if (GUI.Button(new Rect(r.x + 8f + bw + gap, by, bw, 28f), "RESTART", GolfSimTheme.SmallButton)) map.Restart();
+            GUI.enabled = true;
+            if (GUI.Button(new Rect(r.x + 8f + 2f * (bw + gap), by, bw, 28f), "CANCEL", GolfSimTheme.SmallButton)) map.Cancel();
             return r.y;
         }
 

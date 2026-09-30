@@ -271,10 +271,10 @@ namespace GolfSimZA.UI
                 x += nameW;
                 GUI.Label(new Rect(x, cell.y, 48f, rowH), bagProfile.Lofts[i].ToString("0.#") + "°", small);
                 x += 50f;
-                float mapW = inBag ? 58f : 0f;
+                float mapW = inBag ? 70f : 0f;
                 string mapped = bagProfile.CarryMeters[i] > 0f ? bagProfile.CarryMeters[i].ToString("F0") + "–" + bagProfile.TotalMeters[i].ToString("F0") + " m" : (inBag ? "NOT MAPPED" : "");
                 GUI.Label(new Rect(x, cell.y, cell.xMax - x - mapW - 8f, rowH), mapped, range);
-                if (inBag && GUI.Button(new Rect(cell.xMax - mapW - 6f, cell.y + (rowH - bh) * 0.5f, mapW, bh), "MAP", tickOn))
+                if (inBag && GUI.Button(new Rect(cell.xMax - mapW - 6f, cell.y + (rowH - bh) * 0.5f, mapW, bh), bagProfile.CarryMeters[i] > 0f ? "REMAP" : "MAP", tickOn))
                 {
                     bagProfile.Save(playerName);
                     PlayerPrefs.SetInt("GolfSimZA.MapMode", 1);

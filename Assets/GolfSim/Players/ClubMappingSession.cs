@@ -68,7 +68,10 @@ namespace GolfSimZA.Players
             string newPlayer = PlayerPrefs.GetString(PlayerKey, "Player 1");
             int newClub = Mathf.Clamp(PlayerPrefs.GetInt(ClubKey, 0), 0, GolfBagProfile.ClubCount - 1);
             bool changed = !string.Equals(playerName, newPlayer, StringComparison.Ordinal) || clubIndex != newClub;
-            if (changed)
+            // A club that was mapped (or cancelled) before can be mapped again: a new mapping
+            // session always starts from shot 1 - only a scene reload during the same mapping
+            // (e.g. the game menu) keeps the shots already hit.
+            if (changed || completed)
             {
                 playerName = newPlayer;
                 clubIndex = newClub;
@@ -164,6 +167,26 @@ namespace GolfSimZA.Players
                 for (int i = 0; i < shotCount; i++) sum += carries[i];
                 return sum / shotCount;
             }
+        }
+
+        /// <summary>START AGAIN: throw away the shots hit so far with this club and map it from shot 1.</summary>
+        public void Restart()
+        {
+            shotCount = 0;
+            for (int i = 0; i < RequiredShots; i++)
+            {
+                carries[i] = 0f;
+                totals[i] = 0f;
+            }
+        }
+
+        /// <summary>REDO LAST: remove the last shot (a mishit) and hit it again.</summary>
+        public void UndoLast()
+        {
+            if (shotCount <= 0) return;
+            shotCount--;
+            carries[shotCount] = 0f;
+            totals[shotCount] = 0f;
         }
 
         /// <summary>CANCEL: stop mapping and go back to the player's bag.</summary>
