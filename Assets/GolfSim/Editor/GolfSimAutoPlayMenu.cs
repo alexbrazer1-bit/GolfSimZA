@@ -62,6 +62,50 @@ namespace GolfSimZA.EditorTools
         [MenuItem("GolfSimZA/Test/Auto-play 18 holes - Apostle Highland, 3 players, Stableford")]
         private static void Stableford() => Run("Apostle", "Stableford", 3, null);
 
+        [MenuItem("GolfSimZA/Test/Play from the home screen")]
+        private static void PlayHome()
+        {
+            if (EditorApplication.isPlaying) { Debug.LogWarning("[GolfSimZA] Stop Play mode first."); return; }
+            if (EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo())
+            {
+                EditorSceneManager.OpenScene(GolfSimZA.Editor.GolfSimBuildScenes.CourseSelection);
+                EditorApplication.isPlaying = true;
+            }
+        }
+
+        [MenuItem("GolfSimZA/Test/Mini games - play all 8 games automatically")]
+        private static void MiniGames()
+        {
+            if (EditorApplication.isPlaying) { Debug.LogWarning("[GolfSimZA] Stop Play mode first."); return; }
+            // game : shots : explore : distance : players [: again]
+            string queue = string.Join(";",
+                "0:2:0:2:Tester A,Tester B,Tester C:again",
+                "1:3:0:0:Tester A,Tester B",
+                "2:3:0:0:Tester A,Tester B",
+                "3:12:0:0:Tester A,Tester B,Tester C",
+                "3:4:0:0:Tester A",
+                "4:3:0:0:Tester A,Tester B,Tester C",
+                "5:3:0:0:Tester A,Tester B",
+                "6:3:0:0:Tester A,Tester B",
+                "6:5:1:0:Tester A",
+                "7:3:0:0:Tester A,Tester B");
+            PlayerPrefs.SetString(GolfSimZA.Testing.MiniGameAutoTester.QueueKey, queue);
+            PlayerPrefs.SetInt(GolfSimZA.Testing.MiniGameAutoTester.FlagKey, 1);
+            string[] first = queue.Split(';')[0].Split(':');
+            GolfSimZA.MiniGames.MiniGameSession.Start((GolfSimZA.MiniGames.MiniGameId)int.Parse(first[0]), first[4].Split(','), int.Parse(first[1]), first[2] == "1", int.Parse(first[3]));
+            CourseSession.PracticeMode = false;
+            CourseSession.SetSession("GolfSim ZA Practice Range", "Blue", 18);
+            CourseSession.SetCourse("", null);
+            CourseSession.SetHoles(18, 0, 18);
+            CourseSession.SetPlayers(first[4].Split(','));
+            PlayerPrefs.Save();
+            if (EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo())
+            {
+                EditorSceneManager.OpenScene(GolfSimZA.Editor.GolfSimBuildScenes.PlayRound);
+                EditorApplication.isPlaying = true;
+            }
+        }
+
         /// <summary>Also callable from the command line / other tools: course name part, format, player count, teams.</summary>
         public static void Run(string coursePart, string format, int playerCount, int[] teams)
         {

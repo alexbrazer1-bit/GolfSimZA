@@ -41,6 +41,9 @@ namespace GolfSimZA.UI
         private AimPointer aimPointer;
         private bool aimMoved;
         private GolfSimZA.Visual.ShotDispersion dispersion;
+        /// <summary>MINI GAMES: the game being played on the range (null for normal practice).</summary>
+        private GolfSimZA.MiniGames.MiniGameRunner miniGame;
+        private Vector3 lastMiniTarget;
         private GUIStyle pill, flagBox, flagValue, flagSub, sliderValue, markerLabel, small, sliderTrack, sliderThumb, switchOn, switchOff;
 
         private void Awake()
@@ -80,6 +83,8 @@ namespace GolfSimZA.UI
             widthSlider = s.rangeFairwayWidth;
             greenSlider = s.rangeGreenWidth;
             randomizer = s.rangeRandomizer;
+            bool mini = GolfSimZA.MiniGames.MiniGameSession.Active;
+            if (mini) randomizer = false; // the game places its own targets
 
             GameObject root = new GameObject("GolfSimZA_Range");
             range = root.AddComponent<RangeEnvironment>();
@@ -88,12 +93,20 @@ namespace GolfSimZA.UI
             Wind.NewHole(Vector3.forward);
             aimPointer = gameObject.AddComponent<AimPointer>();
             aimPointer.MaxDistance = RangeEnvironment.MaxTarget + 60f;
-            aimPointer.CanInteract = () => !GameMenuOverlay.IsOpen && flight != null && !flight.IsInFlight && !panelOpen;
+            aimPointer.CanInteract = () => !GameMenuOverlay.IsOpen && flight != null && !flight.IsInFlight && !panelOpen && (miniGame == null || !miniGame.BlocksInput);
             aimPointer.Moved += p => { aimMoved = true; ApplyRangeAim(false); };
             dispersion = GolfSimZA.Visual.ShotDispersion.Attach(gameObject, flight);
+            if (mini)
+            {
+                miniGame = gameObject.AddComponent<GolfSimZA.MiniGames.MiniGameRunner>();
+                miniGame.Begin(range);
+                miniGame.Restarted += () => { session.Clear(); sessionNumber = 0; mapDirty = true; };
+                lastMiniTarget = range.TargetPosition;
+            }
             if (simulator != null)
             {
-                simulator.AllowShotDuringFlight = true;
+                // Mini games score every ball when it stops, so the next shot waits for the ball.
+                simulator.AllowShotDuringFlight = !mini;
                 simulator.BeforeLaunch += PutBallOnMat;
             }
             // Range view: low behind the mat like a golfer's eye line, looking down the range to the mountains.
@@ -106,6 +119,8 @@ namespace GolfSimZA.UI
         /// <summary>True when the selected "course" is the practice range.</summary>
         public static bool IsRangeSession()
         {
+            // MINI GAMES are played on the driving range.
+            if (GolfSimZA.MiniGames.MiniGameSession.Active) return true;
             // MAP MY BAG is hit on the driving range (same screen, same look).
             if (GolfSimZA.Players.ClubMappingSession.IsActive) return true;
             if (CourseSession.IsImportedCourse) return false;
@@ -118,7 +133,7 @@ namespace GolfSimZA.UI
         {
             if (flight == null || range == null) return;
             flight.PlaceBall(range.TeePosition);
-            flight.SetHole(range.TargetPosition, range.GreenWidth * 0.5f + 1f);
+            SetRangeHole();
             // The aim target stays where the player put it; otherwise it sits on the flag.
             aimPointer?.Set(range.TeePosition, aimMoved ? aimPointer.Point : range.TargetPosition);
             ApplyRangeAim(snapCamera);
@@ -134,14 +149,24 @@ namespace GolfSimZA.UI
         private void PutBallOnMat(ShotData shot)
         {
             if (!isRange || flight == null || range == null) return;
+            // The last ball stopped this very frame and has not been counted yet: count it first.
+            if (wasInFlight && !flight.IsInFlight) CompleteShot();
+            miniGame?.OnLaunch();
             resetAt = -1f;
             wasInFlight = false;
             flight.PlaceBall(range.TeePosition);
-            flight.SetHole(range.TargetPosition, range.GreenWidth * 0.5f + 1f);
+            SetRangeHole();
             if (aimPointer != null) aimPointer.Set(range.TeePosition, aimMoved ? aimPointer.Point : range.TargetPosition);
             ApplyRangeAim(true);
             tracer?.Clear();
             presentation?.HideLandingMarker();
+        }
+
+        /// <summary>The cup is the range flag - except in mini games that hide the flag (no hidden cup to fall into).</summary>
+        private void SetRangeHole()
+        {
+            if (miniGame != null && miniGame.Game != null && !miniGame.Game.ShowRangeTarget) flight.ClearHole();
+            else flight.SetHole(range.TargetPosition, range.GreenWidth * 0.5f + 1f);
         }
 
         /// <summary>Turns the shot towards the aim target (or the flag).</summary>
@@ -212,19 +237,22 @@ namespace GolfSimZA.UI
             }
 
             bool inFlight = flight.IsInFlight;
-            if (wasInFlight && !inFlight)
-            {
-                ShotData shot = simulator.LastShot;
-                RecordRangeShot(shot);
-                recent.Insert(0, shot);
-                if (recent.Count > 6) recent.RemoveAt(recent.Count - 1);
-                Vector3 d = flight.Ball.position - range.TargetPosition;
-                d.y = 0f;
-                lastProximity = d.magnitude;
-                status = "SHOT COMPLETE";
-                resetAt = Time.unscaledTime + ResetDelay;
-            }
+            if (wasInFlight && !inFlight) CompleteShot();
             wasInFlight = inFlight;
+
+            if (miniGame != null)
+            {
+                if (miniGame.MapDirty) { miniGame.MapDirty = false; mapDirty = true; }
+                // The game moved its target (new game, next knockout round): aim at it again.
+                if ((range.TargetPosition - lastMiniTarget).sqrMagnitude > 0.01f)
+                {
+                    lastMiniTarget = range.TargetPosition;
+                    aimMoved = false;
+                    lastProximity = -1f;
+                    mapDirty = true;
+                    if (!inFlight) { resetAt = -1f; ResetBall(false); }
+                }
+            }
 
             if (resetAt > 0f && Time.unscaledTime >= resetAt)
             {
@@ -242,6 +270,22 @@ namespace GolfSimZA.UI
 
             if (Keyboard.current != null && Keyboard.current.rKey.wasPressedThisFrame && !inFlight && !GameMenuOverlay.IsOpen)
                 ResetBall(true);
+        }
+
+        /// <summary>The ball has stopped: record the shot (and score it in a mini game).</summary>
+        private void CompleteShot()
+        {
+            wasInFlight = false;
+            ShotData shot = simulator.LastShot;
+            RecordRangeShot(shot);
+            if (miniGame != null) miniGame.OnShotFinished(shot, flight.LandingPosition, flight.Ball.position, flight.WasHoled);
+            recent.Insert(0, shot);
+            if (recent.Count > 6) recent.RemoveAt(recent.Count - 1);
+            Vector3 d = flight.Ball.position - range.TargetPosition;
+            d.y = 0f;
+            lastProximity = d.magnitude;
+            status = "SHOT COMPLETE";
+            resetAt = Time.unscaledTime + ResetDelay;
         }
 
         // ---------------------------------------------------------------- GUI
@@ -328,7 +372,8 @@ namespace GolfSimZA.UI
                 GUI.Label(r, t, st);
             }
 
-            if (ToScreen(cam, range.TargetPosition + Vector3.up * 2.7f, out Vector2 flag))
+            bool showFlag = miniGame == null || (miniGame.Game != null && miniGame.Game.ShowRangeTarget);
+            if (showFlag && ToScreen(cam, range.TargetPosition + Vector3.up * 2.7f, out Vector2 flag))
             {
                 Rect box = new Rect(flag.x - 44f, flag.y - 64f, 88f, 54f);
                 GUI.Box(box, GUIContent.none, flagBox);

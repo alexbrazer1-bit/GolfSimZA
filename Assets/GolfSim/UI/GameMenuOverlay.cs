@@ -39,6 +39,7 @@ namespace GolfSimZA.UI
 
         private static bool OnPlayScreen => SceneManager.GetSceneByName(PlayScene).isLoaded;
         private static bool OnRange => ModernGolfSimUI.IsRangeSession();
+        private static bool InMiniGame => GolfSimZA.MiniGames.MiniGameSession.Active;
 
         private void Update()
         {
@@ -119,7 +120,8 @@ namespace GolfSimZA.UI
                 case Page.Shortcuts: DrawShortcuts(body); break;
                 case Page.AutoPutt: DrawAutoPutt(body); break;
                 case Page.AddPlayer: DrawAddPlayer(body); break;
-                case Page.ConfirmEnd: DrawConfirm(body, OnRange ? "Leave the driving range?" : (CourseSession.PracticeMode ? "End practice and go home?" : "End this round? Finished holes are saved - turn on RESUME ROUND in Round Settings to carry on later."), () => Load(HomeScene)); break;
+                case Page.ConfirmEnd: if (InMiniGame) { DrawConfirm(body, "Leave this mini game? The scores are not kept.", () => { SetOpen(false); CourseSelectionUI.OpenHome("MiniGames"); }); break; }
+                    DrawConfirm(body, OnRange ? "Leave the driving range?" : (CourseSession.PracticeMode ? "End practice and go home?" : "End this round? Finished holes are saved - turn on RESUME ROUND in Round Settings to carry on later."), () => Load(HomeScene)); break;
                 case Page.ConfirmQuit: DrawConfirm(body, "Quit GolfSim ZA?", Quit); break;
             }
 
@@ -136,7 +138,7 @@ namespace GolfSimZA.UI
                 case Page.Shortcuts: return "SHORTCUTS";
                 case Page.AutoPutt: return "AUTO PUTT";
                 case Page.AddPlayer: return "ADD PLAYER";
-                case Page.ConfirmEnd: return OnRange ? "LEAVE RANGE" : "END ROUND";
+                case Page.ConfirmEnd: return InMiniGame ? "LEAVE GAME" : OnRange ? "LEAVE RANGE" : "END ROUND";
                 case Page.ConfirmQuit: return "QUIT";
                 default: return "GAME MENU";
             }
@@ -163,7 +165,7 @@ namespace GolfSimZA.UI
             // During a round the players page opens in place (the round keeps going);
             // on the range the golf bag editor can be opened.
             if (round) { if (Cell(body, ref i, cw, ch, gap, "PLAYERS", tile)) OpenSettings(true); }
-            else if (Cell(body, ref i, cw, ch, gap, "PLAYERS & BAGS", tile)) Load(PlayersScene);
+            else if (Cell(body, ref i, cw, ch, gap, "PLAYERS & BAGS", InMiniGame ? tileOff : tile) && !InMiniGame) Load(PlayersScene);
             AppSettings st = AppSettings.Current;
             if (Cell(body, ref i, cw, ch, gap, "AUTO PUTT\n" + (st.autoPutt ? "ON  •  " + Units.Distance(st.autoPuttOneMeters).ToString("0.#") + " / " + Units.Distance(st.autoPuttTwoMeters).ToString("0.#") + " " + Units.DistanceUnit : "OFF"), round ? (st.autoPutt ? tileOn : tile) : tileOff) && round) page = Page.AutoPutt;
             RoundGameplayUI roundUi = RoundGameplayUI.Current;
@@ -172,7 +174,7 @@ namespace GolfSimZA.UI
             if (Cell(body, ref i, cw, ch, gap, "RESUME", tile)) SetOpen(false);
 
             float y = body.y + Mathf.Ceil(i / 2f) * (ch + gap) + 6f;
-            if (GUI.Button(new Rect(body.x, y, body.width, 44f), OnRange ? "LEAVE RANGE" : "END ROUND", GolfSimTheme.AccentButton)) page = Page.ConfirmEnd;
+            if (GUI.Button(new Rect(body.x, y, body.width, 44f), InMiniGame ? "LEAVE GAME" : OnRange ? "LEAVE RANGE" : "END ROUND", GolfSimTheme.AccentButton)) page = Page.ConfirmEnd;
             if (GUI.Button(new Rect(body.x, y + 50f, body.width, 40f), "QUIT GOLFSIM ZA", GolfSimTheme.Button)) page = Page.ConfirmQuit;
         }
 
@@ -376,6 +378,7 @@ namespace GolfSimZA.UI
                 PlayerPrefs.SetInt("GolfSimZA.MapMode", 0);
                 PlayerPrefs.Save();
             }
+            if (scene != PlayScene) GolfSimZA.MiniGames.MiniGameSession.End();
             if (scene == PlayersScene) PlayerPrefs.SetInt("GolfSimZA.BagReturnHome", 1);
             SceneManager.LoadScene(scene);
         }

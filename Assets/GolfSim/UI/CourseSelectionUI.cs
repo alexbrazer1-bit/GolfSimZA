@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using GolfSimZA.Core;
 using GolfSimZA.Courses;
+using GolfSimZA.MiniGames;
 using GolfSimZA.Players;
 using UnityEngine;
 using UnityEngine.SceneManagement;
@@ -16,7 +17,7 @@ namespace GolfSimZA.UI
     /// </summary>
     public sealed class CourseSelectionUI : MonoBehaviour
     {
-        private enum Screen_ { Home, LocalMatch, Practice, OnCoursePractice, Players, Settings, Import, ConfirmQuit }
+        private enum Screen_ { Home, LocalMatch, Practice, OnCoursePractice, Players, Settings, Import, ConfirmQuit, MiniGames }
 
         private sealed class CourseEntry
         {
@@ -48,6 +49,16 @@ namespace GolfSimZA.UI
         private bool rebuildRequested = true;
         private Texture2D hero, heroShade, tileShade, heroGradient, navyTex;
 
+        // MINI GAMES page
+        private MiniGameId miniGame;
+        private readonly List<string> miniPlayers = new List<string>();
+        private readonly List<string> miniGuests = new List<string>();
+        private int miniShots = 5, miniDistance;
+        private bool miniExplore;
+        private string guestName = "";
+        private Vector2 miniScroll, miniDetailScroll;
+        private string miniError = "";
+
         private void OnEnable() => CourseLibrary.Changed += RequestRebuild;
         private void OnDisable() => CourseLibrary.Changed -= RequestRebuild;
         private void RequestRebuild() => rebuildRequested = true;
@@ -59,6 +70,8 @@ namespace GolfSimZA.UI
             updatePanel.CheckInBackground();
             PlayerRoster.Current.ApplyToSession();
             CourseSession.PracticeMode = false;
+            // Back on the home screen: any mini game has ended.
+            MiniGameSession.End();
             settingsScreen = new SettingsScreen(() => screen = Screen_.Home, OpenBag, () => { screen = Screen_.Import; importPanel.Open(); }, updatePanel);
 
             // Another screen asked to come back to a specific home page (e.g. BACK from Round Settings).
@@ -68,12 +81,13 @@ namespace GolfSimZA.UI
                 PlayerPrefs.DeleteKey(OpenScreenKey);
                 if (Enum.TryParse(open, out Screen_ requested)) screen = requested;
                 if (screen == Screen_.Players || screen == Screen_.Settings) settingsScreen.Open(screen == Screen_.Players);
+                if (screen == Screen_.MiniGames) OpenMiniGames();
             }
         }
 
         private const string OpenScreenKey = "GolfSimZA.OpenHomeScreen";
 
-        /// <summary>Loads the home scene on a given page: "Home", "LocalMatch", "Practice", "Players" or "Settings".</summary>
+        /// <summary>Loads the home scene on a given page: "Home", "LocalMatch", "Practice", "Players", "Settings" or "MiniGames".</summary>
         public static void OpenHome(string page)
         {
             PlayerPrefs.SetString(OpenScreenKey, page ?? "Home");
@@ -248,6 +262,7 @@ namespace GolfSimZA.UI
                     if (!importPanel.IsOpen) screen = Screen_.LocalMatch;
                     break;
                 case Screen_.ConfirmQuit: DrawConfirmQuit(content); break;
+                case Screen_.MiniGames: DrawMiniGames(content); break;
             }
         }
 
@@ -290,8 +305,8 @@ namespace GolfSimZA.UI
             GUI.Label(new Rect(heroRect.x + 44f, heroRect.y + 92f, 700f, 26f), "Your home course, your swing, your numbers.", new GUIStyle(GolfSimTheme.Heading) { fontStyle = FontStyle.Normal });
             GUI.Label(new Rect(heroRect.x + 44f, heroRect.y + 124f, 900f, 22f), "Pick a course, then choose who plays and the format in Round Settings.", GolfSimTheme.Label);
 
-            string[] names = { "LOCAL MATCH", "PRACTICE", "MAP MY BAG", "IMPORT COURSES" };
-            string[] subs = { "Play a full round", "Range & on-course practice", "Six-shot club distances", "Add courses from a folder" };
+            string[] names = { "LOCAL MATCH", "PRACTICE", "MINI GAMES", "MAP MY BAG", "IMPORT COURSES" };
+            string[] subs = { "Play a full round", "Range & on-course practice", "8 games  •  1-8 players", "Six-shot club distances", "Add courses from a folder" };
             float gap = 18f;
             float tw = (heroRect.width - 80f - gap * (names.Length - 1)) / names.Length;
             float th = Mathf.Min(170f, heroRect.height * 0.32f);
@@ -299,7 +314,7 @@ namespace GolfSimZA.UI
             for (int i = 0; i < names.Length; i++)
             {
                 Rect t = new Rect(heroRect.x + 40f + i * (tw + gap), ty, tw, th);
-                Texture2D img = TileImage(i);
+                Texture2D img = i == 2 ? GolfSimTheme.RangePicture() : TileImage(i > 2 ? i - 1 : i);
                 if (img != null)
                 {
                     GUI.DrawTexture(new Rect(t.x + 3f, t.y + 3f, t.width - 6f, t.height - 6f), img, ScaleMode.ScaleAndCrop);
@@ -331,8 +346,9 @@ namespace GolfSimZA.UI
             {
                 case 0: screen = Screen_.LocalMatch; search = ""; break;
                 case 1: screen = Screen_.Practice; break;
-                case 2: OpenBag(""); break; // choose the player first
-                case 3: screen = Screen_.Import; importPanel.Open(); break;
+                case 2: OpenMiniGames(); screen = Screen_.MiniGames; break;
+                case 3: OpenBag(""); break; // choose the player first
+                case 4: screen = Screen_.Import; importPanel.Open(); break;
             }
         }
 
@@ -451,6 +467,225 @@ namespace GolfSimZA.UI
             }
             if (GolfSimTheme.FitButton(b, "ON-COURSE PRACTICE", GolfSimTheme.BigTile)) { screen = Screen_.OnCoursePractice; search = ""; }
             GUI.Label(new Rect(b.x, b.y + 14f, b.width, 20f), "Any hole, no scoring", new GUIStyle(GolfSimTheme.Label) { alignment = TextAnchor.MiddleCenter });
+        }
+
+        // ---- Mini games
+
+        /// <summary>Opens the MINI GAMES page with the last game and players (or the players selected for rounds).</summary>
+        private void OpenMiniGames()
+        {
+            miniGame = MiniGameSession.LastGame;
+            miniPlayers.Clear();
+            miniGuests.Clear();
+            foreach (string n in MiniGameSession.LastPlayers)
+            {
+                string name = PlayerRoster.Clean(n);
+                if (string.IsNullOrEmpty(name) || miniPlayers.Contains(name)) continue;
+                miniPlayers.Add(name);
+                if (PlayerRoster.Current.Find(name) == null) miniGuests.Add(name);
+            }
+            if (miniPlayers.Count == 0)
+                foreach (PlayerProfile p in PlayerRoster.Current.Selected) miniPlayers.Add(PlayerRoster.Clean(p.name));
+            miniExplore = MiniGameSession.Explore;
+            miniDistance = MiniGameSession.Distance;
+            SelectMiniGame(miniGame, true);
+            miniError = "";
+        }
+
+        private void SelectMiniGame(MiniGameId id, bool keepShots)
+        {
+            miniGame = id;
+            MiniGameInfo info = MiniGameCatalog.Get(id);
+            int last = MiniGameSession.Shots;
+            miniShots = keepShots && Array.IndexOf(info.ShotChoices, last) >= 0 ? last : info.ShotChoices[0];
+            if (!info.HasExplore) miniExplore = false;
+            while (miniPlayers.Count > info.MaxPlayers) miniPlayers.RemoveAt(miniPlayers.Count - 1);
+            miniDetailScroll = Vector2.zero;
+        }
+
+        private void StartMiniGame()
+        {
+            MiniGameInfo info = MiniGameCatalog.Get(miniGame);
+            if (miniPlayers.Count == 0) { miniError = "Pick at least one player."; return; }
+            string[] names = miniPlayers.ToArray();
+            MiniGameSession.Start(miniGame, names, miniShots, info.HasExplore && miniExplore, info.HasDistance ? miniDistance : 0);
+            // Mini games are played on the driving range.
+            CourseSession.SetPlayers(names);
+            CourseSession.Teams = null;
+            CourseSession.PracticeMode = false;
+            CourseSession.SetSession(RangeName, "Blue", 18);
+            CourseSession.SetCourse("", null);
+            CourseSession.SetHoles(18, 0, 18);
+            SceneManager.LoadScene(PlayScene);
+        }
+
+        private void DrawMiniGames(Rect r)
+        {
+            float leftW = Mathf.Clamp(r.width * 0.42f, 360f, 620f);
+            Rect left = new Rect(r.x, r.y, leftW, r.height);
+            Rect right = new Rect(left.xMax + 18f, r.y, r.width - leftW - 18f, r.height);
+
+            GUI.Label(new Rect(left.x, left.y, left.width, 40f), "MINI GAMES", GolfSimTheme.Title);
+            GUI.Label(new Rect(left.x, left.y + 40f, left.width, 20f), "Fun games on the range for 1 to 8 players", GolfSimTheme.Subtitle);
+
+            // Game cards by group.
+            string[] groups = { MiniGameCatalog.Target, MiniGameCatalog.Classic, MiniGameCatalog.Fun };
+            const float cardH = 66f, headH = 30f;
+            float total = 0f;
+            foreach (string g in groups)
+            {
+                total += headH;
+                foreach (MiniGameInfo info in MiniGameCatalog.All) if (info.Group == g) total += cardH + 6f;
+            }
+            Rect view = new Rect(left.x, left.y + 70f, left.width, left.height - 76f);
+            float innerW = view.width - (total > view.height ? 18f : 0f);
+            miniScroll = GUI.BeginScrollView(view, miniScroll, new Rect(0, 0, innerW, Mathf.Max(view.height, total)));
+            float y = 0f;
+            foreach (string g in groups)
+            {
+                GUI.Label(new Rect(0, y + 6f, innerW, 20f), g, new GUIStyle(GolfSimTheme.Label) { normal = { textColor = GolfSimTheme.Gold } });
+                y += headH;
+                foreach (MiniGameInfo info in MiniGameCatalog.All)
+                {
+                    if (info.Group != g) continue;
+                    Rect card = new Rect(0, y, innerW, cardH);
+                    bool on = info.Id == miniGame;
+                    if (GUI.Button(card, GUIContent.none, on ? GolfSimTheme.SelectedCard : GolfSimTheme.Card)) SelectMiniGame(info.Id, false);
+                    GUI.color = info.Accent;
+                    GUI.DrawTexture(new Rect(card.x + 4f, card.y + 8f, 6f, card.height - 16f), GolfSimTheme.White);
+                    GUI.color = Color.white;
+                    GUI.Label(new Rect(card.x + 22f, card.y + 10f, card.width - 34f, 24f), info.Name, new GUIStyle(GolfSimTheme.Heading) { normal = { textColor = on ? info.Accent : Color.white } });
+                    GUI.Label(new Rect(card.x + 22f, card.y + 36f, card.width - 34f, 20f), GolfSimTheme.Ellipsize(info.Tagline, GolfSimTheme.Subtitle, card.width - 34f), GolfSimTheme.Subtitle);
+                    y += cardH + 6f;
+                }
+            }
+            GUI.EndScrollView();
+
+            DrawMiniDetails(right);
+        }
+
+        private void DrawMiniDetails(Rect r)
+        {
+            MiniGameInfo info = MiniGameCatalog.Get(miniGame);
+            GUI.Box(r, GUIContent.none, GolfSimTheme.Card);
+            GUI.color = info.Accent;
+            GUI.DrawTexture(new Rect(r.x, r.y, r.width, 5f), GolfSimTheme.White);
+            GUI.color = Color.white;
+
+            float x = r.x + 22f, w = r.width - 44f;
+            Rect startRect = new Rect(x, r.yMax - 66f, w, 50f);
+            Rect view = new Rect(r.x + 4f, r.y + 10f, r.width - 8f, startRect.y - r.y - 18f);
+            var body = new GUIStyle(GolfSimTheme.Body) { wordWrap = true };
+            float innerW = view.width - 36f;
+            float howH = body.CalcHeight(new GUIContent(info.HowToPlay), innerW);
+            float scoreH = body.CalcHeight(new GUIContent(info.Scoring), innerW);
+            int rosterRows = (PlayerRoster.Current.players.Count + miniGuests.Count + 2) / 3;
+            float contentH = 110f + howH + scoreH + 60f + (info.HasExplore ? 76f : 0f) + (info.HasDistance ? 76f : 0f) + 76f + 40f + rosterRows * 46f + 60f;
+            miniDetailScroll = GUI.BeginScrollView(view, miniDetailScroll, new Rect(0, 0, view.width - 18f, Mathf.Max(view.height, contentH)));
+            float cx = 14f, y = 6f;
+
+            GUI.Label(new Rect(cx, y, innerW, 40f), info.Name, new GUIStyle(GolfSimTheme.Title) { normal = { textColor = info.Accent } });
+            y += 42f;
+            GUI.Label(new Rect(cx, y, innerW, 22f), info.Tagline, new GUIStyle(GolfSimTheme.Heading) { fontStyle = FontStyle.Normal });
+            y += 34f;
+            GUI.Label(new Rect(cx, y, innerW, 18f), "HOW TO PLAY", GolfSimTheme.Label);
+            y += 20f;
+            GUI.Label(new Rect(cx, y, innerW, howH), info.HowToPlay, body);
+            y += howH + 10f;
+            GUI.Label(new Rect(cx, y, innerW, 18f), "SCORING", GolfSimTheme.Label);
+            y += 20f;
+            GUI.Label(new Rect(cx, y, innerW, scoreH), info.Scoring, body);
+            y += scoreH + 18f;
+
+            if (info.HasExplore)
+            {
+                GUI.Label(new Rect(cx, y, innerW, 18f), "MODE", GolfSimTheme.Label);
+                y += 22f;
+                if (GUI.Button(new Rect(cx, y, innerW * 0.5f - 4f, 42f), "CHALLENGE  (scored)", !miniExplore ? GolfSimTheme.TabActive : GolfSimTheme.Button)) miniExplore = false;
+                if (GUI.Button(new Rect(cx + innerW * 0.5f + 4f, y, innerW * 0.5f - 4f, 42f), "EXPLORE  (free play)", miniExplore ? GolfSimTheme.TabActive : GolfSimTheme.Button)) miniExplore = true;
+                y += 54f;
+            }
+
+            if (info.HasDistance)
+            {
+                GUI.Label(new Rect(cx, y, innerW, 18f), "PIN DISTANCE", GolfSimTheme.Label);
+                y += 22f;
+                string u = " " + Units.DistanceUnit;
+                string[] labels = { "RANDOM", Units.Distance(60f).ToString("0") + "-" + Units.Distance(100f).ToString("0") + u, Units.Distance(100f).ToString("0") + "-" + Units.Distance(150f).ToString("0") + u, Units.Distance(150f).ToString("0") + "-" + Units.Distance(200f).ToString("0") + u };
+                float bw = (innerW - 24f) / 4f;
+                for (int i = 0; i < labels.Length; i++)
+                    if (GUI.Button(new Rect(cx + i * (bw + 8f), y, bw, 42f), labels[i], miniDistance == i ? GolfSimTheme.TabActive : GolfSimTheme.Button)) miniDistance = i;
+                y += 54f;
+            }
+
+            if (!(info.HasExplore && miniExplore))
+            {
+                GUI.Label(new Rect(cx, y, innerW, 18f), info.ShotsLabel, GolfSimTheme.Label);
+                y += 22f;
+                int[] choices = (int[])info.ShotChoices.Clone();
+                Array.Sort(choices);
+                float bw = Mathf.Min(110f, (innerW - 8f * (choices.Length - 1)) / choices.Length);
+                for (int i = 0; i < choices.Length; i++)
+                    if (GUI.Button(new Rect(cx + i * (bw + 8f), y, bw, 42f), choices[i].ToString(), miniShots == choices[i] ? GolfSimTheme.TabActive : GolfSimTheme.Button)) miniShots = choices[i];
+                y += 54f;
+            }
+            else
+            {
+                GUI.Label(new Rect(cx, y, innerW, 40f), "Explore has no score and no shot limit - press FINISH on the range when you are done.", body);
+                y += 54f;
+            }
+
+            // Players: the roster plus guests, tap to add / remove (order = playing order).
+            GUI.Label(new Rect(cx, y, innerW, 18f), "PLAYERS  " + miniPlayers.Count + " / " + info.MaxPlayers + "   (tap to add or remove - they play in the order picked)", GolfSimTheme.Label);
+            y += 24f;
+            var everyone = new List<string>();
+            foreach (PlayerProfile p in PlayerRoster.Current.players) everyone.Add(PlayerRoster.Clean(p.name));
+            foreach (string g in miniGuests) if (!everyone.Contains(g)) everyone.Add(g);
+            float pw = (innerW - 16f) / 3f;
+            for (int i = 0; i < everyone.Count; i++)
+            {
+                string name = everyone[i];
+                int order = miniPlayers.IndexOf(name);
+                Rect b = new Rect(cx + (i % 3) * (pw + 8f), y + (i / 3) * 46f, pw, 40f);
+                bool guest = miniGuests.Contains(name);
+                string text = (order >= 0 ? (order + 1) + ".  " : "") + name + (guest ? "  (guest)" : "");
+                if (GUI.Button(b, GolfSimTheme.Ellipsize(text, GolfSimTheme.Button, pw - 30f), order >= 0 ? GolfSimTheme.TabActive : GolfSimTheme.Button))
+                {
+                    miniError = "";
+                    if (order >= 0)
+                    {
+                        miniPlayers.RemoveAt(order);
+                        if (guest) miniGuests.Remove(name);
+                    }
+                    else if (miniPlayers.Count < info.MaxPlayers) miniPlayers.Add(name);
+                    else miniError = "Up to " + info.MaxPlayers + " players.";
+                }
+                GUI.color = PlayerRoster.Current.Find(name) != null ? PlayerRoster.ColorFor(name) : GolfSimTheme.Muted;
+                GUI.DrawTexture(new Rect(b.x + 8f, b.y + 15f, 10f, 10f), GolfSimTheme.White);
+                GUI.color = Color.white;
+            }
+            y += Mathf.Max(1, (everyone.Count + 2) / 3) * 46f + 4f;
+
+            // Guest (plays this game only, not added to the players list).
+            guestName = GUI.TextField(new Rect(cx, y, innerW - 170f, 40f), guestName ?? "", 24, GolfSimTheme.TextField);
+            if (string.IsNullOrEmpty(guestName)) GUI.Label(new Rect(cx + 12f, y + 10f, 260f, 20f), "Guest name…", GolfSimTheme.Subtitle);
+            if (GUI.Button(new Rect(cx + innerW - 160f, y, 160f, 40f), "+ ADD GUEST", GolfSimTheme.Button))
+            {
+                string g = PlayerRoster.Clean(guestName);
+                miniError = "";
+                if (string.IsNullOrEmpty(g)) miniError = "Type the guest's name first.";
+                else if (everyone.Exists(e => string.Equals(e, g, StringComparison.OrdinalIgnoreCase))) miniError = g + " is already on the list.";
+                else if (miniPlayers.Count >= info.MaxPlayers) miniError = "Up to " + info.MaxPlayers + " players.";
+                else { miniGuests.Add(g); miniPlayers.Add(g); guestName = ""; }
+            }
+            y += 48f;
+            if (miniError.Length > 0) GUI.Label(new Rect(cx, y, innerW, 20f), miniError, new GUIStyle(GolfSimTheme.Label) { normal = { textColor = GolfSimTheme.Bad } });
+            GUI.EndScrollView();
+
+            GUI.enabled = miniPlayers.Count > 0;
+            string start = "START  " + info.Name + "  •  " + miniPlayers.Count + (miniPlayers.Count == 1 ? " PLAYER" : " PLAYERS");
+            if (GUI.Button(startRect, start, new GUIStyle(GolfSimTheme.AccentButton) { fontSize = 18 })) StartMiniGame();
+            GUI.enabled = true;
         }
 
         private void DrawConfirmQuit(Rect r)

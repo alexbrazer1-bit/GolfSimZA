@@ -154,6 +154,13 @@ namespace GolfSimZA.Physics
             }
         }
 
+        /// <summary>Shows or hides the target green, flag and aim line (mini games draw their own targets).</summary>
+        public void SetTargetVisible(bool visible)
+        {
+            foreach (GameObject go in targetParts) if (go != null) go.SetActive(visible);
+            if (aimLine != null) aimLine.enabled = visible;
+        }
+
         public void RandomTarget(float maxDistance)
         {
             float distance = Random.Range(Mathf.Max(MinTarget, 40f), Mathf.Clamp(maxDistance, 60f, MaxTarget));

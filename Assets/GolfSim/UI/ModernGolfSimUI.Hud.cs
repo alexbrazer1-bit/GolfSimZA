@@ -68,8 +68,10 @@ namespace GolfSimZA.UI
             if (mapDirty && rangeMap != null)
             {
                 mapDirty = false;
-                float length = Mathf.Max(range.TargetDistance + 60f, 200f);
+                float length = miniGame != null && miniGame.Game != null ? miniGame.Game.MapLength : Mathf.Max(range.TargetDistance + 60f, 200f);
+                miniGame?.Game?.ShowMoving(false);
                 rangeMap.Render(new List<Vector3> { range.TeePosition + Vector3.back * 8f, range.TeePosition + Vector3.forward * length });
+                miniGame?.Game?.ShowMoving(true);
             }
             if (targetCam != null)
             {
@@ -163,12 +165,15 @@ namespace GolfSimZA.UI
             float hx = m + 130f;
             Rect header = new Rect(hx, m, 300f, 38f);
             Box(header, tmPanelDark);
-            Color pc = GolfSimZA.Players.PlayerRoster.ColorFor(ActiveClub.Player);
+            var miniPlayer = miniGame != null ? miniGame.CurrentPlayer : null;
+            Color pc = miniPlayer != null ? miniPlayer.Color : GolfSimZA.Players.PlayerRoster.ColorFor(ActiveClub.Player);
             GUI.color = pc;
             GUI.DrawTexture(new Rect(header.x + 8f, header.y + 7f, 24f, 24f), tmCircle);
             GUI.color = Color.white;
-            GUI.Label(new Rect(header.x + 40f, header.y, header.width - 48f, header.height), GolfSimTheme.Ellipsize(ActiveClub.Player.ToUpperInvariant() + "   •   DRIVING RANGE", tmHeader, header.width - 48f), tmHeader);
-            DrawRangePanel(header.xMax + 8f, m + 1f);
+            string where = miniGame != null ? "MINI GAMES" : "DRIVING RANGE";
+            GUI.Label(new Rect(header.x + 40f, header.y, header.width - 48f, header.height), GolfSimTheme.Ellipsize(ActiveClub.Player.ToUpperInvariant() + "   •   " + where, tmHeader, header.width - 48f), tmHeader);
+            // Range settings would rebuild the range under a mini game, so they are only offered in practice.
+            if (miniGame == null) DrawRangePanel(header.xMax + 8f, m + 1f);
 
             float headerEnd = header.xMax + 8f + 230f;
             float windX = Mathf.Max(Screen.width * 0.5f - 115f, headerEnd + 12f);
@@ -187,7 +192,9 @@ namespace GolfSimZA.UI
             // Session panel: left side, from the header down to the tiles.
             float sessionW = RangeTilesWidth;
             float sessionTop = m + 48f;
-            DrawSession(new Rect(m, sessionTop, sessionW, stackTop - 10f - sessionTop));
+            Rect sessionRect = new Rect(m, sessionTop, sessionW, stackTop - 10f - sessionTop);
+            if (miniGame != null) miniGame.DrawScoreboard(sessionRect);
+            else DrawSession(sessionRect);
 
             // Club selector (drawn last so its club list opens over the tiles) and the target distance.
             if (clubBar) ClubBar.Draw(m, Screen.height - m);
@@ -393,8 +400,16 @@ namespace GolfSimZA.UI
             RangeShot last = session.Count > 0 ? session[session.Count - 1] : null;
             Rect hr = new Rect(x, y, w, headerH);
             Box(hr, tmPanelDark);
-            GUI.Label(new Rect(hr.x, hr.y, w * 0.5f, headerH), "◎  " + (last != null ? Units.DistanceText(last.ToTarget, "0.0") : "—"), tmSmall);
-            GUI.Label(new Rect(hr.x + w * 0.5f, hr.y, w * 0.5f, headerH), "↔  " + (last != null ? ShotDataTiles.Side(Units.Distance(last.Offline), "R", "L") + " " + Units.DistanceUnit : "—"), tmSmall);
+            if (miniGame != null)
+            {
+                GUI.Label(new Rect(hr.x, hr.y, w * 0.5f, headerH), "CARRY  " + (last != null ? Units.DistanceText(last.Carry, "0.0") : "—"), tmSmall);
+                GUI.Label(new Rect(hr.x + w * 0.5f, hr.y, w * 0.5f, headerH), "TOTAL  " + (last != null ? Units.DistanceText(last.Total, "0.0") : "—"), tmSmall);
+            }
+            else
+            {
+                GUI.Label(new Rect(hr.x, hr.y, w * 0.5f, headerH), "◎  " + (last != null ? Units.DistanceText(last.ToTarget, "0.0") : "—"), tmSmall);
+                GUI.Label(new Rect(hr.x + w * 0.5f, hr.y, w * 0.5f, headerH), "↔  " + (last != null ? ShotDataTiles.Side(Units.Distance(last.Offline), "R", "L") + " " + Units.DistanceUnit : "—"), tmSmall);
+            }
             y = hr.yMax;
 
             Rect map = new Rect(x, y, w, mapH);
@@ -403,7 +418,9 @@ namespace GolfSimZA.UI
 
             Rect fr = new Rect(x, y, w, footH);
             Box(fr, tmPanelDark);
-            GUI.Label(fr, "TARGET " + Units.DistanceText(range.TargetDistance) + (last != null ? "     LAST " + Units.DistanceText(AppSettings.Current.rangeShowCarry ? last.Carry : last.Total) : ""), tmSmall);
+            string foot = miniGame != null && miniGame.Game != null ? miniGame.Game.StatusLine()
+                : "TARGET " + Units.DistanceText(range.TargetDistance) + (last != null ? "     LAST " + Units.DistanceText(AppSettings.Current.rangeShowCarry ? last.Carry : last.Total) : "");
+            GUI.Label(fr, GolfSimTheme.Ellipsize(foot, tmSmall, w - 8f), tmSmall);
         }
 
         private void DrawRangeMap(Rect area)
@@ -476,22 +493,30 @@ namespace GolfSimZA.UI
                 GUI.DrawTexture(new Rect(p.x - 1f, p.y - 1f, 2f, 2f), tmWhite);
             }
 
+            // Mini game pieces (creatures, barrels) that move or go.
+            if (miniGame != null && miniGame.Game != null) miniGame.Game.DrawMapMarks(to, tmCircle);
+
             // Target circle.
+            bool flagShown = miniGame == null || (miniGame.Game != null && miniGame.Game.ShowRangeTarget);
             float radius = Mathf.Max(range.GreenWidth * 0.5f, 4f);
             Vector2 tc = to(range.TargetPosition);
             float pr = Vector2.Distance(tc, to(range.TargetPosition + Vector3.right * radius));
             GUI.color = new Color(1f, 1f, 1f, 0.9f);
-            for (float a = 0f; a < 360f; a += 8f)
+            if (flagShown)
             {
-                Vector2 p = tc + new Vector2(Mathf.Cos(a * Mathf.Deg2Rad), Mathf.Sin(a * Mathf.Deg2Rad)) * pr;
-                GUI.DrawTexture(new Rect(p.x - 1.5f, p.y - 1.5f, 3f, 3f), tmWhite);
+                for (float a = 0f; a < 360f; a += 8f)
+                {
+                    Vector2 p = tc + new Vector2(Mathf.Cos(a * Mathf.Deg2Rad), Mathf.Sin(a * Mathf.Deg2Rad)) * pr;
+                    GUI.DrawTexture(new Rect(p.x - 1.5f, p.y - 1.5f, 3f, 3f), tmWhite);
+                }
+                GUI.DrawTexture(new Rect(tc.x - 2f, tc.y - 2f, 4f, 4f), tmCircle);
             }
-            GUI.DrawTexture(new Rect(tc.x - 2f, tc.y - 2f, 4f, 4f), tmCircle);
 
             // Shots of the selected club: every ball (latest bigger, ringed) and the spread.
-            List<RangeShot> shots = ClubShots(ActiveClub.Resolve());
+            // (Mini games: every ball of the game, any club.)
+            List<RangeShot> shots = miniGame != null ? session : ClubShots(ActiveClub.Resolve());
             bool carry = AppSettings.Current.rangeShowCarry;
-            if (shots.Count >= 2)
+            if (shots.Count >= 2 && miniGame == null)
             {
                 Vector2 mean = Vector2.zero;
                 foreach (RangeShot s in shots) { Vector3 p = carry ? s.Landing : s.Rest; mean += new Vector2(p.x, p.z); }

@@ -19,7 +19,7 @@ namespace GolfSimZA.Core
         private static GolfSimAudio instance;
 
         private AudioSource source;
-        private AudioClip strike, putt, land, cup, click, ready;
+        private AudioClip strike, putt, land, cup, click, ready, blast, catchClip, win;
         private int lastHotControl;
         private readonly Dictionary<AudioSource, float> courseVolumes = new Dictionary<AudioSource, float>();
 
@@ -60,6 +60,9 @@ namespace GolfSimZA.Core
             cup = Make("cup", 0.45f, Cup);
             click = Make("click", 0.035f, Click);
             ready = Make("ready", 0.55f, Ready);
+            blast = Make("blast", 1.1f, Blast);
+            catchClip = Make("catch", 0.7f, Catch);
+            win = Make("win", 1.2f, Win);
 
             ApplyVolumes();
             AppSettings.Changed += ApplyVolumes;
@@ -114,6 +117,13 @@ namespace GolfSimZA.Core
         }
 
         public static void PlayCup() { GolfSimAudio a = Instance; a.Play(a.cup, AppSettings.Current.volumeGolf, 1f); }
+
+        /// <summary>Mini games: barrel explosion.</summary>
+        public static void PlayBlast(float loud = 1f) { GolfSimAudio a = Instance; a.Play(a.blast, AppSettings.Current.volumeGolf * Mathf.Clamp01(loud), Random.Range(0.9f, 1.1f)); }
+        /// <summary>Mini games: creature caught / flag captured.</summary>
+        public static void PlayCatch() { GolfSimAudio a = Instance; a.Play(a.catchClip, AppSettings.Current.volumeGolf * 0.8f, 1f); }
+        /// <summary>Mini games: winner fanfare.</summary>
+        public static void PlayWin() { GolfSimAudio a = Instance; a.Play(a.win, AppSettings.Current.volumeGolf * 0.8f, 1f); }
 
         public static void PlayReady()
         {
@@ -205,6 +215,43 @@ namespace GolfSimZA.Core
         private static float Click(float t, float d, System.Random r)
         {
             return Mathf.Sin(2f * Mathf.PI * 1800f * t) * Mathf.Exp(-t * 180f);
+        }
+
+        // Deep boom: low falling rumble and crackle.
+        private static float Blast(float t, float d, System.Random r)
+        {
+            float boom = Mathf.Sin(2f * Mathf.PI * (70f - 35f * t / d) * t) * Mathf.Exp(-t * 4.5f);
+            float crackle = Noise(r) * Mathf.Exp(-t * 7f) * (0.7f + 0.3f * Mathf.Sin(t * 90f));
+            return (boom + crackle * 0.8f) * Mathf.Min(1f, t * 600f);
+        }
+
+        // Rising sparkle: three quick notes (C6, E6, G6) with shimmer.
+        private static float Catch(float t, float d, System.Random r)
+        {
+            float v = 0f;
+            float[] f = { 1047f, 1319f, 1568f };
+            for (int i = 0; i < 3; i++)
+            {
+                float u = t - i * 0.08f;
+                if (u < 0f) continue;
+                v += Mathf.Sin(2f * Mathf.PI * f[i] * u) * Mathf.Exp(-u * 7f) * (1f + 0.2f * Mathf.Sin(u * 60f));
+            }
+            return v * Mathf.Min(1f, t * 400f);
+        }
+
+        // Short fanfare: C5, E5, G5, C6.
+        private static float Win(float t, float d, System.Random r)
+        {
+            float v = 0f;
+            float[] f = { 523f, 659f, 784f, 1047f };
+            for (int i = 0; i < 4; i++)
+            {
+                float u = t - i * 0.13f;
+                if (u < 0f) continue;
+                float hold = i == 3 ? 3f : 9f;
+                v += (Mathf.Sin(2f * Mathf.PI * f[i] * u) + 0.3f * Mathf.Sin(4f * Mathf.PI * f[i] * u)) * Mathf.Exp(-u * hold);
+            }
+            return v * Mathf.Min(1f, t * 400f);
         }
 
         // Two soft notes (G5, C6).
