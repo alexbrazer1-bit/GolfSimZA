@@ -73,12 +73,16 @@ namespace GolfSimZA.EditorTools
             }
         }
 
+        [MenuItem("GolfSimZA/Test/Mini games - Edge Knockout (canyon map)")]
+        private static void MiniGameEdge() => RunMiniGames(string.Join(";",
+            "3:12:0:0:Tester A,Tester B,Tester C:again",
+            "3:6:0:0:Tester A"));
+
         [MenuItem("GolfSimZA/Test/Mini games - play all 8 games automatically")]
         private static void MiniGames()
         {
-            if (EditorApplication.isPlaying) { Debug.LogWarning("[GolfSimZA] Stop Play mode first."); return; }
             // game : shots : explore : distance : players [: again]
-            string queue = string.Join(";",
+            RunMiniGames(string.Join(";",
                 "0:2:0:2:Tester A,Tester B,Tester C:again",
                 "1:3:0:0:Tester A,Tester B",
                 "2:3:0:0:Tester A,Tester B",
@@ -88,7 +92,12 @@ namespace GolfSimZA.EditorTools
                 "5:3:0:0:Tester A,Tester B",
                 "6:3:0:0:Tester A,Tester B",
                 "6:5:1:0:Tester A",
-                "7:3:0:0:Tester A,Tester B");
+                "7:3:0:0:Tester A,Tester B"));
+        }
+
+        private static void RunMiniGames(string queue)
+        {
+            if (EditorApplication.isPlaying) { Debug.LogWarning("[GolfSimZA] Stop Play mode first."); return; }
             PlayerPrefs.SetString(GolfSimZA.Testing.MiniGameAutoTester.QueueKey, queue);
             PlayerPrefs.SetInt(GolfSimZA.Testing.MiniGameAutoTester.FlagKey, 1);
             string[] first = queue.Split(';')[0].Split(':');

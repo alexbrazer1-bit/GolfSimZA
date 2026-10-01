@@ -18,6 +18,8 @@ namespace GolfSimZA.Physics
     public sealed class BallFlightSimulator : MonoBehaviour
     {
         private const float Step = 0.01f;
+        /// <summary>A drop bigger than this in one roll step is a ledge: the ball falls off it.</summary>
+        private const float LedgeDrop = 0.5f;
         private const float BallRadius = 0.02135f;
         private const float BallMass = 0.04593f;
         private const float BallArea = Mathf.PI * BallRadius * BallRadius;
@@ -459,6 +461,14 @@ namespace GolfSimZA.Physics
 
             Vector3 next = ball.position + velocity * dt;
             float nextHeight = GroundProbe.HeightAt(next);
+            if (ball.position.y - BallRadius - nextHeight > LedgeDrop)
+            {
+                // Rolled off a ledge (a cliff edge, a wall): the ball falls instead of jumping down.
+                ball.position = new Vector3(next.x, ball.position.y, next.z);
+                airborne = true;
+                rolling = false;
+                return;
+            }
             ball.position = new Vector3(next.x, nextHeight + BallRadius, next.z);
             totalMeters = HorizontalDistance(ball.position, launchPosition);
             currentSpinRpm = Mathf.MoveTowards(currentSpinRpm, 0f, Mathf.Max(1f, currentSpinRpm) * rollSpinDecayPerSecond * dt);

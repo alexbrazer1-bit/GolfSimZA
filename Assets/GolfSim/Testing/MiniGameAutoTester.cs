@@ -41,6 +41,7 @@ namespace GolfSimZA.Testing
         private int shotsSent, shotsScored, lastScoredTotal;
         private string lastClub;
         private float lastExpected;
+        private bool fallPicture, mapPicture;
         private bool resultsSeen, playAgainDone, testPlayAgain, pictureTaken, resultsPicture;
         private int exploreLimit;
         private float resultsAt = -1f;
@@ -83,7 +84,14 @@ namespace GolfSimZA.Testing
                 if (problems.Count < 200) problems.Add((item ?? "") + " • " + type + ": " + message + (string.IsNullOrEmpty(stack) ? "" : "  @ " + stack.Split('\n')[0]));
             }
             else if (message.StartsWith("[GolfSimZA] Mini game"))
+            {
                 report.AppendLine("  " + message.Substring(12));
+                if (!fallPicture && runner != null && (message.Contains("CANYON") || message.Contains("SIDE OF THE CLIFF")))
+                {
+                    fallPicture = true;
+                    Picture("fall");
+                }
+            }
         }
 
         /// <summary>Queue item: game id : shots : explore (0/1) : distance : players (comma list) [: again].</summary>
@@ -107,7 +115,7 @@ namespace GolfSimZA.Testing
             shots = null;
             flight = null;
             shotsSent = shotsScored = lastScoredTotal = 0;
-            resultsSeen = playAgainDone = pictureTaken = resultsPicture = false;
+            resultsSeen = playAgainDone = pictureTaken = resultsPicture = mapPicture = false;
             resultsAt = -1f;
             itemStart = lastProgress = Time.unscaledTime;
             nextShotAt = Time.unscaledTime + 3f;
@@ -175,6 +183,15 @@ namespace GolfSimZA.Testing
             if (GetField<float>(runner, "nextTurnAt") > 0f || GetField<float>(runner, "finishAt") > 0f) return;
 
             if (shotsSent == 2 && !pictureTaken) { Picture("play"); pictureTaken = true; }
+            // Once per game: the enlarged map (as if the corner map was clicked).
+            if (shotsSent == 3 && !mapPicture)
+            {
+                mapPicture = true;
+                typeof(ModernGolfSimUI).GetField("mapExpanded", F).SetValue(range, true);
+                Picture("map");
+                StartCoroutine(CloseMapLater());
+                return;
+            }
             if (lastClub != null && flight.CarryMeters > 1f && lastExpected > 1f)
                 carryRatio[lastClub] = Mathf.Lerp(carryRatio.TryGetValue(lastClub, out float r0) ? r0 : 1f, flight.CarryMeters / lastExpected, 0.6f);
             Hit();
@@ -186,6 +203,13 @@ namespace GolfSimZA.Testing
             MiniPlayer p = runner.CurrentPlayer;
             if (p == null) return;
             Vector3 target = runner.Game.AimHint(p);
+            // Edge Knockout on its cliff map: now and then go long over the edge or wide off the side,
+            // so falling into the canyon gets tested too.
+            if (runner.Info.Id == MiniGameId.EdgeKnockout)
+            {
+                if (shotsSent % 4 == 3) target += Vector3.forward * 30f;
+                else if (shotsSent % 4 == 1) target += Vector3.right * (shotsSent % 8 == 1 ? 60f : -60f);
+            }
             float distance = new Vector2(target.x, target.z).magnitude;
 
             // Shortest club that carries far enough (from this test's own carries), softer if needed.
@@ -270,6 +294,12 @@ namespace GolfSimZA.Testing
             string file = Path.Combine(logsDir, (itemIndex + 1).ToString("00") + "-" + runner.Info.Id + "-" + what + ".png");
             StartCoroutine(Grab(file));
             report.AppendLine("  picture: Logs/minigames/" + Path.GetFileName(file));
+        }
+
+        private System.Collections.IEnumerator CloseMapLater()
+        {
+            yield return new WaitForSecondsRealtime(1.5f);
+            if (range != null) typeof(ModernGolfSimUI).GetField("mapExpanded", F).SetValue(range, false);
         }
 
         /// <summary>Reads the finished frame (3D view and the HUD) into a PNG.</summary>

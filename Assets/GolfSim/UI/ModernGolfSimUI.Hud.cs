@@ -28,6 +28,8 @@ namespace GolfSimZA.UI
         private int sessionNumber;
         private HoleMapCamera rangeMap;
         private bool mapDirty = true;
+        /// <summary>The range / mini game map is shown enlarged in the middle of the screen.</summary>
+        private bool mapExpanded;
         private Camera targetCam;
         private RenderTexture targetTexture;
         private Vector2 sessionScroll;
@@ -160,6 +162,12 @@ namespace GolfSimZA.UI
         {
             EnsureHudStyles();
             float m = Mathf.Clamp(Screen.width * 0.015f, 10f, 24f);
+            // The enlarged map is on top of everything: it takes the clicks first, and is drawn last.
+            if (mapExpanded && Event.current.type != EventType.Repaint)
+            {
+                DrawExpandedMap(m);
+                if (Event.current.isMouse || Event.current.type == EventType.ScrollWheel) Event.current.Use();
+            }
 
             // Header: player and range settings (the MENU button sits left of it).
             float hx = m + 130f;
@@ -210,6 +218,35 @@ namespace GolfSimZA.UI
 
             // Right: target view and range map.
             DrawRightPanel(m, settings);
+            if (mapExpanded && Event.current.type == EventType.Repaint) DrawExpandedMap(m);
+        }
+
+        /// <summary>The map enlarged (about 3× the corner map) in the middle of the screen: click or drag on it to aim.</summary>
+        private Rect ExpandedMapRect(float m)
+        {
+            float small = Mathf.Clamp(Screen.width * 0.2f, 220f, 320f) * 1.5f;
+            float h = Mathf.Min(small * 3f, Screen.height - 2f * m - 70f);
+            float w = h / 1.5f;
+            return new Rect((Screen.width - w) * 0.5f, m + 54f, w, h);
+        }
+
+        private void DrawExpandedMap(float m)
+        {
+            Rect map = ExpandedMapRect(m);
+            Rect frame = new Rect(map.x - 8f, map.y - 46f, map.width + 16f, map.height + 54f);
+            Event e = Event.current;
+            // A click outside the enlarged map closes it.
+            if (e.type == EventType.MouseDown && !frame.Contains(e.mousePosition)) { mapExpanded = false; return; }
+            if (e.type == EventType.Repaint)
+            {
+                GUI.color = new Color(0f, 0f, 0f, 0.55f);
+                GUI.DrawTexture(new Rect(0, 0, Screen.width, Screen.height), tmWhite);
+                GUI.color = Color.white;
+            }
+            Box(frame, tmPanelDark);
+            GUI.Label(new Rect(frame.x + 12f, frame.y + 6f, frame.width - 140f, 32f), (miniGame != null && miniGame.Info != null ? miniGame.Info.Name : "RANGE MAP") + "  •  CLICK TO AIM", new GUIStyle(tmHeader) { fontSize = 14, wordWrap = false });
+            if (GUI.Button(new Rect(frame.xMax - 124f, frame.y + 6f, 114f, 32f), "✕  CLOSE", GolfSimTheme.SmallButton)) { mapExpanded = false; return; }
+            DrawRangeMap(map, true);
         }
 
         private float TargetOrAimDistance()
@@ -413,7 +450,9 @@ namespace GolfSimZA.UI
             y = hr.yMax;
 
             Rect map = new Rect(x, y, w, mapH);
-            DrawRangeMap(map);
+            DrawRangeMap(map, false);
+            if (!mapExpanded)
+                GUI.Label(new Rect(map.x + 4f, map.y + 3f, map.width - 8f, 16f), "⤢ CLICK TO ENLARGE", new GUIStyle(tmMapLabel) { alignment = TextAnchor.MiddleRight });
             y = map.yMax;
 
             Rect fr = new Rect(x, y, w, footH);
@@ -423,16 +462,25 @@ namespace GolfSimZA.UI
             GUI.Label(fr, GolfSimTheme.Ellipsize(foot, tmSmall, w - 8f), tmSmall);
         }
 
-        private void DrawRangeMap(Rect area)
+        private void DrawRangeMap(Rect area, bool big)
         {
             Box(area, tmPanelDark);
             if (rangeMap == null || !rangeMap.HasImage) return;
             GUI.DrawTexture(area, rangeMap.Texture, ScaleMode.StretchToFill);
 
-            // Click / drag on the map: put the aim target there.
             Event e = Event.current;
-            if ((e.type == EventType.MouseDown || e.type == EventType.MouseDrag) && e.button == 0 && area.Contains(e.mousePosition)
-                && aimPointer != null && aimPointer.CanInteract != null && aimPointer.CanInteract()
+            // The corner map: a click enlarges it (3× the size) so everything can be seen and picked.
+            if (!big)
+            {
+                if (!mapExpanded && e.type == EventType.MouseDown && e.button == 0 && area.Contains(e.mousePosition) && !GameMenuOverlay.IsOpen)
+                {
+                    mapExpanded = true;
+                    e.Use();
+                }
+            }
+            // The enlarged map: click / drag on it to put the aim target there.
+            else if ((e.type == EventType.MouseDown || e.type == EventType.MouseDrag) && e.button == 0 && area.Contains(e.mousePosition)
+                && aimPointer != null && flight != null && !flight.IsInFlight && !GameMenuOverlay.IsOpen && (miniGame == null || !miniGame.BlocksInput)
                 && rangeMap.FromMap(e.mousePosition, area, out Vector3 point))
             {
                 aimPointer.Set(range.TeePosition, point);

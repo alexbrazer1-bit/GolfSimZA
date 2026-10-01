@@ -64,7 +64,7 @@ namespace GolfSimZA.MiniGames
             {
                 Id = MiniGameId.EdgeKnockout, Name = "EDGE KNOCKOUT", Group = Target, Accent = new Color(0.90f, 0.30f, 0.55f),
                 Tagline = "Stop it close to the edge - but never over",
-                HowToPlay = "A red edge line crosses the range with a scoring zone in front of it. Your ball must stop inside the zone - short of it or over the edge and you are out. The zone gets smaller every round.",
+                HowToPlay = "Play from the rim of a red-rock canyon. A grass cliff-top runs out to a sheer drop - the edge - with a scoring zone in front of it. Your ball must stop inside the zone: short of it, wide of it or over the edge (down into the canyon!) and you are out. The zone gets smaller every round.",
                 Scoring = "With friends: every round the player furthest from the edge (or out of the zone) is knocked out - last one standing wins. On your own: survive as many rounds as you can.",
                 ShotChoices = new[] { 12 }, ShotsLabel = "ROUNDS (MAX)"
             },
@@ -72,7 +72,7 @@ namespace GolfSimZA.MiniGames
             {
                 Id = MiniGameId.CaptureFlags, Name = "CAPTURE THE FLAGS", Group = Target, Accent = new Color(0.30f, 0.85f, 0.50f),
                 Tagline = "Claim flags - and steal them from your friends",
-                HowToPlay = "Nine flags stand around the range. Land your ball inside a flag's ring to claim it in your colour. A flag someone else holds can be stolen back.",
+                HowToPlay = "Nine numbered flags stand in circles around the range. Land your ball inside a circle to take the flag - the circle fills with your colour and your ball mark stays. Someone else takes it from you only by landing inside AND closer to the flag than your ball.",
                 Scoring = "The player holding the most flags after the last shot wins (tie: closest average shot).",
                 ShotChoices = new[] { 6, 4, 8, 10 }
             },

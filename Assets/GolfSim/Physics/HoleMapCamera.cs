@@ -28,7 +28,7 @@ namespace GolfSimZA.Physics
             cam.farClipPlane = 3000f;
             // Leave out the ball, markers and other helpers on the Ignore Raycast layer.
             cam.cullingMask = ~(1 << GroundProbe.IgnoreRaycastLayer);
-            texture = new RenderTexture(512, 768, 24) { name = "GolfSimZA_HoleMap", antiAliasing = 2 };
+            texture = new RenderTexture(1024, 1536, 24) { name = "GolfSimZA_HoleMap", antiAliasing = 2 };
             cam.targetTexture = texture;
         }
 

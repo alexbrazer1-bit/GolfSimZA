@@ -214,7 +214,7 @@ namespace GolfSimZA.MiniGames
             {
                 bool any = false;
                 foreach (BarrelSpot b in barrels) if (!b.Gone && Flat(b.Pos, c) < 14f) { any = true; break; }
-                if (any) Runner.WorldLabel(cam, c + Vector3.up * 5f, Units.Distance(c.magnitude).ToString("0") + " " + Units.DistanceUnit, Color.white, 12);
+                if (any) Runner.WorldLabel(cam, c + Vector3.up * 6f, Units.Distance(c.magnitude).ToString("0") + " " + Units.DistanceUnit, Color.white, 12, c + Vector3.up * 2.6f);
             }
         }
     }
@@ -490,7 +490,7 @@ namespace GolfSimZA.MiniGames
                 if (c.T == null) continue;
                 bool rare = c.Kind.Rare;
                 string text = Explore ? c.Kind.Name : c.Kind.Name + "  " + c.Kind.Points;
-                Runner.WorldLabel(cam, c.T.position + Vector3.up * (c.Kind.Habitat == 3 ? 3.5f : 3.2f), text, rare ? new Color(1f, 0.85f, 0.25f) : Color.Lerp(c.Kind.Colour, Color.white, 0.6f), rare ? 14 : 11);
+                Runner.WorldLabel(cam, c.T.position + Vector3.up * (c.Kind.Habitat == 3 ? 3.5f : 3.2f), text, rare ? new Color(1f, 0.75f, 0.1f) : c.Kind.Colour, rare ? 14 : 11, c.T.position + Vector3.up * 1.4f);
             }
         }
 

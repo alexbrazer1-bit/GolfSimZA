@@ -93,7 +93,7 @@ namespace GolfSimZA.UI
             Wind.NewHole(Vector3.forward);
             aimPointer = gameObject.AddComponent<AimPointer>();
             aimPointer.MaxDistance = RangeEnvironment.MaxTarget + 60f;
-            aimPointer.CanInteract = () => !GameMenuOverlay.IsOpen && flight != null && !flight.IsInFlight && !panelOpen && (miniGame == null || !miniGame.BlocksInput);
+            aimPointer.CanInteract = () => !GameMenuOverlay.IsOpen && flight != null && !flight.IsInFlight && !panelOpen && (miniGame == null || !miniGame.BlocksInput) && !mapExpanded;
             aimPointer.Moved += p => { aimMoved = true; ApplyRangeAim(false); };
             dispersion = GolfSimZA.Visual.ShotDispersion.Attach(gameObject, flight);
             if (mini)
@@ -346,7 +346,7 @@ namespace GolfSimZA.UI
             // Distance numbers on both sides of the range. Far lines bunch up near the horizon,
             // so a line is only labelled when it is far enough (on screen) from the last label.
             float lastY = float.MaxValue;
-            if (AppSettings.Current.rangeDistanceLines)
+            if (AppSettings.Current.rangeDistanceLines && range.RangeWorldShown)
             foreach (float d in range.MarkerDistances)
             {
                 Vector3 left = new Vector3(-range.FairwayWidth * 0.36f, 0.2f, d);

@@ -54,6 +54,8 @@ namespace GolfSimZA.MiniGames
         private GUIStyle label, shadow, bannerText, bannerSub, rowName, rowScore, rowMuted, head, caption, bigTitle, rulesText;
         private Texture2D dot, bar, dim, panel, rowTex, rowActive;
         private readonly List<Rect> labelRects = new List<Rect>();
+        private GUIStyle tagText;
+        private Texture2D tagFill, tagShadow, stemTex;
 
         // ------------------------------------------------------------ Set-up
 
@@ -126,7 +128,22 @@ namespace GolfSimZA.MiniGames
             nextTurnAt = finishAt = -1f;
             banner = announce = null;
             shooter = -1;
+            // A game with its own map hides the driving range (ground, fairway, trees, range grass).
+            bool ownMap = Game.HasOwnMap;
+            range.ShowRangeWorld(!ownMap);
             Game.Build();
+            if (ownMap)
+            {
+                UnityEngine.Physics.SyncTransforms();
+                GolfSimZA.Physics.TreeField trees = range.GetComponent<GolfSimZA.Physics.TreeField>();
+                if (trees != null) Game.PlantTrees(trees);
+                GolfSimZA.Visual.GrassField grass = range.GetComponent<GolfSimZA.Visual.GrassField>();
+                if (grass != null)
+                {
+                    grass.Exclude = null; // grass grows on the map's own rough
+                    grass.Clear();
+                }
+            }
             MapDirty = true;
             SetTurn(0);
             Announce(Info.Name);
@@ -261,6 +278,10 @@ namespace GolfSimZA.MiniGames
             bigTitle = new GUIStyle(GolfSimTheme.Title) { fontSize = 30, alignment = TextAnchor.MiddleCenter };
             rulesText = new GUIStyle(GolfSimTheme.Body) { wordWrap = true, fontSize = 13 };
             dot = GolfSimTheme.Rounded(Color.white, 32);
+            tagText = new GUIStyle(GUI.skin.label) { fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleCenter, clipping = TextClipping.Overflow, padding = new RectOffset(0, 0, 0, 0), normal = { textColor = new Color(0.08f, 0.09f, 0.10f) } };
+            tagFill = GolfSimTheme.Tex(new Color(0.98f, 0.98f, 0.97f, 0.96f));
+            tagShadow = GolfSimTheme.Tex(new Color(0f, 0f, 0f, 0.35f));
+            stemTex = GolfSimTheme.Tex(new Color(0.1f, 0.1f, 0.1f, 0.8f));
             bar = GolfSimTheme.Tex(Color.white);
             dim = GolfSimTheme.Tex(new Color(0f, 0.02f, 0.03f, 0.7f));
             panel = GolfSimTheme.Rounded(new Color(0.04f, 0.05f, 0.07f, 0.94f), 8);
@@ -274,22 +295,44 @@ namespace GolfSimZA.MiniGames
         }
 
         /// <summary>Text over a point in the world (with a shadow), if it is on screen.</summary>
-        public void WorldLabel(Camera cam, Vector3 world, string text, Color colour, int size)
+        /// <summary>
+        /// A white tag with dark bold text over a point in the world (easy to read on grass and sky),
+        /// with a coloured bar on the left for owned / special things and an optional thin stem down
+        /// to <paramref name="stemTo"/> (the flag or target it belongs to). Tags never overlap: one
+        /// that would cover an earlier tag is skipped.
+        /// </summary>
+        public void WorldLabel(Camera cam, Vector3 world, string text, Color colour, int size, Vector3? stemTo = null)
         {
             if (cam == null || string.IsNullOrEmpty(text)) return;
             Vector3 s = cam.WorldToScreenPoint(world);
             if (s.z < 1f || s.x < -60f || s.x > Screen.width + 60f || s.y < -30f || s.y > Screen.height + 30f) return;
             EnsureStyles();
-            label.fontSize = shadow.fontSize = size;
-            label.normal.textColor = colour;
-            // Labels never pile on top of each other: one that would overlap an earlier one is skipped.
-            Vector2 size2 = label.CalcSize(new GUIContent(text));
-            Rect used = new Rect(s.x - size2.x * 0.5f - 3f, Screen.height - s.y - size2.y * 0.5f - 1f, size2.x + 6f, size2.y + 2f);
-            foreach (Rect o in labelRects) if (o.Overlaps(used)) return;
-            labelRects.Add(used);
-            Rect r = new Rect(s.x - 100f, Screen.height - s.y - 12f, 200f, 24f);
-            GUI.Label(new Rect(r.x + 1.5f, r.y + 1.5f, r.width, r.height), text, shadow);
-            GUI.Label(r, text, label);
+            tagText.fontSize = Mathf.Max(13, size + 2);
+            Vector2 ts = tagText.CalcSize(new GUIContent(text));
+            bool accent = colour.r + colour.g + colour.b < 2.7f; // white means "no accent"
+            float barW = accent ? 6f : 0f;
+            Rect box = new Rect(Mathf.Round(s.x - (ts.x + 12f + barW) * 0.5f), Mathf.Round(Screen.height - s.y - ts.y - 6f), ts.x + 12f + barW, ts.y + 4f);
+            foreach (Rect o in labelRects) if (o.Overlaps(box)) return;
+            labelRects.Add(box);
+
+            if (stemTo.HasValue)
+            {
+                Vector3 g = cam.WorldToScreenPoint(stemTo.Value);
+                if (g.z > 1f)
+                {
+                    float gy = Screen.height - g.y;
+                    if (gy > box.yMax) GUI.DrawTexture(new Rect(Mathf.Round(s.x) - 1f, box.yMax, 2f, gy - box.yMax), stemTex);
+                }
+            }
+            GUI.DrawTexture(new Rect(box.x + 2f, box.y + 2f, box.width, box.height), tagShadow);
+            GUI.DrawTexture(box, tagFill);
+            if (accent)
+            {
+                GUI.color = new Color(colour.r, colour.g, colour.b, 1f);
+                GUI.DrawTexture(new Rect(box.x, box.y, barW, box.height), bar);
+                GUI.color = Color.white;
+            }
+            GUI.Label(new Rect(box.x + barW, box.y, box.width - barW, box.height), text, tagText);
         }
 
         private void OnGUI()
@@ -323,7 +366,10 @@ namespace GolfSimZA.MiniGames
                     GUI.DrawTexture(new Rect(b.x, b.y, b.width, 4f), bar);
                     GUI.color = Color.white;
                     GUI.Label(new Rect(b.x + 10f, b.y + 4f, b.width - 20f, 18f), who != null ? who.Name.ToUpperInvariant() : "", bannerSub);
-                    GUI.Label(new Rect(b.x + 10f, b.y + 20f, b.width - 20f, 40f), banner, new GUIStyle(bannerText) { fontSize = 21 });
+                    var bs = new GUIStyle(bannerText) { fontSize = 21, wordWrap = false };
+                    // One line: the text shrinks to fit the banner.
+                    while (bs.fontSize > 12 && bs.CalcSize(new GUIContent(banner)).x > b.width - 20f) bs.fontSize--;
+                    GUI.Label(new Rect(b.x + 10f, b.y + 20f, b.width - 20f, 40f), banner, bs);
                 }
                 else if (CurrentPlayer != null && !flying)
                 {

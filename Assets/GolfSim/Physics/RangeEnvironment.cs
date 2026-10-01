@@ -161,6 +161,24 @@ namespace GolfSimZA.Physics
             if (aimLine != null) aimLine.enabled = visible;
         }
 
+        /// <summary>
+        /// Shows or hides the range itself (ground and its collider, fairway, rough, distance lines,
+        /// foothills, aim line) for a mini game that brings its own map. The tee mat and the far
+        /// mountains stay.
+        /// </summary>
+        public void ShowRangeWorld(bool show)
+        {
+            RangeWorldShown = show;
+            foreach (GameObject go in built)
+            {
+                if (go == null) continue;
+                if (go.name == "Range_TeeMat" || go.name == "Range_Mountains") continue;
+                go.SetActive(show);
+            }
+        }
+
+        public bool RangeWorldShown { get; private set; } = true;
+
         public void RandomTarget(float maxDistance)
         {
             float distance = Random.Range(Mathf.Max(MinTarget, 40f), Mathf.Clamp(maxDistance, 60f, MaxTarget));
