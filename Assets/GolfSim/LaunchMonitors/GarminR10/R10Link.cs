@@ -1,0 +1,620 @@
+using System;
+using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.Net;
+using System.Net.Sockets;
+using System.Text;
+using GolfSimZA.Core;
+using GolfSimZA.LaunchMonitors;
+using UnityEngine;
+
+namespace GolfSimZA.LaunchMonitors.GarminR10
+{
+    /// <summary>
+    /// Garmin Approach R10 OpenConnect receiver - ONE for the whole app.
+    ///
+    /// The R10 bridge owns the Bluetooth transport and connects to this TCP
+    /// server on port 921.  The bridge may emit club metrics and ball metrics
+    /// as separate OpenConnect packets for the same ShotNumber.  This receiver
+    /// deliberately assembles those packets before publishing one ShotData.
+    ///
+    /// It lives on its own object that survives scene changes (DontDestroyOnLoad), so entering
+    /// or leaving a round, the range or a mini game never closes the TCP server: the bridge stays
+    /// connected and the R10 stays armed. The play scenes talk to it through
+    /// <see cref="GarminR10Adapter"/>. It closes only when the app quits.
+    /// </summary>
+    public sealed class R10Link : MonoBehaviour
+    {
+        private int listenPort = 921;
+        private bool allowNetworkConnections;
+        private bool sendReadyHeartbeat = true;
+        private float heartbeatIntervalSeconds = 2f;
+
+        private static R10Link instance;
+        private static bool quitting;
+
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+        private static void ResetStatics() { instance = null; quitting = false; }
+
+        /// <summary>The app's receiver (created on first use; null while the app is quitting).</summary>
+        public static R10Link Get(int port, bool allowNetwork, bool heartbeat, float heartbeatSeconds)
+        {
+            if (instance != null) return instance;
+            if (quitting) return null;
+            var go = new GameObject("GolfSimZA_R10Link");
+            DontDestroyOnLoad(go);
+            instance = go.AddComponent<R10Link>();
+            instance.listenPort = port;
+            instance.allowNetworkConnections = allowNetwork;
+            instance.sendReadyHeartbeat = heartbeat;
+            instance.heartbeatIntervalSeconds = heartbeatSeconds;
+            return instance;
+        }
+
+        public static R10Link Instance => instance;
+
+        private TcpListener listener;
+        private TcpClient client;
+        private readonly ConcurrentQueue<string> incoming = new ConcurrentQueue<string>();
+        private readonly ConcurrentQueue<ShotData> shots = new ConcurrentQueue<ShotData>();
+        private readonly StringBuilder streamBuffer = new StringBuilder();
+        private readonly Dictionary<int, PendingShot> pendingShots = new Dictionary<int, PendingShot>();
+        private readonly HashSet<int> publishedShots = new HashSet<int>();
+        private volatile bool stopping;
+        // Set from socket threads, applied on the main thread (the shot dictionaries are not thread safe).
+        private volatile bool resetShotStateRequested;
+        private float nextHeartbeat;
+        private string lastPacketSummary = "None";
+        private string shownPacketSummary;
+
+        public string DeviceName => "Garmin Approach R10";
+        /// <summary>The bridge is connected to the TCP server.</summary>
+        public bool IsConnected { get; private set; }
+        public bool IsListening { get; private set; }
+        public int ListenPort => listenPort;
+        public string LastPacketSummary => lastPacketSummary;
+        public event Action<ShotData> ShotReceived;
+
+        [Serializable]
+        private sealed class OpenConnectMessage
+        {
+            public string DeviceID;
+            public string Units;
+            public int ShotNumber;
+            public string APIversion;
+            public string APIVersion;
+            public BallData BallData;
+            public ClubData ClubData;
+            public ShotDataOptions ShotDataOptions;
+            /// <summary>GolfSimZA R10 bridge: Bluetooth link, battery and ready state of the R10.</summary>
+            public R10StatusData R10Status;
+
+            // Legacy/bridge aliases. They are optional and only used when a
+            // bridge emits R10-style fields outside the standard BallData object.
+            public double BallSpeed;
+            public double LaunchAngle;
+            public double LaunchDirection;
+            public double SpinAxis;
+            public double TotalSpin;
+        }
+
+        [Serializable]
+        private sealed class BallData
+        {
+            public double Speed;
+            public double SpinAxis;
+            public double TotalSpin;
+            public double BackSpin;
+            public double SideSpin;
+            public double HLA;
+            public double VLA;
+            public double CarryDistance;
+        }
+
+        [Serializable]
+        private sealed class ClubData
+        {
+            public double Speed;
+            public double AngleOfAttack;
+            public double FaceToTarget;
+            public double Lie;
+            public double Loft;
+            public double Path;
+            public double SpeedAtImpact;
+            public double VerticalFaceImpact;
+            public double HorizontalFaceImpact;
+            public double ClosureRate;
+        }
+
+        [Serializable]
+        private sealed class R10StatusData
+        {
+            public bool Connected;
+            public int Battery = -1;
+            public bool Ready;
+            public string State;
+            public string DeviceName;
+            public string Model;
+            public string Firmware;
+            public string Message;
+        }
+
+        [Serializable]
+        private sealed class ShotDataOptions
+        {
+            public bool ContainsBallData;
+            public bool ContainsClubData;
+            public bool LaunchMonitorIsReady;
+            public bool LaunchMonitorBallDetected;
+            public bool IsHeartBeat;
+        }
+
+        private sealed class PendingShot
+        {
+            public BallData Ball;
+            public ClubData Club;
+        }
+
+        private sealed class ReadState
+        {
+            public TcpClient Client;
+            public NetworkStream Stream;
+            public byte[] Buffer;
+        }
+
+        private void OnApplicationQuit() => quitting = true;
+
+        public bool TryConnect()
+        {
+            if (listener != null)
+                return IsListening;
+
+            try
+            {
+                stopping = false;
+                IPAddress bindAddress = allowNetworkConnections ? IPAddress.Any : IPAddress.Loopback;
+                listener = new TcpListener(bindAddress, Mathf.Clamp(listenPort, 1, 65535));
+                listener.Server.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
+                listener.Start();
+                listener.BeginAcceptTcpClient(OnClientAccepted, null);
+                IsListening = true;
+                IsConnected = false;
+                Debug.Log($"[GolfSimZA] Garmin R10 OpenConnect server listening on {bindAddress}:{listenPort}. Waiting for bridge connection...");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                IsListening = false;
+                IsConnected = false;
+                Debug.LogError($"[GolfSimZA] Could not start Garmin R10 receiver on port {listenPort}: {ex.Message}");
+                return false;
+            }
+        }
+
+        private void OnClientAccepted(IAsyncResult result)
+        {
+            if (stopping || listener == null)
+                return;
+
+            try
+            {
+                TcpClient next = listener.EndAcceptTcpClient(result);
+                try { client?.Close(); } catch { }
+                client = next;
+                client.NoDelay = true;
+                IsConnected = true;
+                lastPacketSummary = "TCP client connected";
+                resetShotStateRequested = true;
+                Debug.Log($"[GolfSimZA] Garmin R10 bridge connected from {client.Client.RemoteEndPoint}.");
+                BeginRead(client);
+            }
+            catch (Exception ex)
+            {
+                if (!stopping)
+                    Debug.LogWarning("[GolfSimZA] R10 receiver accept error: " + ex.Message);
+            }
+            finally
+            {
+                try
+                {
+                    if (!stopping && listener != null)
+                        listener.BeginAcceptTcpClient(OnClientAccepted, null);
+                }
+                catch { }
+            }
+        }
+
+        private void BeginRead(TcpClient tcpClient)
+        {
+            try
+            {
+                NetworkStream stream = tcpClient.GetStream();
+                var state = new ReadState
+                {
+                    Client = tcpClient,
+                    Stream = stream,
+                    Buffer = new byte[8192]
+                };
+                stream.BeginRead(state.Buffer, 0, state.Buffer.Length, OnRead, state);
+            }
+            catch (Exception ex)
+            {
+                if (!stopping)
+                    Debug.LogWarning("[GolfSimZA] R10 receiver read setup error: " + ex.Message);
+            }
+        }
+
+        private void OnRead(IAsyncResult result)
+        {
+            var state = (ReadState)result.AsyncState;
+            try
+            {
+                int count = state.Stream.EndRead(result);
+                if (count <= 0)
+                {
+                    HandleClientDisconnected(state.Client);
+                    return;
+                }
+
+                string chunk = Encoding.UTF8.GetString(state.Buffer, 0, count);
+                lastPacketSummary = $"Received {count} bytes";
+                incoming.Enqueue(chunk);
+                state.Stream.BeginRead(state.Buffer, 0, state.Buffer.Length, OnRead, state);
+            }
+            catch
+            {
+                HandleClientDisconnected(state.Client);
+            }
+        }
+
+        private void HandleClientDisconnected(TcpClient disconnectedClient)
+        {
+            if (!ReferenceEquals(client, disconnectedClient))
+                return;
+
+            IsConnected = false;
+            lastPacketSummary = "TCP client disconnected";
+            try { client?.Close(); } catch { }
+            client = null;
+            resetShotStateRequested = true;
+            if (!stopping)
+                Debug.Log("[GolfSimZA] Garmin R10 bridge disconnected; server remains ready for reconnect.");
+        }
+
+        private void Update()
+        {
+            if (resetShotStateRequested)
+            {
+                resetShotStateRequested = false;
+                pendingShots.Clear();
+                publishedShots.Clear();
+            }
+
+            while (incoming.TryDequeue(out string chunk))
+            {
+                if (string.IsNullOrEmpty(chunk))
+                    continue;
+
+                lock (streamBuffer)
+                {
+                    streamBuffer.Append(chunk);
+                    ParseBufferedMessages();
+                }
+            }
+
+            while (shots.TryDequeue(out ShotData shot))
+            {
+                if (ShotReceived != null) ShotReceived.Invoke(shot);
+                else Debug.Log("[GolfSimZA] R10 shot received while no play screen is open - not played (the bridge stays connected).");
+            }
+
+            // Second screen: receiver / bridge state.
+            LaunchMonitorStatus.DeviceName = DeviceName;
+            LaunchMonitorStatus.Listening = IsListening;
+            LaunchMonitorStatus.ListenPort = listenPort;
+            LaunchMonitorStatus.BridgeConnected = IsConnected;
+            if (!IsConnected && LaunchMonitorStatus.R10Known)
+            {
+                LaunchMonitorStatus.R10Known = false;
+                LaunchMonitorStatus.R10Connected = false;
+                LaunchMonitorStatus.ReadyKnown = false;
+            }
+            if (lastPacketSummary != shownPacketSummary)
+            {
+                shownPacketSummary = lastPacketSummary;
+                LaunchMonitorStatus.Packet(lastPacketSummary);
+            }
+
+            if (sendReadyHeartbeat && IsConnected && client != null && client.Connected && Time.unscaledTime >= nextHeartbeat)
+            {
+                SendHeartbeat();
+                nextHeartbeat = Time.unscaledTime + Mathf.Max(0.25f, heartbeatIntervalSeconds);
+            }
+        }
+
+        private void ParseBufferedMessages()
+        {
+            while (true)
+            {
+                string json = ExtractJsonObject(streamBuffer);
+                if (json == null)
+                    return;
+
+                try
+                {
+                    OpenConnectMessage message = JsonUtility.FromJson<OpenConnectMessage>(json);
+                    if (message == null)
+                        continue;
+
+                    ShotDataOptions options = message.ShotDataOptions;
+                    bool heartbeat = options != null && options.IsHeartBeat;
+                    bool optionSaysBall = options != null && options.ContainsBallData;
+                    bool optionSaysClub = options != null && options.ContainsClubData;
+
+                    BallData ball = message.BallData;
+                    ClubData club = message.ClubData;
+
+                    // Some bridge versions put the R10 ball values at the root.
+                    // Promote them into the normal OpenConnect BallData shape.
+                    if (ball == null && message.BallSpeed > 0.01)
+                    {
+                        ball = new BallData
+                        {
+                            Speed = message.BallSpeed,
+                            SpinAxis = message.SpinAxis,
+                            TotalSpin = message.TotalSpin,
+                            HLA = message.LaunchDirection,
+                            VLA = message.LaunchAngle
+                        };
+                    }
+
+                    bool hasBall = ball != null && ball.Speed > 0.01;
+                    bool hasClub = club != null && club.Speed > 0.01;
+
+                    // The GolfSimZA bridge reports the R10 itself: Bluetooth link, battery, ready.
+                    // (A plain OpenConnect heartbeat always says "not ready", so it is not used for that.)
+                    R10StatusData r10 = message.R10Status;
+                    if (r10 != null && (r10.Connected || !string.IsNullOrEmpty(r10.Message) || r10.Battery >= 0))
+                        LaunchMonitorStatus.SetR10(r10.Connected, r10.Battery, r10.Ready, r10.State, r10.DeviceName, r10.Model, r10.Firmware, r10.Message);
+
+                    if (heartbeat)
+                    {
+                        lastPacketSummary = "Heartbeat received";
+                        continue;
+                    }
+
+                    lastPacketSummary = $"Shot {message.ShotNumber}: ball={hasBall}, club={hasClub}, flags=ball:{optionSaysBall}/club:{optionSaysClub}";
+
+                    // The bridge numbers its shots from 0, so ShotNumber 0 WITH shot data is the
+                    // first real shot after the bridge (re)started - it must count. (Before 1.8.0
+                    // it was dropped: the first shot after a bridge reset never registered.)
+                    // Only a packet with no ball and no club data is a diagnostic packet.
+                    if (message.ShotNumber < 0 || (message.ShotNumber == 0 && !hasBall && !hasClub))
+                    {
+                        Debug.Log($"[GolfSimZA] R10 diagnostic packet: {lastPacketSummary}");
+                        continue;
+                    }
+
+                    // ACK every real shot packet so the bridge knows GolfSimZA is alive.
+                    SendShotAcknowledgement(message.ShotNumber, hasBall);
+
+                    if (!pendingShots.TryGetValue(message.ShotNumber, out PendingShot pending))
+                    {
+                        pending = new PendingShot();
+                        pendingShots[message.ShotNumber] = pending;
+                    }
+
+                    if (hasClub)
+                        pending.Club = club;
+                    if (hasBall)
+                        pending.Ball = ball;
+
+                    // The bridge can send club data first and ball data later.
+                    // Only publish once usable BallData exists, then merge any cached
+                    // club metrics for the same ShotNumber.
+                    if (pending.Ball != null && pending.Ball.Speed > 0.01 && !publishedShots.Contains(message.ShotNumber))
+                    {
+                        ShotData shot = ConvertShot(pending.Ball, pending.Club);
+                        if (shot.IsValid)
+                        {
+                            publishedShots.Add(message.ShotNumber);
+                            shots.Enqueue(shot);
+                            pendingShots.Remove(message.ShotNumber);
+
+                            Debug.Log(
+                                $"[GolfSimZA] R10 COMPLETE SHOT #{message.ShotNumber}: " +
+                                $"ball {shot.BallSpeedMps:0.00} m/s, " +
+                                $"launch {shot.LaunchAngleDeg:0.0}°, HLA {shot.LaunchDirectionDeg:0.0}°, " +
+                                $"spin {shot.BackSpinRpm:0} rpm, carry {shot.CarryMeters:0.0} m, " +
+                                $"club {(shot.HasClubData ? shot.ClubSpeedMps.ToString("0.00") : "n/a")} m/s.");
+                        }
+                    }
+                    else if (hasClub)
+                    {
+                        Debug.Log($"[GolfSimZA] R10 CLUB DATA cached for shot #{message.ShotNumber}; waiting for BallData.");
+                    }
+                    else if (!hasBall)
+                    {
+                        Debug.Log($"[GolfSimZA] R10 packet for shot #{message.ShotNumber} has no usable BallData yet. " +
+                                  "Waiting for the bridge's completed ball packet.");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    lastPacketSummary = "Invalid OpenConnect JSON";
+                    Debug.LogWarning("[GolfSimZA] Ignored invalid R10 OpenConnect message: " + ex.Message);
+                }
+            }
+        }
+
+        private void SendShotAcknowledgement(int shotNumber, bool containsBallData)
+        {
+            try
+            {
+                if (client == null || !client.Connected)
+                    return;
+
+                string message = containsBallData
+                    ? "{\"Code\":200,\"Message\":\"Ball Data received\"}"
+                    : "{\"Code\":200,\"Message\":\"Shot data received\"}";
+
+                byte[] data = Encoding.UTF8.GetBytes(message);
+                WriteAsync(data);
+                Debug.Log($"[GolfSimZA] OpenConnect ACK sent for shot #{shotNumber}: {message}");
+            }
+            catch
+            {
+                HandleClientDisconnected(client);
+            }
+        }
+
+        /// <summary>
+        /// Sends to the bridge without waiting on the main thread (a busy bridge must never make
+        /// the game stutter while a ball is in the air).
+        /// </summary>
+        private void WriteAsync(byte[] data)
+        {
+            TcpClient target = client;
+            if (target == null || !target.Connected) return;
+            NetworkStream stream = target.GetStream();
+            stream.BeginWrite(data, 0, data.Length, result =>
+            {
+                try { stream.EndWrite(result); }
+                catch { HandleClientDisconnected(target); }
+            }, null);
+        }
+
+        private static string ExtractJsonObject(StringBuilder buffer)
+        {
+            int start = -1;
+            int depth = 0;
+            bool inString = false;
+            bool escaped = false;
+
+            for (int i = 0; i < buffer.Length; i++)
+            {
+                char c = buffer[i];
+
+                if (start < 0)
+                {
+                    if (c == '{')
+                    {
+                        start = i;
+                        depth = 1;
+                    }
+                    continue;
+                }
+
+                if (inString)
+                {
+                    if (escaped)
+                        escaped = false;
+                    else if (c == '\\')
+                        escaped = true;
+                    else if (c == '"')
+                        inString = false;
+                    continue;
+                }
+
+                if (c == '"')
+                    inString = true;
+                else if (c == '{')
+                    depth++;
+                else if (c == '}')
+                {
+                    depth--;
+                    if (depth == 0)
+                    {
+                        string json = buffer.ToString(start, i - start + 1);
+                        buffer.Remove(0, i + 1);
+                        return json;
+                    }
+                }
+            }
+
+            return null;
+        }
+
+        private static ShotData ConvertShot(BallData b, ClubData c)
+        {
+            float ballSpeedMps = (float)(Math.Max(0.0, b.Speed) * 0.44704);
+            float clubSpeedMps = c != null ? (float)(Math.Max(0.0, c.Speed) * 0.44704) : 0f;
+            float carryMeters = (float)(Math.Max(0.0, b.CarryDistance) * 0.9144);
+            float loft = c != null ? (float)c.Loft : 0f;
+
+            return new ShotData
+            {
+                TimestampUtc = DateTime.UtcNow,
+                // The R10 cannot tell which club was used; SimulatorController stamps
+                // the club the player selected on screen (see ActiveClub).
+                ClubName = string.Empty,
+                ClubNumber = 0,
+                ClubLoftDeg = loft,
+                BallSpeedMps = ballSpeedMps,
+                ClubSpeedMps = clubSpeedMps,
+                LaunchAngleDeg = (float)b.VLA,
+                LaunchDirectionDeg = (float)b.HLA,
+                BackSpinRpm = (float)Math.Max(0.0, b.BackSpin > 0 ? b.BackSpin : b.TotalSpin),
+                SpinAxisDeg = (float)b.SpinAxis,
+                CarryMeters = carryMeters,
+                TotalMeters = carryMeters,
+                HasClubData = c != null && c.Speed > 0,
+                SideSpinRpm = (float)b.SideSpin,
+                ClubPathDeg = c != null ? (float)c.Path : 0f,
+                FaceToTargetDeg = c != null ? (float)c.FaceToTarget : 0f,
+                AttackAngleDeg = c != null ? (float)c.AngleOfAttack : 0f,
+                DynamicLoftDeg = c != null ? (float)c.Loft : 0f,
+                HasClubPath = c != null && (Math.Abs(c.Path) > 0.001 || Math.Abs(c.FaceToTarget) > 0.001),
+                IsValid = ballSpeedMps > 0.5f
+            };
+        }
+
+        private void SendHeartbeat()
+        {
+            try
+            {
+                if (client == null || !client.Connected)
+                    return;
+
+                // Use the exact OpenConnect v1 field spelling documented by GSPro.
+                string heartbeat =
+                    "{\"DeviceID\":\"GolfSimZA\",\"Units\":\"Yards\",\"ShotNumber\":0," +
+                    "\"APIversion\":\"1\",\"ShotDataOptions\":{" +
+                    "\"ContainsBallData\":false,\"ContainsClubData\":false," +
+                    "\"LaunchMonitorIsReady\":true,\"LaunchMonitorBallDetected\":true," +
+                    "\"IsHeartBeat\":true}}";
+
+                byte[] data = Encoding.UTF8.GetBytes(heartbeat);
+                WriteAsync(data);
+            }
+            catch
+            {
+                HandleClientDisconnected(client);
+            }
+        }
+
+        public void Disconnect()
+        {
+            stopping = true;
+            IsConnected = false;
+            IsListening = false;
+
+            try { listener?.Stop(); } catch { }
+            try { client?.Close(); } catch { }
+
+            listener = null;
+            client = null;
+            pendingShots.Clear();
+            publishedShots.Clear();
+            lock (streamBuffer)
+                streamBuffer.Clear();
+        }
+
+        private void OnDestroy()
+        {
+            if (instance == this) instance = null;
+            Disconnect();
+            LaunchMonitorStatus.Closed();
+        }
+    }
+}

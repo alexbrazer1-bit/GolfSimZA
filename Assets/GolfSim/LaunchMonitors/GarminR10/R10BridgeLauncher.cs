@@ -1,195 +1,42 @@
-using System;
-using System.Diagnostics;
-using System.IO;
 using UnityEngine;
 
 namespace GolfSimZA.LaunchMonitors.GarminR10
 {
     /// <summary>
-    /// Starts the packaged GolfSimZA R10 Bluetooth bridge when present.
-    /// The bridge connects directly to the paired R10 and forwards OpenConnect
-    /// shot data to GolfSimZA on TCP port 921.
+    /// Play-scene switch for the packaged GolfSimZA R10 Bluetooth bridge. The bridge itself is run
+    /// by <see cref="R10BridgeService"/>, which lives for the whole app - so leaving this scene does
+    /// NOT stop the bridge (the R10 stays connected between rounds, the range and mini games).
     /// </summary>
     public sealed class R10BridgeLauncher : MonoBehaviour
     {
         [SerializeField] private bool autoStart = true;
+        [Tooltip("Not used any more: the bridge keeps running between scenes and stops when the app quits.")]
         [SerializeField] private bool closeBridgeOnDestroy = true;
         [SerializeField] private string executableRelativePath = "GolfSimZA-R10-Bridge/gspro-r10.exe";
 
-        private Process bridgeProcess;
-        private bool wanted;
-        private float restartAt = -1f;
-        private float restartDelay = 3f;
-        private float startedAt;
-
         /// <summary>
-        /// RESTART R10 BRIDGE (Settings → GAME → SYSTEM): stops every running GolfSim ZA bridge.
-        /// A play screen that is open starts a fresh bridge within a few seconds; otherwise the next
-        /// round or range session starts it.
+        /// RESTART R10 BRIDGE (Settings → GAME → SYSTEM): stops every running GolfSim ZA bridge; the
+        /// app's bridge runner starts a fresh one within a few seconds.
         /// </summary>
-        public static int RestartAll()
-        {
-            string exe = Path.Combine(Application.streamingAssetsPath, "GolfSimZA-R10-Bridge/gspro-r10.exe");
-            int stopped = StopOrphanedBridges(exe);
-            UnityEngine.Debug.Log($"[GolfSimZA] R10 bridge restart requested ({stopped} stopped).");
-            return stopped;
-        }
+        public static int RestartAll() => R10BridgeService.RestartAll();
 
-        private void Update()
-        {
-            // Keep the bridge running: if it exits (crash, or RESTART R10 BRIDGE), start it again.
-            if (!wanted) return;
-            if (bridgeProcess != null && !IsRunning && restartAt < 0f)
-            {
-                // A bridge that keeps stopping straight away (e.g. no R10 switched on) is retried
-                // less and less often: 3, 6, 12 ... up to 60 seconds.
-                bool quickExit = Time.unscaledTime - startedAt < 20f;
-                restartDelay = quickExit ? Mathf.Min(60f, restartDelay * 2f) : 3f;
-                restartAt = Time.unscaledTime + restartDelay;
-                UnityEngine.Debug.LogWarning($"[GolfSimZA] R10 bridge stopped; restarting in {restartDelay:0} s.");
-            }
-            if (restartAt > 0f && Time.unscaledTime >= restartAt)
-            {
-                restartAt = -1f;
-                bridgeProcess?.Dispose();
-                bridgeProcess = null;
-                StartBridge();
-            }
-        }
-
-        public bool IsRunning => bridgeProcess != null && !bridgeProcess.HasExited;
+        public bool IsRunning => R10BridgeService.Instance != null && R10BridgeService.Instance.IsRunning;
 
         private void Start()
         {
-#if UNITY_EDITOR
-            // A script reload in Play mode skips OnDestroy; stop the bridge first so it is not orphaned.
-            UnityEditor.AssemblyReloadEvents.beforeAssemblyReload += StopBridge;
-#endif
-            if (autoStart)
-                StartBridge();
+            if (autoStart) StartBridge();
         }
 
-        private void OnApplicationQuit()
-        {
-            StopBridge();
-        }
+        /// <summary>Saved scene option from older versions (the bridge now always keeps running between scenes).</summary>
+        public bool CloseBridgeOnDestroy => closeBridgeOnDestroy;
 
         public bool StartBridge()
         {
-            wanted = true;
-            if (IsRunning)
-                return true;
-
-#if UNITY_STANDALONE_WIN || UNITY_EDITOR_WIN
-            string executablePath = Path.Combine(Application.streamingAssetsPath, executableRelativePath);
-            if (!File.Exists(executablePath))
-            {
-                UnityEngine.Debug.LogWarning(
-                    $"[GolfSimZA] R10 bridge executable not found at '{executablePath}'. " +
-                    "The Unity receiver will still listen on TCP 921, but the R10 Bluetooth bridge must be started separately until the packaged bridge is installed.");
-                return false;
-            }
-
-            StopOrphanedBridges(executablePath);
-
-            try
-            {
-                bridgeProcess = new Process
-                {
-                    StartInfo = new ProcessStartInfo
-                    {
-                        FileName = executablePath,
-                        WorkingDirectory = Path.GetDirectoryName(executablePath),
-                        UseShellExecute = false,
-                        CreateNoWindow = true,
-                        RedirectStandardOutput = false,
-                        RedirectStandardError = false
-                    }
-                };
-                // Parse settings.json numbers the same way on every regional setting (e.g. en-ZA uses ',').
-                bridgeProcess.StartInfo.EnvironmentVariables["DOTNET_SYSTEM_GLOBALIZATION_INVARIANT"] = "1";
-
-                bridgeProcess.Start();
-                startedAt = Time.unscaledTime;
-                UnityEngine.Debug.Log($"[GolfSimZA] Started packaged R10 bridge: {executablePath}");
-                return true;
-            }
-            catch (Exception ex)
-            {
-                UnityEngine.Debug.LogError($"[GolfSimZA] Could not start packaged R10 bridge: {ex.Message}");
-                bridgeProcess = null;
-                return false;
-            }
-#else
-            UnityEngine.Debug.LogWarning("[GolfSimZA] The packaged R10 Bluetooth bridge is currently Windows-only.");
-            return false;
-#endif
+            R10BridgeService service = R10BridgeService.Get(executableRelativePath);
+            return service != null && service.StartBridge();
         }
 
-        public void StopBridge()
-        {
-            wanted = false;
-            if (!IsRunning)
-            {
-                bridgeProcess?.Dispose();
-                bridgeProcess = null;
-                return;
-            }
-
-            try
-            {
-                bridgeProcess.CloseMainWindow();
-                if (!bridgeProcess.WaitForExit(1500))
-                    bridgeProcess.Kill();
-            }
-            catch (Exception ex)
-            {
-                UnityEngine.Debug.LogWarning($"[GolfSimZA] R10 bridge shutdown warning: {ex.Message}");
-            }
-            finally
-            {
-                bridgeProcess.Dispose();
-                bridgeProcess = null;
-            }
-        }
-
-        private void OnDestroy()
-        {
-#if UNITY_EDITOR
-            UnityEditor.AssemblyReloadEvents.beforeAssemblyReload -= StopBridge;
-#endif
-            if (closeBridgeOnDestroy)
-                StopBridge();
-        }
-
-        /// <summary>
-        /// Stops bridges started from this same exe that are still running (e.g. after a crash),
-        /// so only one bridge talks to the R10 and the exe can be updated.
-        /// </summary>
-        private static int StopOrphanedBridges(string executablePath)
-        {
-            int stopped = 0;
-            string full = Path.GetFullPath(executablePath);
-            foreach (Process p in Process.GetProcessesByName(Path.GetFileNameWithoutExtension(full)))
-            {
-                try
-                {
-                    if (p.MainModule == null || !string.Equals(Path.GetFullPath(p.MainModule.FileName), full, StringComparison.OrdinalIgnoreCase)) continue;
-                    p.Kill();
-                    p.WaitForExit(3000);
-                    stopped++;
-                    UnityEngine.Debug.Log($"[GolfSimZA] Stopped an old R10 bridge (process {p.Id}) before starting a new one.");
-                }
-                catch (Exception ex)
-                {
-                    UnityEngine.Debug.LogWarning($"[GolfSimZA] Could not check R10 bridge process: {ex.Message}");
-                }
-                finally
-                {
-                    p.Dispose();
-                }
-            }
-            return stopped;
-        }
+        /// <summary>Stops the app's bridge (it is not restarted until something starts it again).</summary>
+        public void StopBridge() => R10BridgeService.Instance?.StopBridge();
     }
 }

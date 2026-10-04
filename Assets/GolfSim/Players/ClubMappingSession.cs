@@ -119,8 +119,99 @@ namespace GolfSimZA.Players
             totals[shotCount] = Mathf.Max(carries[shotCount], total);
             shotCount++;
 
+            // All six shots in: ask SAVE CLUB DISTANCE or REDO (see OnGUI) once the ball has stopped.
             if (shotCount >= RequiredShots)
-                FinishMapping();
+            {
+                decisionShownAt = Time.unscaledTime + 0.8f;
+                Debug.Log($"[GolfSimZA] Map My Bag: {RequiredShots} shots with {clubName} done - asking SAVE CLUB DISTANCE or REDO.");
+            }
+        }
+
+        /// <summary>All six shots are in and the player has not chosen SAVE CLUB DISTANCE or REDO yet.</summary>
+        public bool AwaitingDecision => IsActive && !completed && shotCount >= RequiredShots;
+
+        private float decisionShownAt;
+        private GUIStyle popupTitle, popupText, popupCell, popupValue;
+
+        /// <summary>SAVE CLUB DISTANCE: saves the average of the six shots for this club and finishes mapping it.</summary>
+        public void SaveClubDistance()
+        {
+            if (!AwaitingDecision) return;
+            FinishMapping();
+        }
+
+        /// <summary>REDO: throws the six shots away and maps the club again from shot 1.</summary>
+        public void RedoMapping()
+        {
+            if (!AwaitingDecision) return;
+            Debug.Log($"[GolfSimZA] Map My Bag: {clubName} shots discarded - mapping again from shot 1.");
+            Restart();
+        }
+
+        private float TotalAverage
+        {
+            get
+            {
+                if (shotCount == 0) return 0f;
+                float sum = 0f;
+                for (int i = 0; i < shotCount; i++) sum += totals[i];
+                return sum / shotCount;
+            }
+        }
+
+        /// <summary>The SAVE CLUB DISTANCE / REDO pop-up - only after all six shots are done.</summary>
+        private void OnGUI()
+        {
+            if (!AwaitingDecision || Time.unscaledTime < decisionShownAt) return;
+            GolfSimZA.UI.GolfSimTheme.Ensure();
+            GUI.depth = -5000;
+            if (popupTitle == null)
+            {
+                popupTitle = new GUIStyle(GolfSimZA.UI.GolfSimTheme.Title) { alignment = TextAnchor.MiddleCenter, fontSize = 24, wordWrap = true };
+                popupText = new GUIStyle(GolfSimZA.UI.GolfSimTheme.Body) { alignment = TextAnchor.MiddleCenter, wordWrap = true };
+                popupCell = new GUIStyle(GolfSimZA.UI.GolfSimTheme.Label) { alignment = TextAnchor.MiddleCenter, fontSize = 11 };
+                popupValue = new GUIStyle(GolfSimZA.UI.GolfSimTheme.Heading) { alignment = TextAnchor.MiddleCenter, fontSize = 18 };
+            }
+
+            GUI.color = new Color(0f, 0f, 0f, 0.6f);
+            GUI.DrawTexture(new Rect(0, 0, Screen.width, Screen.height), Texture2D.whiteTexture);
+            GUI.color = Color.white;
+
+            float w = Mathf.Min(620f, Screen.width - 40f), h = 380f;
+            Rect panel = new Rect((Screen.width - w) * 0.5f, (Screen.height - h) * 0.5f, w, h);
+            GUI.Box(panel, GUIContent.none, GolfSimZA.UI.GolfSimTheme.Overlay);
+            float x = panel.x + 24f, cw = w - 48f, y = panel.y + 18f;
+            GUI.Label(new Rect(x, y, cw, 34f), "MAP MY BAG  •  " + ClubName.ToUpperInvariant(), popupTitle);
+            y += 38f;
+            GUI.Label(new Rect(x, y, cw, 22f), PlayerName + "  •  all " + RequiredShots + " shots done", popupText);
+            y += 34f;
+
+            // The six carries.
+            float cellW = (cw - 5f * 8f) / RequiredShots;
+            for (int i = 0; i < RequiredShots; i++)
+            {
+                Rect c = new Rect(x + i * (cellW + 8f), y, cellW, 54f);
+                GUI.Box(c, GUIContent.none, GolfSimZA.UI.GolfSimTheme.Card);
+                GUI.Label(new Rect(c.x, c.y + 4f, c.width, 14f), "SHOT " + (i + 1), popupCell);
+                GUI.Label(new Rect(c.x, c.y + 20f, c.width, 28f), Units.DistanceText(carries[i], "0.0"), popupValue);
+            }
+            y += 68f;
+            GUI.Label(new Rect(x, y, cw, 30f), "CLUB DISTANCE  " + Units.DistanceText(AverageCarry, "0.0") + " CARRY   •   " + Units.DistanceText(TotalAverage, "0.0") + " TOTAL",
+                new GUIStyle(popupValue) { fontSize = 20, normal = { textColor = GolfSimZA.UI.GolfSimTheme.Gold } });
+            y += 44f;
+            GUI.Label(new Rect(x, y, cw, 40f), "Save this distance for the " + ClubName + ", or REDO to throw these six shots away and hit them again.", popupText);
+            y += 56f;
+
+            float bw = (cw - 16f) * 0.5f;
+            if (GUI.Button(new Rect(x, y, bw, 58f), "SAVE CLUB DISTANCE", new GUIStyle(GolfSimZA.UI.GolfSimTheme.AccentButton) { fontSize = 18 }))
+                SaveClubDistance();
+            else if (GUI.Button(new Rect(x + bw + 16f, y, bw, 58f), "REDO", new GUIStyle(GolfSimZA.UI.GolfSimTheme.Button) { fontSize = 18 }))
+                RedoMapping();
+
+            // The pop-up takes every click (nothing underneath can be pressed while it is open).
+            Event e = Event.current;
+            if (e != null && (e.type == EventType.MouseDown || e.type == EventType.MouseUp || e.type == EventType.MouseDrag || e.type == EventType.ScrollWheel))
+                e.Use();
         }
 
         private void FinishMapping()

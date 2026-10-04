@@ -78,7 +78,7 @@ namespace GolfSimZA.EditorTools
             "3:12:0:0:Tester A,Tester B,Tester C:again",
             "3:6:0:0:Tester A"));
 
-        [MenuItem("GolfSimZA/Test/Mini games - play all 8 games automatically")]
+        [MenuItem("GolfSimZA/Test/Mini games - play all 10 games automatically")]
         private static void MiniGames()
         {
             // game : shots : explore : distance : players [: again]
@@ -92,7 +92,17 @@ namespace GolfSimZA.EditorTools
                 "5:3:0:0:Tester A,Tester B",
                 "6:3:0:0:Tester A,Tester B",
                 "6:5:1:0:Tester A",
-                "7:3:0:0:Tester A,Tester B"));
+                "7:3:0:0:Tester A,Tester B",
+                "8:20:0:0:Tester A,Tester B",
+                "9:10:0:0:Tester A,Tester B,Tester C"));
+        }
+
+        [MenuItem("GolfSimZA/Test/Mini games - 301 and HORSE")]
+        private static void MiniGameArena()
+        {
+            RunMiniGames(string.Join(";",
+                "8:20:0:0:Tester A,Tester B",
+                "9:10:0:0:Tester A,Tester B,Tester C"));
         }
 
         private static void RunMiniGames(string queue)

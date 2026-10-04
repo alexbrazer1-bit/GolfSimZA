@@ -8,8 +8,10 @@ using UnityEngine;
 namespace GolfSimZA.Visual
 {
     /// <summary>
-    /// Driving range SHOT DISPERSION per club: every shot's landing spot (carry) is saved for the
-    /// player and club, relative to where they aimed. The range shows the selected club's
+    /// Driving range SHOT DISPERSION per club: every shot's landing spot (carry) is kept for the
+    /// player and club, relative to where they aimed - for THIS range session only (a new range
+    /// session starts with an empty circle). Only shown on the plain driving range, never in
+    /// mini games, Map My Bag or rounds. The range shows the selected club's
     /// dispersion circle (an ellipse holding about two thirds of the shots: long/short and
     /// left/right spread) around the average landing spot, plus a dot for every saved shot.
     /// </summary>
@@ -40,8 +42,39 @@ namespace GolfSimZA.Visual
             public float MeanCarry, MeanSide, CarrySpread, SideSpread;
         }
 
+        /// <summary>Shots of the current range session (player|club -> landings). Cleared every new session.</summary>
+        private static readonly Dictionary<string, List<Vector2>> session = new Dictionary<string, List<Vector2>>();
+
+        /// <summary>False in mini games / Map My Bag: nothing is recorded or drawn.</summary>
+        public bool Enabled { get; set; } = true;
+
+        /// <summary>Starts a new range session: forgets every shot of the last one (and old saved data).</summary>
+        public static void ResetSession()
+        {
+            session.Clear();
+            DeleteLegacySaves();
+        }
+
+        private static void DeleteLegacySaves()
+        {
+            // Versions before 1.8.0 kept dispersion shots forever in PlayerPrefs - remove those keys once.
+            if (PlayerPrefs.GetInt("GolfSimZA.Dispersion.LegacyCleared", 0) == 1) return;
+            var names = new List<string> { ActiveClub.Player, "Player 1" };
+            foreach (GolfSimZA.Players.PlayerProfile p in GolfSimZA.Players.PlayerRoster.Current.players) names.Add(p.name);
+            foreach (string player in names)
+            {
+                foreach (string club in GolfSimZA.Players.GolfBagProfile.DefaultClubNames) PlayerPrefs.DeleteKey(Key(player, club));
+                foreach (string club in ActiveClub.SlotNames) PlayerPrefs.DeleteKey(Key(player, club));
+                GolfSimZA.Players.GolfBagProfile bag = GolfSimZA.Players.GolfBagProfile.Load(player);
+                foreach (string club in bag.ClubNames) if (!string.IsNullOrEmpty(club)) PlayerPrefs.DeleteKey(Key(player, club));
+            }
+            PlayerPrefs.SetInt("GolfSimZA.Dispersion.LegacyCleared", 1);
+            PlayerPrefs.Save();
+        }
+
         public static ShotDispersion Attach(GameObject host, BallFlightSimulator flight)
         {
+            ResetSession();
             ShotDispersion d = host.GetComponent<ShotDispersion>();
             if (d == null) d = host.AddComponent<ShotDispersion>();
             d.Hook(flight);
@@ -93,6 +126,7 @@ namespace GolfSimZA.Visual
         {
             if (!pending || flight == null) return;
             pending = false;
+            if (!Enabled) return;
             Vector3 d = flight.LandingPosition - pendingOrigin;
             d.y = 0f;
             Quaternion toAim = Quaternion.Euler(0f, -pendingYaw, 0f);
@@ -117,34 +151,18 @@ namespace GolfSimZA.Visual
 
         public static List<Vector2> Load(string player, string club)
         {
-            var list = new List<Vector2>();
-            string text = PlayerPrefs.GetString(Key(player, club), "");
-            foreach (string part in text.Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries))
-            {
-                string[] xy = part.Split(',');
-                if (xy.Length == 2 && float.TryParse(xy[0], NumberStyles.Float, CultureInfo.InvariantCulture, out float x)
-                    && float.TryParse(xy[1], NumberStyles.Float, CultureInfo.InvariantCulture, out float z))
-                    list.Add(new Vector2(x, z));
-            }
-            return list;
+            return session.TryGetValue(Key(player, club), out List<Vector2> list) ? new List<Vector2>(list) : new List<Vector2>();
         }
 
         public static void Add(string player, string club, Vector2 landing)
         {
-            List<Vector2> list = Load(player, club);
+            string key = Key(player, club);
+            if (!session.TryGetValue(key, out List<Vector2> list)) session[key] = list = new List<Vector2>();
             list.Add(landing);
             while (list.Count > MaxShots) list.RemoveAt(0);
-            var parts = new List<string>();
-            foreach (Vector2 v in list) parts.Add(v.x.ToString("0.0", CultureInfo.InvariantCulture) + "," + v.y.ToString("0.0", CultureInfo.InvariantCulture));
-            PlayerPrefs.SetString(Key(player, club), string.Join(";", parts));
-            PlayerPrefs.Save();
         }
 
-        public static void Clear(string player, string club)
-        {
-            PlayerPrefs.DeleteKey(Key(player, club));
-            PlayerPrefs.Save();
-        }
+        public static void Clear(string player, string club) => session.Remove(Key(player, club));
 
         public void ClearCurrent()
         {
@@ -174,7 +192,7 @@ namespace GolfSimZA.Visual
         /// <summary>Shows the selected club's dispersion around the aim line from origin (call every frame).</summary>
         public void Show(Vector3 origin, float aimYaw, bool visible)
         {
-            if (!visible || !AppSettings.Current.showDispersion)
+            if (!visible || !Enabled || !AppSettings.Current.showDispersion)
             {
                 SetVisible(false, 0);
                 return;

@@ -101,6 +101,22 @@ namespace GolfSimZA.Testing
             report.AppendLine("ADD PLAYER check done (guest joined on hole " + (guestHole + 1) + ")");
         }
         private int shotsThisHole, lastHole = -1, totalShots;
+        private bool mapPictureTaken;
+
+        private System.Collections.IEnumerator MapPicture()
+        {
+            yield return new WaitForEndOfFrame();
+            var tex = new Texture2D(Screen.width, Screen.height, TextureFormat.RGB24, false);
+            tex.ReadPixels(new Rect(0, 0, Screen.width, Screen.height), 0, 0);
+            tex.Apply();
+            string logs = Path.Combine(Directory.GetParent(Application.dataPath).FullName, "Logs");
+            Directory.CreateDirectory(logs);
+            File.WriteAllBytes(Path.Combine(logs, "round-map.png"), tex.EncodeToPNG());
+            Destroy(tex);
+            report.AppendLine("  picture: Logs/round-map.png (enlarged hole map)");
+            yield return new WaitForSecondsRealtime(1.5f);
+            if (round != null) typeof(RoundGameplayUI).GetField("mapExpanded", F).SetValue(round, false);
+        }
         private float stateSince;
         private string lastState = "";
         private float holeStartTime;
@@ -172,6 +188,31 @@ namespace GolfSimZA.Testing
             throw new MissingMethodException(name);
         }
 
+        // Ball flight smoothness: the ball must move on screen every frame while it is in the air.
+        private int airFrames, stillFrames;
+        private float slowestAirFrame;
+        private Vector3 lastAirPos;
+        private bool wasAir;
+
+        private void LateUpdate()
+        {
+            if (finished || round == null) return;
+            BallFlightSimulator f = Get<BallFlightSimulator>("ballFlightSimulator");
+            if (f == null || f.Ball == null) return;
+            if (f.IsAirborne)
+            {
+                if (wasAir)
+                {
+                    airFrames++;
+                    if ((f.Ball.position - lastAirPos).sqrMagnitude < 1e-8f) stillFrames++;
+                    slowestAirFrame = Mathf.Max(slowestAirFrame, Time.unscaledDeltaTime);
+                }
+                lastAirPos = f.Ball.position;
+                wasAir = true;
+            }
+            else wasAir = false;
+        }
+
         private void Update()
         {
             if (finished)
@@ -210,6 +251,8 @@ namespace GolfSimZA.Testing
             }
 
             bool flying = flight != null && flight.IsInFlight;
+            if (testerWasFlying && !flying && flight != null) LearnRoll(flight);
+            testerWasFlying = flying;
             bool flyover = presentation != null && presentation.IsFlyingOver;
             int pending = Get<int>("pendingSelection");
             bool waitingNext = Get<bool>("waitingForNextPlayer");
@@ -225,6 +268,16 @@ namespace GolfSimZA.Testing
                 stateSince = Time.unscaledTime;
                 if (flying) return;
                 PickUp(active); // get going again
+                return;
+            }
+
+            // Once: a picture of the enlarged hole map with its distances (as if the corner map was clicked).
+            if (totalShots == 1 && !flying && !mapPictureTaken)
+            {
+                mapPictureTaken = true;
+                typeof(RoundGameplayUI).GetField("mapExpanded", F).SetValue(round, true);
+                StartCoroutine(MapPicture());
+                nextActionAt = Time.unscaledTime + 3f;
                 return;
             }
 
@@ -320,6 +373,8 @@ namespace GolfSimZA.Testing
             float distance = d.magnitude;
             if (toPin < distance) { target = pin; distance = toPin; }
 
+            // Like a real golfer, land the ball short so it runs out to the target (learnt per club).
+            float runOut = 1f;
             bool onGreen = flight.IsOnGreen(ball.position);
             string club;
             float factor = 1f;
@@ -338,10 +393,13 @@ namespace GolfSimZA.Testing
                     if (ActiveClub.IsPutter(c.Name)) continue;
                     float carry = ActiveClub.ExpectedCarry(c.Name);
                     if (carry > longest) { longest = carry; longestClub = c.Name; }
-                    if (carry >= distance * 0.95f && carry < bestCarry) { bestCarry = carry; club = c.Name; }
+                    float roll = 1f + (rollRatio.TryGetValue(c.Name, out float rr) ? rr : 0.04f);
+                    if (carry * roll >= distance * 0.95f && carry < bestCarry) { bestCarry = carry; club = c.Name; }
                 }
                 if (club == null) club = longestClub;
                 float expected = ActiveClub.ExpectedCarry(club);
+                runOut = 1f + (rollRatio.TryGetValue(club, out float clubRoll) ? clubRoll : 0.04f);
+                distance /= runOut;
                 if (distance < expected) factor = Mathf.Clamp(Mathf.Pow(distance / expected, 0.75f), 0.25f, 1f);
             }
             ActiveClub.Select(club);
@@ -367,7 +425,22 @@ namespace GolfSimZA.Testing
             }
             shotsThisHole++;
             totalShots++;
+            lastClub = club;
             shots.Inject(shot);
+        }
+
+        // Run-out learnt per club (total / carry - 1) from this test's own shots.
+        private readonly Dictionary<string, float> rollRatio = new Dictionary<string, float>();
+        private string lastClub;
+        private bool testerWasFlying;
+
+        /// <summary>Called when a shot finishes: remembers how far that club ran out after landing.</summary>
+        private void LearnRoll(BallFlightSimulator flight)
+        {
+            if (lastClub == null || ActiveClub.IsPutter(lastClub) || flight.CarryMeters < 5f || flight.InWater) return;
+            float ratio = Mathf.Clamp(flight.TotalMeters / flight.CarryMeters - 1f, 0f, 0.4f);
+            rollRatio[lastClub] = Mathf.Lerp(rollRatio.TryGetValue(lastClub, out float old) ? old : 0.04f, ratio, 0.5f);
+            lastClub = null;
         }
 
         private void PickUp(int p)
@@ -423,6 +496,10 @@ namespace GolfSimZA.Testing
             finished = true;
             CheckGuest();
             report.AppendLine("Auto next player moves: " + autoAdvances);
+            report.AppendLine(string.Format("Ball flight smoothness: {0} frames in the air, {1} without the ball moving, slowest frame {2:0.0} ms",
+                airFrames, stillFrames, slowestAirFrame * 1000f));
+            if (airFrames > 0 && stillFrames > airFrames * 0.02f)
+                problems.Add("Ball flight stutters: the ball stood still in " + stillFrames + " of " + airFrames + " frames in the air");
             report.AppendLine();
             report.AppendLine("Result: " + (Call("ResultText") as string));
             report.AppendLine("Total shots hit: " + totalShots);

@@ -29,6 +29,8 @@ namespace GolfSimZA.MiniGames
         public bool Finished { get; private set; }
         /// <summary>The ball being scored finished in the cup (closest to the pin).</summary>
         public bool BallHoled { get; private set; }
+        /// <summary>The ball being scored ended in water (mini game maps with lakes and ponds).</summary>
+        public bool BallInWater { get; private set; }
         /// <summary>Something on the range changed - the map picture needs redrawing.</summary>
         public bool MapDirty { get; set; }
         /// <summary>Results are showing - the range must not take clicks.</summary>
@@ -70,6 +72,8 @@ namespace GolfSimZA.MiniGames
                 case MiniGameId.JunkyardBlast: return new JunkyardBlastGame();
                 case MiniGameId.CreaturePond: return new CreaturePondGame();
                 case MiniGameId.DesertOasis: return new DesertOasisGame();
+                case MiniGameId.Countdown301: return new Countdown301Game();
+                case MiniGameId.Horse: return new HorseGame();
                 default: return new ClosestToPinGame();
             }
         }
@@ -140,7 +144,8 @@ namespace GolfSimZA.MiniGames
                 GolfSimZA.Visual.GrassField grass = range.GetComponent<GolfSimZA.Visual.GrassField>();
                 if (grass != null)
                 {
-                    grass.Exclude = null; // grass grows on the map's own rough
+                    MiniGame g = Game;
+                    grass.Exclude = p => !g.GrassAt(p); // grass grows where the map says
                     grass.Clear();
                 }
             }
@@ -188,12 +193,19 @@ namespace GolfSimZA.MiniGames
         }
 
         /// <summary>The ball stopped: score it for the player who hit it.</summary>
-        public void OnShotFinished(ShotData shot, Vector3 landing, Vector3 rest, bool holed)
+        public void OnShotFinished(ShotData shot, Vector3 landing, Vector3 rest, bool holed, bool inWater = false)
         {
             if (Game == null || shooter < 0 || shooter >= Players.Count) return;
             MiniPlayer p = Players[shooter];
             shooter = -1;
             BallHoled = holed;
+            BallInWater = inWater;
+            if (inWater)
+            {
+                // Splash where it went in.
+                MiniGameWorld.Sparkle(root, new Vector3(rest.x, rest.y + 0.2f, rest.z), new Color(0.75f, 0.9f, 1f));
+                GolfSimAudio.PlayLanding(25f);
+            }
             ShotOutcome outcome = Game.Score(p, landing, rest, shot);
             p.Shots++;
             p.Last = outcome.Text;

@@ -177,6 +177,24 @@ namespace GolfSimZA.UI
             SceneManager.LoadScene("GolfSimZA_0_5_RoundSettings");
         }
 
+        /// <summary>Courses RANDOM COURSE picks from: the playable courses the filters show, else every playable course.</summary>
+        private List<CourseEntry> RandomCandidates()
+        {
+            List<CourseEntry> list = Filtered().FindAll(e => e.Available);
+            if (list.Count == 0) list = entries.FindAll(e => e.Available);
+            return list;
+        }
+
+        /// <summary>RANDOM COURSE: picks one of the available courses at random and goes on to the round settings.</summary>
+        private void PlayRandomCourse()
+        {
+            List<CourseEntry> list = RandomCandidates();
+            if (list.Count == 0) return;
+            CourseEntry pick = list[UnityEngine.Random.Range(0, list.Count)];
+            Debug.Log("[GolfSimZA] Random course: " + pick.Name + " (from " + list.Count + " courses)");
+            PlayCourse(pick);
+        }
+
         private void PracticeCourse(CourseEntry e)
         {
             PlayerProfile first = PlayerRoster.Current.Selected[0];
@@ -438,8 +456,19 @@ namespace GolfSimZA.UI
                 GUI.Label(new Rect(x, y, w, 80f), "Practise any hole with no scoring. Use ◀ HOLE ▶ on the play screen to change holes, and MULLIGAN in the menu to replay a shot.", GolfSimTheme.Body);
             }
 
-            if (GUI.Button(new Rect(x, r.yMax - 110f, w, 40f), "RESET FILTERS", GolfSimTheme.Button)) { libraryFilter = 0; sortMode = 0; search = ""; }
-            if (GUI.Button(new Rect(x, r.yMax - 60f, w, 44f), "IMPORT COURSES", GolfSimTheme.AccentButton)) { screen = Screen_.Import; importPanel.Open(); }
+            // Local match: RANDOM COURSE sits in the bottom-right corner of the screen.
+            float bottom = r.yMax;
+            if (!practice)
+            {
+                bool any = RandomCandidates().Count > 0;
+                GUI.enabled = any;
+                if (GUI.Button(new Rect(x, bottom - 66f, w, 52f), "RANDOM COURSE", new GUIStyle(GolfSimTheme.AccentButton) { fontSize = 18 }))
+                    PlayRandomCourse();
+                GUI.enabled = true;
+                bottom -= 62f;
+            }
+            if (GUI.Button(new Rect(x, bottom - 110f, w, 40f), "RESET FILTERS", GolfSimTheme.Button)) { libraryFilter = 0; sortMode = 0; search = ""; }
+            if (GUI.Button(new Rect(x, bottom - 60f, w, 44f), "IMPORT COURSES", practice ? GolfSimTheme.AccentButton : GolfSimTheme.Button)) { screen = Screen_.Import; importPanel.Open(); }
         }
 
         // ---- Practice
@@ -506,7 +535,7 @@ namespace GolfSimZA.UI
         private void StartMiniGame()
         {
             MiniGameInfo info = MiniGameCatalog.Get(miniGame);
-            if (miniPlayers.Count == 0) { miniError = "Pick at least one player."; return; }
+            if (miniPlayers.Count < info.MinPlayers) { miniError = info.Name + " needs at least " + info.MinPlayers + " players."; return; }
             string[] names = miniPlayers.ToArray();
             MiniGameSession.Start(miniGame, names, miniShots, info.HasExplore && miniExplore, info.HasDistance ? miniDistance : 0);
             // Mini games are played on the driving range.
@@ -682,8 +711,10 @@ namespace GolfSimZA.UI
             if (miniError.Length > 0) GUI.Label(new Rect(cx, y, innerW, 20f), miniError, new GUIStyle(GolfSimTheme.Label) { normal = { textColor = GolfSimTheme.Bad } });
             GUI.EndScrollView();
 
-            GUI.enabled = miniPlayers.Count > 0;
-            string start = "START  " + info.Name + "  •  " + miniPlayers.Count + (miniPlayers.Count == 1 ? " PLAYER" : " PLAYERS");
+            GUI.enabled = miniPlayers.Count >= Mathf.Max(1, info.MinPlayers);
+            string start = miniPlayers.Count < info.MinPlayers
+                ? info.Name + " NEEDS " + info.MinPlayers + " OR MORE PLAYERS"
+                : "START  " + info.Name + "  •  " + miniPlayers.Count + (miniPlayers.Count == 1 ? " PLAYER" : " PLAYERS");
             if (GUI.Button(startRect, start, new GUIStyle(GolfSimTheme.AccentButton) { fontSize = 18 })) StartMiniGame();
             GUI.enabled = true;
         }

@@ -194,6 +194,9 @@ namespace GolfSimZA.Testing
             }
             if (lastClub != null && flight.CarryMeters > 1f && lastExpected > 1f)
                 carryRatio[lastClub] = Mathf.Lerp(carryRatio.TryGetValue(lastClub, out float r0) ? r0 : 1f, flight.CarryMeters / lastExpected, 0.6f);
+            // Games score where the ball STOPS: learn each club's run-out so the next shot allows for it.
+            if (lastClub != null && flight.CarryMeters > 1f)
+                rollRatio[lastClub] = Mathf.Lerp(rollRatio.TryGetValue(lastClub, out float q0) ? q0 : 0.05f, Mathf.Max(0f, flight.TotalMeters - flight.CarryMeters) / flight.CarryMeters, 0.6f);
             Hit();
             nextShotAt = now + 1.2f;
         }
@@ -211,6 +214,8 @@ namespace GolfSimZA.Testing
                 else if (shotsSent % 4 == 1) target += Vector3.right * (shotsSent % 8 == 1 ? 60f : -60f);
             }
             float distance = new Vector2(target.x, target.z).magnitude;
+            // Carry short of the target by the expected roll (the ball is scored where it stops).
+            float aimDistance = distance;
 
             // Shortest club that carries far enough (from this test's own carries), softer if needed.
             string club = null, longestClub = null;
@@ -220,11 +225,13 @@ namespace GolfSimZA.Testing
                 if (ActiveClub.IsPutter(c.Name)) continue;
                 float carry = Carry(c.Name);
                 if (carry > longest) { longest = carry; longestClub = c.Name; }
-                if (carry >= distance * 0.97f && carry < bestCarry) { bestCarry = carry; club = c.Name; }
+                float runOut = 1f + (rollRatio.TryGetValue(c.Name, out float rr) ? rr : 0.05f);
+                if (carry * runOut >= aimDistance * 0.97f && carry < bestCarry) { bestCarry = carry; club = c.Name; }
             }
             if (club == null) club = longestClub;
             ActiveClub.Select(club);
             float expected = Carry(club);
+            distance = aimDistance / (1f + (rollRatio.TryGetValue(club, out float clubRoll) ? clubRoll : 0.05f));
             float factor = distance < expected ? Mathf.Clamp(Mathf.Pow(distance / expected, 0.8f), 0.3f, 1f) : 1f;
 
             AimPointer aim = GetField<AimPointer>(range, "aimPointer");
@@ -243,6 +250,8 @@ namespace GolfSimZA.Testing
             shots.Inject(shot);
         }
 
+        private readonly Dictionary<string, float> rollRatio = new Dictionary<string, float>();
+
         private float Carry(string club) => ActiveClub.ExpectedCarry(club) * (carryRatio.TryGetValue(club, out float r) ? r : 1f);
 
         private void CheckResults(int scored)
@@ -255,7 +264,7 @@ namespace GolfSimZA.Testing
 
             MiniGameInfo info = runner.Info;
             bool explore = game.Explore;
-            if (!explore && info.Id != MiniGameId.EdgeKnockout)
+            if (!explore && game.FixedShots)
                 foreach (MiniPlayer p in runner.Players)
                     if (p.Shots != game.ShotsPerPlayer) problems.Add(item + " • " + p.Name + " hit " + p.Shots + " shots, expected " + game.ShotsPerPlayer);
             foreach (MiniPlayer p in runner.Players)

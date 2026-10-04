@@ -139,7 +139,9 @@ namespace GolfSimZA.Visual
             var watch = Stopwatch.StartNew();
             foreach (Vector2Int key in wanted)
             {
-                if (watch.Elapsed.TotalMilliseconds > 3.0) break;
+                // While a ball flies the camera chases it: build grass in small slices so the
+                // flight stays smooth (the rest is filled in once the ball stops).
+                if (watch.Elapsed.TotalMilliseconds > (GolfSimZA.Physics.BallFlightSimulator.AnyInFlight ? 0.8 : 3.0)) break;
                 int lod = FlatDistance(key, camPos) < NearLod ? 0 : 1;
                 if (chunks.TryGetValue(key, out ChunkData old) && old.Mesh != null) Destroy(old.Mesh);
                 chunks[key] = new ChunkData { Mesh = Build(key, density * (lod == 0 ? 1f : 0.45f), lod), Lod = lod };

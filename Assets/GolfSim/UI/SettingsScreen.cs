@@ -204,8 +204,8 @@ namespace GolfSimZA.UI
                     int view = Mathf.Clamp(s.secondScreenView, 0, 2);
                     if (Choice(ref y, x, w, "SECOND SCREEN PAGE", new[] { "NUMBERS", "VISUAL", "BOTH (SWITCH EVERY 10 s)" }, ref view)) s.secondScreenView = view;
                 }
-                if (s.secondScreen && game != 0)
-                    Hint(ref y, x, w, "With the second screen on, the game plays on DISPLAY 1 (the Windows main display). To swap them, make the other monitor the main display in Windows Settings → Display.");
+                if (s.secondScreen && game != DisplaySetup.PrimaryMonitor)
+                    Hint(ref y, x, w, "With the second screen on, the game plays on DISPLAY " + (DisplaySetup.PrimaryMonitor + 1) + " (the Windows main display) and the club data on the other monitor. To swap them, make the other monitor the main display in Windows Settings → Display.");
                 Switch(ref y, x, w, "ASK WHICH SCREEN TO USE WHEN THE GAME STARTS", ref s.askDisplayOnLaunch);
                 if (screensChanged && Event.current.type == EventType.Repaint)
                 {

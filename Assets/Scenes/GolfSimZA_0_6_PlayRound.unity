@@ -1408,8 +1408,11 @@ MonoBehaviour:
   maximumFlightTime: 12
   groundY: 0
   bounceRetention: 0.28
-  horizontalBounceRetention: 0.86
+  bounceSpeedLoss: 0.02
+  turfFriction: 0.6
+  spinCheck: 1.75
   fairwayRollDeceleration: 4.2
+  rollDragPerSpeed: 0.35
   greenRollDeceleration: 0.65
   fairwayPuttDeceleration: 1.6
   maxRollMeters: 35

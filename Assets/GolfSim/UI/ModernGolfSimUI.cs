@@ -93,9 +93,12 @@ namespace GolfSimZA.UI
             Wind.NewHole(Vector3.forward);
             aimPointer = gameObject.AddComponent<AimPointer>();
             aimPointer.MaxDistance = RangeEnvironment.MaxTarget + 60f;
-            aimPointer.CanInteract = () => !GameMenuOverlay.IsOpen && flight != null && !flight.IsInFlight && !panelOpen && (miniGame == null || !miniGame.BlocksInput) && !mapExpanded;
-            aimPointer.Moved += p => { aimMoved = true; ApplyRangeAim(false); };
+            aimPointer.CanInteract = () => !GameMenuOverlay.IsOpen && flight != null && !flight.IsInFlight && !panelOpen && (miniGame == null || !miniGame.BlocksInput) && !mapExpanded
+                && (GolfSimZA.Players.ClubMappingSession.Instance == null || !GolfSimZA.Players.ClubMappingSession.Instance.AwaitingDecision);
+            aimPointer.Moved += p => { aimMoved = true; ApplyRangeAim(false); SuggestClubForAim(); };
             dispersion = GolfSimZA.Visual.ShotDispersion.Attach(gameObject, flight);
+            // The dispersion circle belongs to the plain driving range only (not mini games or Map My Bag).
+            dispersion.Enabled = !mini && !GolfSimZA.Players.ClubMappingSession.IsActive;
             if (mini)
             {
                 miniGame = gameObject.AddComponent<GolfSimZA.MiniGames.MiniGameRunner>();
@@ -137,6 +140,7 @@ namespace GolfSimZA.UI
             // The aim target stays where the player put it; otherwise it sits on the flag.
             aimPointer?.Set(range.TeePosition, aimMoved ? aimPointer.Point : range.TargetPosition);
             ApplyRangeAim(snapCamera);
+            SuggestClubForAim();
             tracer?.Clear();
             status = "READY";
             GolfSimAudio.PlayReady();
@@ -167,6 +171,18 @@ namespace GolfSimZA.UI
         {
             if (miniGame != null && miniGame.Game != null && !miniGame.Game.ShowRangeTarget) flight.ClearHole();
             else flight.SetHole(range.TargetPosition, range.GreenWidth * 0.5f + 1f);
+        }
+
+        /// <summary>
+        /// Mini games: before every shot (and when the aim moves) the club for the aimed distance
+        /// is selected and shown as NEXT CLUB. The plain driving range keeps the club the player
+        /// is practising with; Map My Bag keeps the club being mapped.
+        /// </summary>
+        private void SuggestClubForAim()
+        {
+            if (miniGame == null || range == null || GolfSimZA.Players.ClubMappingSession.IsActive) return;
+            float distance = TargetOrAimDistance();
+            if (distance > 1f) ClubBar.Suggest(ClubBar.ClubForDistance(distance, false));
         }
 
         /// <summary>Turns the shot towards the aim target (or the flag).</summary>
@@ -201,6 +217,7 @@ namespace GolfSimZA.UI
             aimPointer.Set(range.TeePosition, range.TeePosition + dir * distance);
             aimMoved = true;
             ApplyRangeAim(false);
+            SuggestClubForAim();
         }
 
         private void OnDestroy()
@@ -278,7 +295,7 @@ namespace GolfSimZA.UI
             wasInFlight = false;
             ShotData shot = simulator.LastShot;
             RecordRangeShot(shot);
-            if (miniGame != null) miniGame.OnShotFinished(shot, flight.LandingPosition, flight.Ball.position, flight.WasHoled);
+            if (miniGame != null) miniGame.OnShotFinished(shot, flight.LandingPosition, flight.Ball.position, flight.WasHoled, flight.InWater);
             recent.Insert(0, shot);
             if (recent.Count > 6) recent.RemoveAt(recent.Count - 1);
             Vector3 d = flight.Ball.position - range.TargetPosition;

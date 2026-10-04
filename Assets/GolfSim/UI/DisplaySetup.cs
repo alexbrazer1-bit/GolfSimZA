@@ -46,6 +46,42 @@ namespace GolfSimZA.UI
             }
         }
 
+        /// <summary>
+        /// Which monitor (index in <see cref="Monitors"/>) each Unity display is on. Unity display 0
+        /// is the Windows main display; the others follow in Windows' order. Matched by resolution
+        /// (and order when two monitors have the same size).
+        /// </summary>
+        public static int[] UnityDisplayMonitors()
+        {
+            IReadOnlyList<DisplayInfo> list = Monitors;
+            int n = Display.displays.Length;
+            var map = new int[n];
+            var used = new bool[Mathf.Max(1, list.Count)];
+            for (int u = 0; u < n; u++)
+            {
+                map[u] = -1;
+                int w = Display.displays[u].systemWidth, h = Display.displays[u].systemHeight;
+                for (int m = 0; m < list.Count; m++)
+                    if (!used[m] && list[m].width == w && list[m].height == h) { map[u] = m; break; }
+                if (map[u] < 0)
+                    for (int m = 0; m < list.Count; m++)
+                        if (!used[m]) { map[u] = m; break; }
+                if (map[u] >= 0) used[map[u]] = true;
+                else map[u] = Mathf.Min(u, Mathf.Max(0, list.Count - 1));
+            }
+            return map;
+        }
+
+        /// <summary>The Windows main display (index in <see cref="Monitors"/>).</summary>
+        public static int PrimaryMonitor
+        {
+            get
+            {
+                int[] map = UnityDisplayMonitors();
+                return map.Length > 0 ? Mathf.Max(0, map[0]) : 0;
+            }
+        }
+
         private static bool Same(DisplayInfo a, DisplayInfo b) =>
             a.name == b.name && a.width == b.width && a.height == b.height && a.workArea.x == b.workArea.x && a.workArea.y == b.workArea.y;
 
@@ -106,7 +142,8 @@ namespace GolfSimZA.UI
         {
             int count = Monitors.Count;
             if (count < 2) return 0;
-            if (s.secondScreen) return 0;
+            // The main display - Windows' own one, which is not always first in the monitor list.
+            if (s.secondScreen) return PrimaryMonitor;
             return s.gameDisplay >= 0 && s.gameDisplay < count ? s.gameDisplay : CurrentGameMonitor;
         }
 
@@ -151,6 +188,35 @@ namespace GolfSimZA.UI
             Screen.SetResolution(monitor.width, monitor.height, FullScreenMode.FullScreenWindow);
         }
 
+        private string layoutSignature;
+        private float nextLayoutCheck;
+
+        /// <summary>
+        /// Watches the monitors: when the game's monitor or the Windows main display changes (or a
+        /// monitor is added / removed), the game and the second screen are placed again so the
+        /// club data is always on a monitor the game is not using.
+        /// </summary>
+        private void Update()
+        {
+            if (showPicker || Time.unscaledTime < nextLayoutCheck) return;
+            nextLayoutCheck = Time.unscaledTime + 2f;
+            string sig = LayoutSignature();
+            if (layoutSignature == null) { layoutSignature = sig; return; }
+            if (sig == layoutSignature) return;
+            layoutSignature = sig;
+            Debug.Log("[GolfSimZA] Screens changed - placing the game and the second screen again." + DescribeLayout());
+            Apply(false);
+        }
+
+        private static string LayoutSignature()
+        {
+            var sb = new System.Text.StringBuilder();
+            IReadOnlyList<DisplayInfo> list = Monitors;
+            sb.Append(list.Count).Append('|').Append(CurrentGameMonitor).Append('|').Append(PrimaryMonitor);
+            foreach (DisplayInfo d in list) sb.Append('|').Append(d.name).Append(d.width).Append('x').Append(d.height);
+            return sb.ToString();
+        }
+
         private void OnGUI()
         {
             if (!showPicker) return;
@@ -183,10 +249,10 @@ namespace GolfSimZA.UI
             GUI.Label(new Rect(x, y, cw, 22f), "SECOND SCREEN  (Garmin R10 status and swing data on the other monitor)", GolfSimTheme.Label);
             y += 26f;
             if (GUI.Button(new Rect(x, y, cw * 0.5f - 5f, 48f), "OFF", pickSecond == 0 ? cardActive : cardStyle)) pickSecond = 0;
-            if (GUI.Button(new Rect(x + cw * 0.5f + 5f, y, cw * 0.5f - 5f, 48f), "ON  •  " + OtherLabel(pickSecond == 1 ? 0 : pickGame), pickSecond == 1 ? cardActive : cardStyle)) pickSecond = 1;
+            if (GUI.Button(new Rect(x + cw * 0.5f + 5f, y, cw * 0.5f - 5f, 48f), "ON  •  " + OtherLabel(pickSecond == 1 ? PrimaryMonitor : pickGame), pickSecond == 1 ? cardActive : cardStyle)) pickSecond = 1;
             y += 54f;
-            if (pickSecond == 1 && pickGame != 0)
-                GUI.Label(new Rect(x, y, cw, 36f), "With the second screen on, the game plays on DISPLAY 1 (the Windows main display) and the swing data goes on the other screen. To swap them, make the other monitor the main display in Windows Settings → Display.",
+            if (pickSecond == 1 && pickGame != PrimaryMonitor)
+                GUI.Label(new Rect(x, y, cw, 36f), "With the second screen on, the game plays on DISPLAY " + (PrimaryMonitor + 1) + " (the Windows main display) and the swing data goes on the other screen. To swap them, make the other monitor the main display in Windows Settings → Display.",
                     new GUIStyle(GolfSimTheme.Label) { wordWrap = true, fontSize = 11, normal = { textColor = GolfSimTheme.Gold } });
             y += 40f;
 
@@ -212,6 +278,13 @@ namespace GolfSimZA.UI
         {
             int other = game == 0 ? 1 : 0;
             return "DISPLAY " + (other + 1);
+        }
+
+        /// <summary>Monitor (index in <see cref="Monitors"/>) a Unity display is on.</summary>
+        public static int MonitorOfUnityDisplay(int unityDisplay)
+        {
+            int[] map = UnityDisplayMonitors();
+            return unityDisplay >= 0 && unityDisplay < map.Length ? map[unityDisplay] : unityDisplay;
         }
     }
 }

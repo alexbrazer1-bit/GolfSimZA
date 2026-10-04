@@ -10,7 +10,7 @@ namespace GolfSimZA.MiniGames
     // =====================================================================================
 
     /// <summary>
-    /// A junkyard of wrecked cars and coloured blast barrels. A ball landing next to a barrel sets
+    /// A junkyard of wrecked cars and coloured blast barrels. A ball stopping next to a barrel sets
     /// it off, and every barrel of the same colour within 30 m of an exploding one goes up too
     /// (chain reaction). 100 points per barrel times the chain length.
     /// </summary>
@@ -43,13 +43,17 @@ namespace GolfSimZA.MiniGames
             barrelRoot = null;
         }
 
+        public override bool HasOwnMap => true;
+
         public override void Build()
         {
+            // Own map: a fenced scrapyard.
+            Map = new ScrapyardMap();
+            Map.Build(Root, Random.Range(1, 9999));
             Range.SetTarget(new Vector3(0f, 0f, 150f));
             Range.SetTargetVisible(false);
 
-            // Dirt yard patches with piles of wrecks.
-            Color dirt = new Color(0.42f, 0.34f, 0.24f, 0.85f);
+            // Piles of wrecks round the yard.
             Color[] paints =
             {
                 new Color(0.55f, 0.12f, 0.10f), new Color(0.18f, 0.30f, 0.45f), new Color(0.75f, 0.70f, 0.60f), new Color(0.25f, 0.35f, 0.20f),
@@ -58,7 +62,6 @@ namespace GolfSimZA.MiniGames
             for (int i = 0; i < 9; i++)
             {
                 Vector3 c = new Vector3(Random.Range(-45f, 45f), 0f, Random.Range(60f, 240f));
-                MiniGameWorld.Disc(Root, c, Random.Range(9f, 14f), dirt, 0.03f, "Dirt");
                 int cars = Random.Range(2, 5);
                 for (int k = 0; k < cars; k++)
                 {
@@ -133,10 +136,10 @@ namespace GolfSimZA.MiniGames
             foreach (BarrelSpot b in barrels)
             {
                 if (b.Gone) continue;
-                float d = Flat(landing, b.Pos);
+                float d = Flat(rest, b.Pos);
                 if (d < bestD) { bestD = d; hit = b; }
             }
-            float radius = 5f + landing.z * 0.02f;
+            float radius = 5f + rest.z * 0.02f;
             if (hit == null || bestD > radius)
             {
                 p.Log.Add("0");
@@ -223,7 +226,7 @@ namespace GolfSimZA.MiniGames
     //  CREATURE GAMES (shared)
     // =====================================================================================
 
-    /// <summary>A kind of creature: points, speed, how close the ball must land, where it lives.</summary>
+    /// <summary>A kind of creature: points, speed, how close the ball must stop, where it lives.</summary>
     public sealed class CreatureKind
     {
         public string Name;
@@ -246,7 +249,7 @@ namespace GolfSimZA.MiniGames
         public bool Rare;
     }
 
-    /// <summary>Base for CREATURE POND and DESERT OASIS: creatures wander round a water hole and are caught by landing the ball on them.</summary>
+    /// <summary>Base for CREATURE POND and DESERT OASIS: creatures wander round a water hole and are caught by stopping the ball on them.</summary>
     public abstract class CreatureGame : MiniGame
     {
         protected sealed class Creature
@@ -269,6 +272,9 @@ namespace GolfSimZA.MiniGames
         protected const int Population = 13;
 
         protected abstract CreatureKind[] Kinds { get; }
+        /// <summary>The game's own world round <see cref="Centre"/>.</summary>
+        protected abstract GameMap MakeMap();
+        public override bool HasOwnMap => true;
         protected abstract void BuildScenery();
         /// <summary>Builds the model under <paramref name="root"/> facing +z (sets wings / segments to animate).</summary>
         protected abstract void MakeModel(Creature c, Transform root);
@@ -287,6 +293,8 @@ namespace GolfSimZA.MiniGames
         public override void Build()
         {
             Centre = new Vector3(Random.Range(-6f, 6f), 0f, Random.Range(135f, 160f));
+            Map = MakeMap();
+            Map.Build(Root, Random.Range(1, 9999));
             Range.SetTarget(Centre);
             Range.SetTargetVisible(false);
             BuildScenery();
@@ -420,7 +428,7 @@ namespace GolfSimZA.MiniGames
             float bestD = float.MaxValue;
             foreach (Creature c in live)
             {
-                float d = Flat(landing, c.Pos);
+                float d = Flat(rest, c.Pos);
                 if (d < bestD) { bestD = d; best = c; }
             }
             if (best == null)
@@ -428,7 +436,7 @@ namespace GolfSimZA.MiniGames
                 p.Log.Add("—");
                 return new ShotOutcome("MISSED", 0f, false);
             }
-            float radius = best.Kind.Catch + 1f + landing.z * 0.02f;
+            float radius = best.Kind.Catch + 1f + rest.z * 0.02f;
             if (bestD > radius)
             {
                 p.Log.Add("—");
@@ -559,10 +567,11 @@ namespace GolfSimZA.MiniGames
 
         protected override CreatureKind[] Kinds => All;
 
+        protected override GameMap MakeMap() => new ForestPondMap(Centre, WaterRadius = 26f);
+
         protected override void BuildScenery()
         {
             WaterRadius = 26f;
-            MiniGameWorld.Water(Root, Centre, WaterRadius, new Color(0.14f, 0.42f, 0.62f), new Color(0.50f, 0.46f, 0.32f, 0.9f));
             // Magic glow ring round the water.
             MiniGameWorld.Ring(Root, Centre, WaterRadius + 4.2f, WaterRadius + 4.9f, new Color(0.55f, 0.95f, 1f, 0.55f), 0.08f, "Glow");
             // Lily pads.
@@ -675,29 +684,12 @@ namespace GolfSimZA.MiniGames
 
         protected override CreatureKind[] Kinds => All;
 
+        protected override GameMap MakeMap() => new DuneSeaMap(Centre, WaterRadius = 16f);
+
         protected override void BuildScenery()
         {
             WaterRadius = 16f;
-            Color sand = new Color(0.86f, 0.74f, 0.50f);
-            // Sand over the range round the oasis.
-            GameObject sandDisc = MiniGameWorld.Disc(Root, Centre, 85f, sand, 0.025f, "Sand");
-            sandDisc.GetComponent<MeshRenderer>().sharedMaterial = MiniGameWorld.Lit(sand, 0.05f);
-            MiniGameWorld.Ring(Root, Centre, 85f, 92f, new Color(sand.r, sand.g, sand.b, 0.5f), 0.025f, "SandEdge");
-            MiniGameWorld.Water(Root, Centre, WaterRadius, new Color(0.12f, 0.55f, 0.60f), new Color(0.45f, 0.60f, 0.30f, 0.95f));
-            // Palms round the water.
-            for (int i = 0; i < 9; i++)
-            {
-                float a = i / 9f * Mathf.PI * 2f + Random.Range(-0.2f, 0.2f), r = WaterRadius + Random.Range(2f, 5f);
-                Palm(Centre + new Vector3(Mathf.Cos(a) * r, 0f, Mathf.Sin(a) * r), Random.Range(5f, 8f));
-            }
-            // Dunes, rocks and cacti on the sand.
-            for (int i = 0; i < 12; i++)
-            {
-                float a = Random.Range(0f, Mathf.PI * 2f), r = Random.Range(40f, 80f);
-                Vector3 p = Centre + new Vector3(Mathf.Cos(a) * r, 0f, Mathf.Sin(a) * r);
-                GameObject dune = MiniGameWorld.Shape(PrimitiveType.Sphere, Root, new Vector3(p.x, MiniGameWorld.Ground(p) - 0.4f, p.z), new Vector3(Random.Range(10f, 18f), Random.Range(2f, 3.5f), Random.Range(6f, 10f)), Color.Lerp(sand, Color.white, 0.08f), "Dune");
-                dune.transform.rotation = Quaternion.Euler(0f, Random.Range(0f, 180f), 0f);
-            }
+            // (The dunes, the oasis pool and its palms are part of the map.) Rocks and cacti on the sand.
             for (int i = 0; i < 16; i++)
             {
                 float a = Random.Range(0f, Mathf.PI * 2f), r = Random.Range(WaterRadius + 10f, 75f);
@@ -707,30 +699,6 @@ namespace GolfSimZA.MiniGames
                     MiniGameWorld.Shape(PrimitiveType.Sphere, Root, new Vector3(p.x, g + 0.4f, p.z), new Vector3(Random.Range(1.5f, 3f), Random.Range(0.8f, 1.6f), Random.Range(1.5f, 3f)), new Color(0.62f, 0.42f, 0.30f), "Rock");
                 else
                     Cactus(p);
-            }
-        }
-
-        private void Palm(Vector3 at, float height)
-        {
-            float g = MiniGameWorld.Ground(at);
-            Color trunk = new Color(0.50f, 0.36f, 0.22f), leaf = new Color(0.22f, 0.55f, 0.20f);
-            Vector3 lean = new Vector3(Random.Range(-0.12f, 0.12f), 1f, Random.Range(-0.12f, 0.12f)).normalized;
-            int segs = 5;
-            Vector3 p = new Vector3(at.x, g, at.z);
-            for (int s = 0; s < segs; s++)
-            {
-                float h = height / segs;
-                GameObject seg = MiniGameWorld.Shape(PrimitiveType.Cylinder, Root, p + lean * h * 0.5f, new Vector3(0.45f - s * 0.04f, h * 0.5f, 0.45f - s * 0.04f), trunk, "Palm");
-                seg.transform.rotation = Quaternion.FromToRotation(Vector3.up, lean);
-                p += lean * h;
-                lean = (lean + new Vector3(lean.x, 0f, lean.z) * 0.35f).normalized;
-            }
-            for (int f = 0; f < 7; f++)
-            {
-                float yaw = f / 7f * 360f;
-                GameObject frond = MiniGameWorld.Shape(PrimitiveType.Cube, Root, p, new Vector3(0.7f, 0.06f, 3.4f), leaf, "Frond");
-                frond.transform.rotation = Quaternion.Euler(28f, yaw, 0f);
-                frond.transform.position = p + frond.transform.forward * 1.5f;
             }
         }
 

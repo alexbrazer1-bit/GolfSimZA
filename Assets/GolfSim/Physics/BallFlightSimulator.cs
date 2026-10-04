@@ -41,15 +41,23 @@ namespace GolfSimZA.Physics
 
         [Header("Ground physics")]
         [SerializeField] private float groundY = 0.0f;
-        [SerializeField, Range(0.05f, 0.9f)] private float bounceRetention = 0.18f;
-        [SerializeField, Range(0.5f, 1f)] private float horizontalBounceRetention = 0.90f;
-        [Tooltip("Rolling resistance on fairway in m/s² (a ball rolling at 10 m/s stops after about 12 m).")]
-        [SerializeField] private float fairwayRollDeceleration = 4.2f;
+        [Tooltip("Vertical bounce (coefficient of restitution) of a slow impact; fast impacts bounce less.")]
+        [SerializeField, Range(0.05f, 0.9f)] private float bounceRetention = 0.45f;
+        [Tooltip("How much the restitution drops per m/s of impact speed into the ground (turf absorbs hard landings).")]
+        [SerializeField] private float bounceSpeedLoss = 0.02f;
+        [Tooltip("Turf friction on impact: slows the ball along the ground in proportion to how hard it lands.")]
+        [SerializeField] private float turfFriction = 0.6f;
+        [Tooltip("How strongly backspin checks the ball on landing (1 = rigid-ball physics).")]
+        [SerializeField] private float spinCheck = 1.75f;
+        [Tooltip("Rolling resistance on fairway at walking pace in m/s².")]
+        [SerializeField] private float fairwayRollDeceleration = 2.6f;
+        [Tooltip("Extra grass drag per m/s of roll speed (fast balls are slowed more: a natural, gradual run-out).")]
+        [SerializeField] private float rollDragPerSpeed = 0.35f;
         [SerializeField] private float greenRollDeceleration = 0.65f;
         [SerializeField] private float fairwayPuttDeceleration = 1.6f;
         [SerializeField] private float maxRollMeters = 60.0f;
-        [SerializeField] private float stopSpeed = 0.15f;
-        [SerializeField] private float minBounceSpeed = 1.2f;
+        [SerializeField] private float stopSpeed = 0.08f;
+        [SerializeField] private float minBounceSpeed = 0.6f;
         [SerializeField] private float slopeRollFactor = 0.71f;
         [SerializeField] private float maximumRollTime = 25f;
 
@@ -94,6 +102,8 @@ namespace GolfSimZA.Physics
         public float MaxHeightMeters => maxHeight;
         public float FlightTimeSeconds => flightTime;
         public bool WasHoled { get; private set; }
+        /// <summary>The ball came to rest in water on a mini game map (splash).</summary>
+        public bool InWater { get; private set; }
         /// <summary>Angle the ball came down at on its first landing (degrees).</summary>
         public float DescentAngleDeg { get; private set; }
         /// <summary>Distance right (+) or left (-) of the aim line where the ball stopped, metres.</summary>
@@ -130,11 +140,20 @@ namespace GolfSimZA.Physics
         {
             AppSettings s = AppSettings.Current;
             greenRollDeceleration = StimpToDeceleration(s.greenStimp);
+            // Ground model values (older scenes saved earlier tunings of these: always use the current model).
+            stopSpeed = 0.08f;
+            minBounceSpeed = 0.6f;
+            maxRollMeters = 60f;
+            bounceSpeedLoss = 0.02f;
+            spinCheck = 1.75f;
+            rollDragPerSpeed = 0.35f;
             switch (s.fairwayFirmness)
             {
-                case 0: fairwayRollDeceleration = 5.6f; fairwayPuttDeceleration = 2.0f; bounceRetention = 0.14f; break;
-                case 2: fairwayRollDeceleration = 3.1f; fairwayPuttDeceleration = 1.3f; bounceRetention = 0.22f; break;
-                default: fairwayRollDeceleration = 4.2f; fairwayPuttDeceleration = 1.6f; bounceRetention = 0.18f; break;
+                // Soft / medium / firm turf. Tuned so a medium fairway gives typical run-outs:
+                // driver ~20-27 m, 3 wood ~19 m, 7 iron ~8 m, pitching wedge ~3 m, sand wedge ~2 m.
+                case 0: fairwayRollDeceleration = 3.4f; fairwayPuttDeceleration = 2.0f; bounceRetention = 0.38f; turfFriction = 0.75f; break;
+                case 2: fairwayRollDeceleration = 1.9f; fairwayPuttDeceleration = 1.3f; bounceRetention = 0.50f; turfFriction = 0.50f; break;
+                default: fairwayRollDeceleration = 2.6f; fairwayPuttDeceleration = 1.6f; bounceRetention = 0.45f; turfFriction = 0.60f; break;
             }
         }
 
@@ -182,11 +201,13 @@ namespace GolfSimZA.Physics
         public void PlaceBall(Vector3 worldPosition)
         {
             if (ball == null) return;
+            interpolating = false;
             ball.gameObject.layer = GroundProbe.IgnoreRaycastLayer;
             airborne = false;
             rolling = false;
             velocity = Vector3.zero;
             WasHoled = false;
+            InWater = false;
             float h = GroundProbe.HeightAt(worldPosition);
             ball.position = new Vector3(worldPosition.x, h + BallRadius, worldPosition.z);
         }
@@ -210,8 +231,10 @@ namespace GolfSimZA.Physics
             shot.LaunchDirectionDeg += AppSettings.Current.aimOffsetDeg;
             shot.LaunchAngleDeg += AppSettings.Current.launchAngleOffsetDeg;
             activeShot = shot;
+            if (interpolating) { ball.position = simCurrent; interpolating = false; }
             treesHit.Clear();
             WasHoled = false;
+            InWater = false;
             stepAccumulator = 0f;
             rollTime = 0f;
             flightTime = 0f;
@@ -268,17 +291,49 @@ namespace GolfSimZA.Physics
             Launched?.Invoke(shot);
         }
 
+        /// <summary>True while any ball in the scene is flying or rolling (other systems go easy on the CPU then).</summary>
+        public static bool AnyInFlight { get; private set; }
+
+        // Smooth motion: the physics runs in fixed 10 ms steps, but frames do not line up with them
+        // (at 60 fps a frame holds one step, then two; at 144 fps often none), which made the ball
+        // jump and stutter in the air. The ball is drawn between the last two physics positions.
+        private Vector3 simPrevious, simCurrent;
+        private bool interpolating;
+
         private void Update()
         {
             if (ball == null || !IsInFlight)
+            {
+                if (ball != null && interpolating) { ball.position = simCurrent; interpolating = false; }
+                AnyInFlight = false;
                 return;
+            }
+            AnyInFlight = true;
+
+            // Back to the true physics position before stepping.
+            if (interpolating) ball.position = simCurrent;
+            else simPrevious = simCurrent = ball.position;
 
             stepAccumulator += Mathf.Min(Time.deltaTime, 0.1f);
             while (stepAccumulator >= Step && IsInFlight)
             {
                 stepAccumulator -= Step;
+                simPrevious = ball.position;
                 if (airborne) StepAirborne(Step);
                 else if (rolling) StepRoll(Step);
+            }
+            simCurrent = ball.position;
+
+            if (IsInFlight)
+            {
+                // Show the ball part of the way into the next step (never across a cup drop or splash: those stop the shot).
+                ball.position = Vector3.LerpUnclamped(simPrevious, simCurrent, Mathf.Clamp01(stepAccumulator / Step));
+                interpolating = true;
+            }
+            else
+            {
+                interpolating = false;
+                AnyInFlight = false;
             }
         }
 
@@ -355,6 +410,11 @@ namespace GolfSimZA.Physics
             GroundProbe.TrySample(ball.position, out float groundHeight, out Vector3 normal);
             if (ball.position.y - BallRadius <= groundHeight && velocity.y < 0f)
             {
+                if (GroundProbe.LastWasWater)
+                {
+                    Splash(groundHeight);
+                    return;
+                }
                 ball.position = new Vector3(ball.position.x, groundHeight + BallRadius, ball.position.z);
                 Impact(normal);
                 return;
@@ -382,24 +442,32 @@ namespace GolfSimZA.Physics
                 Landed?.Invoke(velocity.magnitude);
                 carryMeters = HorizontalDistance(landingPosition, launchPosition);
 
-                bool onGreen = IsOnGreen(landingPosition);
-                // Greens are smoother than fairways, so the ball releases a little more.
-                landingRollDeceleration = onGreen ? fairwayRollDeceleration * 0.8f : fairwayRollDeceleration;
+                // The run-out after landing starts at fairway pace; on the green it eases into green
+                // speed as the ball slows (see StepRoll).
+                landingRollDeceleration = fairwayRollDeceleration;
             }
 
             // Split velocity into the part into the ground and the part along it.
             float intoGround = Vector3.Dot(velocity, normal);
             Vector3 along = velocity - normal * intoGround;
 
-            // How much forward speed survives the bounce: steep landings and backspin
-            // "check" the ball (a wedge stops quickly, a driver runs out).
-            float speedNow = velocity.magnitude;
-            float steepness = speedNow > 0.01f ? Mathf.Clamp01(Mathf.Abs(intoGround) / speedNow) : 0f;
-            float alongRetention = Mathf.Clamp(0.95f - 0.55f * steepness - currentSpinRpm / 14000f, 0.12f, horizontalBounceRetention);
-
-            along *= alongRetention;
-            float bounceSpeed = Mathf.Abs(intoGround) * bounceRetention;
-            currentSpinRpm *= 0.6f;
+            // Impact with the turf (rigid-ball bounce model):
+            // * the bounce up gets less lively the harder the ball lands (turf absorbs it);
+            // * friction takes speed off along the ground in proportion to the landing force,
+            //   but the ball can never slow below its rolling speed - which backspin lowers,
+            //   so a steep spinning wedge checks up and a shallow driver runs out.
+            float normalSpeed = Mathf.Abs(intoGround);
+            float restitution = Mathf.Clamp(bounceRetention - bounceSpeedLoss * normalSpeed, 0.08f, bounceRetention);
+            float alongSpeed = along.magnitude;
+            float spinSurfaceSpeed = BallRadius * currentSpinRpm * (2f * Mathf.PI / 60f);
+            // Greens are soft and receptive: they grab a landing ball harder than a fairway.
+            float friction = hasHole && IsOnGreen(ball.position) ? turfFriction * 1.4f : turfFriction;
+            float afterFriction = alongSpeed - friction * (1f + restitution) * normalSpeed;
+            float rollingLimit = 5f / 7f * alongSpeed - 2f / 7f * spinSurfaceSpeed * spinCheck;
+            float newAlong = Mathf.Max(0f, Mathf.Max(afterFriction, rollingLimit));
+            along = alongSpeed > 0.0001f ? along * (newAlong / alongSpeed) : Vector3.zero;
+            float bounceSpeed = normalSpeed * restitution;
+            currentSpinRpm *= 0.3f;
 
             if (bounceSpeed > minBounceSpeed)
             {
@@ -451,7 +519,9 @@ namespace GolfSimZA.Physics
                 return;
             }
 
-            float currentDeceleration = deceleration;
+            // Rolling resistance plus grass drag that grows with speed: a fast ball is slowed
+            // quickly, then it trickles out gently instead of stopping dead.
+            float currentDeceleration = deceleration + (puttMode ? 0f : rollDragPerSpeed * speed);
             Vector3 direction = speed > 0.0001f ? horizontalVelocity / speed : Vector3.zero;
 
             horizontalVelocity += slopeAcceleration * dt;
@@ -461,6 +531,13 @@ namespace GolfSimZA.Physics
 
             Vector3 next = ball.position + velocity * dt;
             float nextHeight = GroundProbe.HeightAt(next);
+            if (GroundProbe.LastWasWater)
+            {
+                // Rolled into the water.
+                ball.position = new Vector3(next.x, ball.position.y, next.z);
+                Splash(nextHeight);
+                return;
+            }
             if (ball.position.y - BallRadius - nextHeight > LedgeDrop)
             {
                 // Rolled off a ledge (a cliff edge, a wall): the ball falls instead of jumping down.
@@ -483,6 +560,25 @@ namespace GolfSimZA.Physics
                 CompleteShot();
                 BallHoled?.Invoke();
             }
+        }
+
+        /// <summary>The ball drops into water (mini game maps): it stops where it went in, just under the surface.</summary>
+        private void Splash(float surface)
+        {
+            if (!landedOnce)
+            {
+                landedOnce = true;
+                landingPosition = new Vector3(ball.position.x, surface, ball.position.z);
+                carryMeters = HorizontalDistance(landingPosition, launchPosition);
+                Landed?.Invoke(velocity.magnitude);
+            }
+            ball.position = new Vector3(ball.position.x, surface - BallRadius * 3f, ball.position.z);
+            velocity = Vector3.zero;
+            airborne = false;
+            rolling = false;
+            InWater = true;
+            totalMeters = HorizontalDistance(ball.position, launchPosition);
+            CompleteShot();
         }
 
         private float HorizontalDistance(Vector3 a, Vector3 b)
