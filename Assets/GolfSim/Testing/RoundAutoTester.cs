@@ -251,7 +251,18 @@ namespace GolfSimZA.Testing
             }
 
             bool flying = flight != null && flight.IsInFlight;
-            if (testerWasFlying && !flying && flight != null) LearnRoll(flight);
+            if (testerWasFlying && !flying && flight != null)
+            {
+                LearnRoll(flight);
+                if (treeTestPending)
+                {
+                    treeTestPending = false;
+                    int hits = BallFlightSimulator.TreeHits + BallFlightSimulator.ObstacleHits - treeTestHitsBefore;
+                    float carry = flight.CarryMeters;
+                    report.AppendLine("  TREE TEST: the ball hit " + hits + " tree / obstacle part(s), carried " + carry.ToString("0") + " m and stopped " + Flat(flight.Ball.position - treeTestFrom).ToString("0") + " m out (tree at " + treeTestDistance.ToString("0") + " m)");
+                    if (hits == 0) problems.Add("TREE TEST: the ball flew through the tree " + treeTestDistance.ToString("0") + " m away without touching it");
+                }
+            }
             testerWasFlying = flying;
             bool flyover = presentation != null && presentation.IsFlyingOver;
             int pending = Get<int>("pendingSelection");
@@ -375,14 +386,39 @@ namespace GolfSimZA.Testing
 
             // Like a real golfer, land the ball short so it runs out to the target (learnt per club).
             float runOut = 1f;
-            bool onGreen = flight.IsOnGreen(ball.position);
+
+            // Once per round (hole 2, first tee shot): a low shot straight at a tree, to check the
+            // course's trees stop the ball (it used to fly through them).
+            if (!treeTestDone && Get<int>("holeIndex") == 1 && shotsThisHole == 0 && TreeField.Active != null
+                && TreeField.Active.FindTreeAhead(ball.position, target - ball.position, 50f, 170f, 35f, out Vector3 treeBase, out float crownY))
+            {
+                treeTestDone = true;
+                treeTestFrom = ball.position;
+                treeTestDistance = Flat(treeBase - ball.position);
+                treeTestHitsBefore = BallFlightSimulator.TreeHits + BallFlightSimulator.ObstacleHits;
+                treeTestPending = true;
+                string tClub = "7 Iron";
+                ActiveClub.Select(tClub);
+                AimPointer ta = Get<AimPointer>("aimPointer");
+                if (ta != null) { ta.Set(ball.position, treeBase); Call("OnAimMoved", ta.Point); }
+                ShotData low = TestShotProvider.BuildShot(tClub, ActiveClub.LoftOf(tClub));
+                // Flat enough to be at crown height when it reaches the tree, long enough to carry well past it.
+                float rise = Mathf.Max(2f, crownY - ball.position.y);
+                low.LaunchAngleDeg = Mathf.Clamp(Mathf.Atan2(rise * 1.6f, treeTestDistance) * Mathf.Rad2Deg, 3f, 14f);
+                low.BackSpinRpm = 3500f;
+                low.LaunchDirectionDeg = 0f;
+                low.SpinAxisDeg = 0f;
+                lastClub = null;
+                shotsThisHole++;
+                totalShots++;
+                report.AppendLine("  TREE TEST: low 7 iron straight at a tree " + treeTestDistance.ToString("0") + " m away (crown " + (crownY - ball.position.y).ToString("0") + " m up)");
+                shots.Inject(low);
+                return;
+            }
             string club;
             float factor = 1f;
-            if (onGreen || toPin < 12f)
-            {
-                club = "Putter";
-            }
-            else
+            // No putting in GolfSim ZA: on the green the ball is putted automatically, so every
+            // shot here is a full or a chip shot.
             {
                 // Shortest club that reaches, else the longest; wedges are hit softer for short shots.
                 club = null;
@@ -412,17 +448,8 @@ namespace GolfSimZA.Testing
             }
 
             ShotData shot = TestShotProvider.BuildShot(club, ActiveClub.LoftOf(club));
-            if (ActiveClub.IsPutter(club))
-            {
-                // Roughly the speed that rolls the ball to the hole on a normal green.
-                shot.BallSpeedMps = Mathf.Clamp(Mathf.Sqrt(2f * 0.65f * Mathf.Max(0.3f, toPin)) * 1.05f, 0.6f, 12f);
-                shot.LaunchDirectionDeg = UnityEngine.Random.Range(-1f, 1f);
-            }
-            else
-            {
-                shot.BallSpeedMps *= factor;
-                shot.ClubSpeedMps *= factor;
-            }
+            shot.BallSpeedMps *= factor;
+            shot.ClubSpeedMps *= factor;
             shotsThisHole++;
             totalShots++;
             lastClub = club;
@@ -431,6 +458,10 @@ namespace GolfSimZA.Testing
 
         // Run-out learnt per club (total / carry - 1) from this test's own shots.
         private readonly Dictionary<string, float> rollRatio = new Dictionary<string, float>();
+        private bool treeTestDone, treeTestPending;
+        private Vector3 treeTestFrom;
+        private float treeTestDistance;
+        private int treeTestHitsBefore;
         private string lastClub;
         private bool testerWasFlying;
 
@@ -496,6 +527,7 @@ namespace GolfSimZA.Testing
             finished = true;
             CheckGuest();
             report.AppendLine("Auto next player moves: " + autoAdvances);
+            report.AppendLine("Ball hit trees " + BallFlightSimulator.TreeHits + " time(s) and bounced off hills / objects " + BallFlightSimulator.ObstacleHits + " time(s) this session");
             report.AppendLine(string.Format("Ball flight smoothness: {0} frames in the air, {1} without the ball moving, slowest frame {2:0.0} ms",
                 airFrames, stillFrames, slowestAirFrame * 1000f));
             if (airFrames > 0 && stillFrames > airFrames * 0.02f)

@@ -161,6 +161,7 @@ namespace GolfSimZA.Courses
 
             ShaderRepair.Report report = ShaderRepair.Repair(courseScene);
             Debug.Log("[GolfSimZA] Course shaders: " + report);
+            Debug.Log("[GolfSimZA] Course lighting: " + GolfSimZA.Visual.CourseLighting.Apply(courseScene));
 
             foreach (GameObject root in ourScene.GetRootGameObjects())
             {

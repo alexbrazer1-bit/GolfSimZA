@@ -256,7 +256,7 @@ namespace GolfSimZA.UI
 
             // Auto putt: 1-putt (gold) and 2-putt (white) circles around the hole.
             bool holeLive = !roundComplete && !AllHoled() && !(presentation != null && presentation.IsFlyingOver);
-            if (s.autoPutt && s.showPuttCircles && holeLive)
+            if (s.showPuttCircles && holeLive)
                 markers.ShowPuttCircles(pinPosition, s.autoPuttOneMeters, Mathf.Max(s.autoPuttTwoMeters, s.autoPuttOneMeters + 0.5f), OnGreenPoint);
             else
                 markers.HidePuttCircles();
@@ -367,23 +367,15 @@ namespace GolfSimZA.UI
                     AddStrokes(shooter, 1);
                     MarkHoled(shooter, "GIMME");
                 }
-                else if (AppSettings.Current.autoPutt && ballFlightSimulator.IsOnGreen(rest))
+                else if (ballFlightSimulator.IsOnGreen(rest) || toPin <= Mathf.Max(AppSettings.Current.autoPuttTwoMeters, AppSettings.Current.autoPuttOneMeters + 0.5f))
                 {
-                    // AUTO PUTT: putts are counted from the distance to the hole (1-putt and 2-putt circles).
+                    // NO PUTTING in GolfSim ZA: a ball on the green - or just off it, inside the
+                    // 2-putt circle - is holed automatically: 1, 2 or 3 putts from its distance.
                     int putts = AutoPutts(toPin);
-                    if (putts > 0)
-                    {
-                        Debug.Log("[GolfSimZA] Auto putt: " + playerNames[shooter] + " on the green " + toPin.ToString("0.0") + " m from the hole -> " + putts + " putt(s)");
-                        AddStrokes(shooter, putts);
-                        MarkHoled(shooter, "AUTO PUTT  •  " + putts + (putts == 1 ? " PUTT" : " PUTTS"));
-                    }
-                    else ShowBanner("OUTSIDE THE 2 PUTT CIRCLE  •  PUTT IT  •  " + Units.DistanceText(toPin, "0.0"));
-                }
-                else if (AppSettings.Current.autoPutt && toPin <= Mathf.Max(AppSettings.Current.autoPuttTwoMeters, AppSettings.Current.autoPuttOneMeters + 0.5f))
-                {
-                    // Close to the hole but off the putting surface: the circles only count on the green.
-                    Debug.Log("[GolfSimZA] Just off the green: " + playerNames[shooter] + " " + toPin.ToString("0.0") + " m from the hole -> no auto putt");
-                    ShowBanner("JUST OFF THE GREEN  •  NO AUTO PUTT  •  PLAY YOUR SHOT  •  " + Units.DistanceText(toPin, "0.0"));
+                    bool onGreen = ballFlightSimulator.IsOnGreen(rest);
+                    Debug.Log("[GolfSimZA] Auto putt: " + playerNames[shooter] + (onGreen ? " on the green " : " just off the green ") + toPin.ToString("0.0") + " m from the hole -> " + putts + " putt(s)");
+                    AddStrokes(shooter, putts);
+                    MarkHoled(shooter, "AUTO PUTT  •  " + putts + (putts == 1 ? " PUTT" : " PUTTS"));
                 }
             }
 
@@ -403,7 +395,7 @@ namespace GolfSimZA.UI
             AppSettings a = AppSettings.Current;
             if (toPin <= a.autoPuttOneMeters) return 1;
             if (toPin <= Mathf.Max(a.autoPuttTwoMeters, a.autoPuttOneMeters + 0.5f)) return 2;
-            return a.autoPuttBeyond == 0 ? 3 : 0;
+            return 3;
         }
 
         /// <summary>After a shot: hole complete, next player, or the same player again.</summary>
@@ -676,11 +668,8 @@ namespace GolfSimZA.UI
 
         private void UpdatePuttGrid()
         {
-            if (puttGrid == null || ball == null || ballFlightSimulator == null) return;
-            if (GameOptions.PuttGrid && ballFlightSimulator.IsOnGreen(ball.position))
-                puttGrid.Show(pinPosition, ball.position);
-            else
-                puttGrid.Hide();
+            // No putting in GolfSim ZA (balls on the green are putted automatically): no putt grid.
+            puttGrid?.Hide();
         }
 
         private void JumpToHole(int index)
@@ -1647,6 +1636,7 @@ namespace GolfSimZA.UI
                 else ClubBar.Close();
                 DrawShotCompletionAction();
                 DrawBallReady();
+                DrawLieInfo();
             }
             DrawBanner();
             if (mapExpanded && Event.current.type == EventType.Repaint) DrawExpandedHoleMap(margin);
@@ -1881,6 +1871,33 @@ namespace GolfSimZA.UI
         }
 
         /// <summary>"BALL READY" pill (Settings → SHOW BALL READY INDICATOR).</summary>
+        /// <summary>
+        /// Sloped lie before the shot: "BALL ABOVE YOUR FEET • 8% • starts about 5° left" with
+        /// what that means at the selected club's distance.
+        /// </summary>
+        private void DrawLieInfo()
+        {
+            if (!AppSettings.Current.lieSlope || ballFlightSimulator == null || ballFlightSimulator.IsInFlight || ball == null) return;
+            if (roundComplete || waitingForNextPlayer || pendingSelection >= 0 || AllHoled() || (presentation != null && presentation.IsFlyingOver)) return;
+            string club = ActiveClub.Resolve();
+            if (ActiveClub.IsPutter(club) || ballFlightSimulator.IsOnGreen(ball.position)) return;
+            if (!GroundProbe.TrySample(ball.position, out _, out Vector3 n)) return;
+            float pct = BallFlightSimulator.SideSlopePercent(n, ballFlightSimulator.AimYawDegrees);
+            if (Mathf.Abs(pct) < 2f) return;
+            float shift = BallFlightSimulator.LieShift(pct, ActiveClub.LoftOf(club));
+            bool left = GolfSimZA.Players.PlayerRoster.Current.IsLeftHanded(playerNames[activePlayerIndex]);
+            bool above = left ? pct < 0f : pct > 0f;
+            float carry = ActiveClub.ExpectedCarry(club);
+            float offset = Mathf.Tan(Mathf.Abs(shift) * Mathf.Deg2Rad) * carry;
+            string text = (above ? "BALL ABOVE YOUR FEET" : "BALL BELOW YOUR FEET") + "  •  " + Mathf.Abs(pct).ToString("0") + "% SLOPE  •  "
+                          + (Mathf.Abs(shift) < 0.5f ? "HARDLY ANY EFFECT" : "STARTS " + Mathf.Abs(shift).ToString("0.0") + "° " + (shift < 0f ? "LEFT" : "RIGHT") + "  (~" + Units.DistanceText(offset, "0") + " AT " + Units.DistanceText(carry, "0") + ")");
+            var style = new GUIStyle(centerStyle) { fontSize = 13, wordWrap = false, normal = { textColor = GolfSimTheme.Gold } };
+            float w = Mathf.Min(Screen.width - 40f, style.CalcSize(new GUIContent(text)).x + 40f);
+            Rect r = new Rect((Screen.width - w) * 0.5f, Screen.height - ClubBar.Height - 152f, w, 32f);
+            GUI.Box(r, GUIContent.none, GolfSimTheme.Card);
+            GUI.Label(r, text, style);
+        }
+
         private void DrawBallReady()
         {
             if (!AppSettings.Current.showBallReady || ballFlightSimulator == null || ballFlightSimulator.IsInFlight) return;

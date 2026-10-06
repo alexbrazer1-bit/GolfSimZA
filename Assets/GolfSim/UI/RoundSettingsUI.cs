@@ -366,14 +366,13 @@ namespace GolfSimZA.UI
             AppSettings s = AppSettings.Current;
             GUI.Box(r, GUIContent.none, GolfSimTheme.Card);
             float x = r.x + 16f, y = r.y + 12f;
-            GUI.Label(new Rect(x, y, 400f, 18f), "AUTO PUTT", GolfSimTheme.Label);
-            GUI.Label(new Rect(x + 120f, y, r.width - 150f, 18f), "A ball that stops on the green is putted for you: inside the gold circle 1 putt, inside the white circle 2 putts.", hintStyle);
+            GUI.Label(new Rect(x, y, 400f, 18f), "PUTTING", GolfSimTheme.Label);
+            GUI.Label(new Rect(x + 120f, y, r.width - 150f, 18f), "There is no putting: a ball that stops on (or just off) the green is putted for you - inside the gold circle 1 putt, inside the white circle 2 putts, further out 3 putts.", hintStyle);
             y += 28f;
             bool changed = false;
-            if (GUI.Button(new Rect(x, y, 90f, 38f), s.autoPutt ? "ON" : "OFF", s.autoPutt ? GolfSimTheme.AccentButton : GolfSimTheme.Button)) { s.autoPutt = !s.autoPutt; changed = true; }
+            GUI.Box(new Rect(x, y, 90f, 38f), "AUTO", GolfSimTheme.AccentButton);
             float col = (r.width - 140f) / 3f;
             float cx = x + 110f;
-            GUI.enabled = s.autoPutt;
             GUI.Label(new Rect(cx, y - 2f, col - 12f, 16f), "1 PUTT CIRCLE", new GUIStyle(hintStyle) { normal = { textColor = GolfSimTheme.Gold } });
             if (Arrows(new Rect(cx, y + 14f, col - 12f, 34f), Units.DistanceText(s.autoPuttOneMeters, "0.0"), out int d1))
             {
@@ -390,12 +389,10 @@ namespace GolfSimZA.UI
             }
             cx += col;
             GUI.Label(new Rect(cx, y - 2f, col - 12f, 16f), "OUTSIDE THE 2 PUTT CIRCLE", hintStyle);
-            string[] beyond = { "3 PUTTS", "PUTT IT MYSELF" };
-            if (Arrows(new Rect(cx, y + 14f, col - 12f, 34f), beyond[Mathf.Clamp(s.autoPuttBeyond, 0, 1)], out int d3)) { s.autoPuttBeyond = s.autoPuttBeyond == 0 ? 1 : 0; changed = true; }
+            GUI.Label(new Rect(cx, y + 14f, col - 12f, 34f), "3 PUTTS", new GUIStyle(hintStyle) { fontSize = 14, alignment = TextAnchor.MiddleCenter });
             y += 58f;
             if (GUI.Button(new Rect(x + 110f, y, 260f, 34f), s.showPuttCircles ? "CIRCLES ON THE GREEN: SHOWN" : "CIRCLES ON THE GREEN: HIDDEN", GolfSimTheme.SmallButton)) { s.showPuttCircles = !s.showPuttCircles; changed = true; }
-            GUI.enabled = true;
-            GUI.Label(new Rect(x + 390f, y + 6f, r.width - 420f, 30f), "Also in SETTINGS → GAME and in the game MENU → AUTO PUTT.", hintStyle);
+            GUI.Label(new Rect(x + 390f, y + 6f, r.width - 420f, 30f), "Also in SETTINGS → GAME and in the game MENU → PUTTING.", hintStyle);
             if (changed) s.Save();
         }
 

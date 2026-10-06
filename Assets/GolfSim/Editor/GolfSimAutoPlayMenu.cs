@@ -62,6 +62,17 @@ namespace GolfSimZA.EditorTools
         [MenuItem("GolfSimZA/Test/Auto-play 18 holes - Apostle Highland, 3 players, Stableford")]
         private static void Stableford() => Run("Apostle", "Stableford", 3, null);
 
+        [MenuItem("GolfSimZA/Test/Course look check - all imported courses")]
+        private static void CourseLook()
+        {
+            if (EditorApplication.isPlaying) { Debug.LogWarning("[GolfSimZA] Stop Play mode first."); return; }
+            if (!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo()) return;
+            PlayerPrefs.SetInt(CourseSurvey.RunOnStartKey, 1);
+            PlayerPrefs.Save();
+            EditorSceneManager.OpenScene(GolfSimZA.Editor.GolfSimBuildScenes.CourseSelection);
+            EditorApplication.isPlaying = true;
+        }
+
         [MenuItem("GolfSimZA/Test/Play from the home screen")]
         private static void PlayHome()
         {

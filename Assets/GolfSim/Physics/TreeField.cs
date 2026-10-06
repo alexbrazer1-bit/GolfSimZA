@@ -98,6 +98,54 @@ namespace GolfSimZA.Physics
             list.Add(index);
         }
 
+        /// <summary>
+        /// A tree that is drawn by something else (a course's own trees): only its trunk and crown
+        /// are added, so the ball hits it like a GolfSim ZA tree.
+        /// </summary>
+        public void AddObstacle(Vector3 basePosition, float height, float crownRadius, float crownBottom)
+        {
+            if (height < 1f || crownRadius < 0.3f) return;
+            crownBottom = Mathf.Clamp(crownBottom, 0f, height * 0.85f);
+            var info = new TreeInfo
+            {
+                Base = basePosition,
+                Height = height,
+                TrunkRadius = Mathf.Clamp(crownRadius * 0.08f, 0.12f, 0.6f),
+                CanopyCentre = basePosition + Vector3.up * (crownBottom + height) * 0.5f,
+                CanopyRadius = crownRadius,
+                CanopyHalfHeight = Mathf.Max(0.5f, (height - crownBottom) * 0.5f)
+            };
+            int index = trees.Count;
+            trees.Add(info);
+            Vector2Int c = CellOf(basePosition);
+            if (!grid.TryGetValue(c, out List<int> list)) grid[c] = list = new List<int>();
+            list.Add(index);
+        }
+
+        /// <summary>
+        /// The nearest tree in front of a point (within maxAngle of dir, between minDist and
+        /// maxDist away): its base and crown centre height. For the automatic test.
+        /// </summary>
+        public bool FindTreeAhead(Vector3 from, Vector3 dir, float minDist, float maxDist, float maxAngle, out Vector3 basePos, out float crownCentreY)
+        {
+            basePos = Vector3.zero;
+            crownCentreY = 0f;
+            dir.y = 0f;
+            if (dir.sqrMagnitude < 1e-6f) return false;
+            dir.Normalize();
+            float best = float.MaxValue;
+            foreach (TreeInfo t in trees)
+            {
+                Vector3 d = t.Base - from;
+                d.y = 0f;
+                float dist = d.magnitude;
+                if (dist < minDist || dist > maxDist || t.Height < 6f) continue;
+                if (Vector3.Angle(dir, d) > maxAngle) continue;
+                if (dist < best) { best = dist; basePos = t.Base; crownCentreY = t.CanopyCentre.y; }
+            }
+            return best < float.MaxValue;
+        }
+
         /// <summary>Call after adding trees: packs the matrices for drawing.</summary>
         public void Commit()
         {

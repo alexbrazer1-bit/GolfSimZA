@@ -92,6 +92,9 @@ namespace GolfSimZA.Courses
                 int planted = PlantCourse(field, course, AppSettings.Current.treeDensity, stats.Terrains > 0);
                 result += $", {planted} GolfSim ZA trees planted";
             }
+            // The course's own trees stop the ball too (most have no collider of their own).
+            int solid = CourseObstacles.AddCourseTrees(scene, field);
+            result += $", {solid} course trees solid for the ball";
             field.Commit();
 
             // 3. Rough grass (GSPro's own grass add-on does not run outside GSPro).

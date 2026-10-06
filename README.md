@@ -133,6 +133,7 @@ Packages/
 ProjectSettings/
 Installer/            installer script + publish scripts (local updates)
 R10Bridge/            R10 Bluetooth bridge settings and build notes
+SimLink/              main PC <-> simulator PC remote control (Control Panel, agent, setups) - see Documentation/SIMLINK.md
 Assets/
   GolfSim/Core/       shot data, active club, settings, version
   GolfSim/Courses/    course library, importer, loader, shader repair
@@ -148,3 +149,10 @@ Assets/
 Documentation/
 CoursePackages/
 ```
+
+## SimLink (simulator PC remote control)
+
+`SimLink/` lets the main (dev) PC and Claude control the simulator PC over the home LAN: install published
+GolfSimZA updates, deploy raw builds, start/stop the game, read `Player.log`, take screenshots, manage files
+and run PowerShell. Every GolfSimZA installer carries the SimLink agent setup. Details: `Documentation/SIMLINK.md`.
+

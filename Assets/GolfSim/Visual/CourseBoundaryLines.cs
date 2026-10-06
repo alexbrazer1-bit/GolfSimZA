@@ -137,7 +137,7 @@ namespace GolfSimZA.Visual
             if (!stakeMaterials.TryGetValue(color, out Material m) || m == null)
             {
                 Shader shader = Shader.Find("Standard");
-                m = shader != null ? new Material(shader) { color = new Color(color.r, color.g, color.b, 1f) } : r.sharedMaterial;
+                m = shader != null ? new Material(shader) { color = new Color(color.r, color.g, color.b, 1f), enableInstancing = true } : r.sharedMaterial;
                 stakeMaterials[color] = m;
             }
             r.sharedMaterial = m;

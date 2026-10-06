@@ -24,8 +24,8 @@ namespace GolfSimZA.Core
         private static float cachedMapTime = -10f;
 
         /// <summary>Legacy 8-slot club bar used by the HUDs and keyboard test mode.</summary>
-        public static readonly string[] SlotNames = { "Driver", "3 Wood", "5 Iron", "7 Iron", "9 Iron", "Pitching Wedge", "Sand Wedge", "Putter" };
-        public static readonly string[] SlotShortNames = { "Driver", "3W", "5i", "7i", "9i", "PW", "SW", "Putter" };
+        public static readonly string[] SlotNames = { "Driver", "3 Wood", "5 Iron", "7 Iron", "9 Iron", "Pitching Wedge", "Sand Wedge", "Lob Wedge" };
+        public static readonly string[] SlotShortNames = { "Driver", "3W", "5i", "7i", "9i", "PW", "SW", "LW" };
 
         public static event Action<string> Changed;
 
@@ -119,14 +119,12 @@ namespace GolfSimZA.Core
                         cachedBag.Add(new BagClub { Name = profile.ClubNames[i], Short = ShortName(profile.ClubNames[i]), Loft = profile.Lofts[i] });
                     }
                     cachedBag.Sort((a, b) => a.Loft.CompareTo(b.Loft));
-                    // A putter is always available so every hole can be finished.
-                    int putterIndex = profile.FindClubIndex("Putter");
-                    cachedBag.Add(new BagClub { Name = "Putter", Short = "PT", Loft = putterIndex >= 0 ? profile.Lofts[putterIndex] : 3f });
-                    if (cachedBag.Count == 1)
+                    // No putter: there is no putting in GolfSim ZA (balls on the green are putted automatically).
+                    if (cachedBag.Count == 0)
                     {
                         // Empty bag: offer the standard clubs so the player can still hit.
-                        for (int i = 0; i < SlotNames.Length - 1; i++)
-                            cachedBag.Insert(cachedBag.Count - 1, new BagClub { Name = SlotNames[i], Short = SlotShortNames[i], Loft = 10f + i * 6f });
+                        for (int i = 0; i < SlotNames.Length; i++)
+                            cachedBag.Add(new BagClub { Name = SlotNames[i], Short = SlotShortNames[i], Loft = 10f + i * 6f });
                     }
                     cachedBagPlayer = who;
                     cachedBagTime = Time.unscaledTime;

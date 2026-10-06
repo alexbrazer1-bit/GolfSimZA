@@ -40,8 +40,9 @@ namespace GolfSimZA.UI
         public static string ClubForDistance(float meters, bool onGreen)
         {
             var bag = ActiveClub.Bag;
-            if (onGreen || meters < 12f) return "Putter";
-            string best = null, longest = null;
+            // No putting in GolfSim ZA: short shots get the most lofted club (a chip).
+            string best = null, longest = null, shortest = null;
+            float shortestCarry = float.MaxValue;
             float bestCarry = float.MaxValue, longestCarry = 0f;
             foreach (ActiveClub.BagClub c in bag)
             {
@@ -50,8 +51,10 @@ namespace GolfSimZA.UI
                 // Allow a little run-out after the carry.
                 float reach = carry * 1.04f;
                 if (carry > longestCarry) { longestCarry = carry; longest = c.Name; }
+                if (carry < shortestCarry) { shortestCarry = carry; shortest = c.Name; }
                 if (reach >= meters && carry < bestCarry) { bestCarry = carry; best = c.Name; }
             }
+            if (meters < 12f && shortest != null) return shortest;
             return best ?? longest ?? "Driver";
         }
 

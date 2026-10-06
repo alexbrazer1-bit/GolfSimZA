@@ -104,6 +104,38 @@ namespace GolfSimZA.Physics
         public bool WasHoled { get; private set; }
         /// <summary>The ball came to rest in water on a mini game map (splash).</summary>
         public bool InWater { get; private set; }
+        /// <summary>Side slope under the ball at the last launch (% rise to the right of the aim line).</summary>
+        public float LieSlopePercent { get; private set; }
+        /// <summary>How far the sloped lie turned the last shot (degrees, + = right).</summary>
+        public float LieShiftDeg { get; private set; }
+
+        /// <summary>
+        /// Side slope across the aim line in percent: how many metres the ground rises per 100 m
+        /// going to the RIGHT of the aim line (+ = higher on the right).
+        /// </summary>
+        public static float SideSlopePercent(Vector3 groundNormal, float aimYawDeg)
+        {
+            Vector3 right = Quaternion.Euler(0f, aimYawDeg, 0f) * Vector3.right;
+            float ny = Mathf.Max(0.2f, groundNormal.y);
+            return -(groundNormal.x * right.x + groundNormal.z * right.z) / ny * 100f;
+        }
+
+        /// <summary>
+        /// Start direction change from a side slope (degrees, + = right). A right-handed golfer
+        /// stands on the left of the aim line, so ground rising to the right puts the ball above
+        /// the feet; a left-hander stands on the right, so it is the other way round - and the
+        /// same formula gives both: the slope tilts the club face, and a lofted face tilted
+        /// points sideways by atan(tan(loft) x sin(slope)). Golfers allow for part of it with
+        /// their stance, so 85 % of that is used.
+        /// </summary>
+        public static float LieShift(float sideSlopePercent, float loftDeg)
+        {
+            float slope = Mathf.Atan(sideSlopePercent / 100f);
+            float loft = Mathf.Clamp(loftDeg, 6f, 64f) * Mathf.Deg2Rad;
+            float shift = -Mathf.Atan(Mathf.Tan(loft) * Mathf.Sin(slope)) * Mathf.Rad2Deg * 0.85f;
+            return Mathf.Clamp(shift, -20f, 20f);
+        }
+
         /// <summary>Angle the ball came down at on its first landing (degrees).</summary>
         public float DescentAngleDeg { get; private set; }
         /// <summary>Distance right (+) or left (-) of the aim line where the ball stopped, metres.</summary>
@@ -247,6 +279,23 @@ namespace GolfSimZA.Physics
             AimDirection = Quaternion.Euler(0f, AimYawDegrees, 0f) * Vector3.forward;
             DescentAngleDeg = 0f;
             OfflineMeters = 0f;
+            // Sloped lie: a ball above or below the feet starts left or right (club face tilted by the slope).
+            LieSlopePercent = 0f;
+            LieShiftDeg = 0f;
+            bool isPutt = ActiveClub.IsPutter(shot.ClubName) || shot.LaunchAngleDeg < 1.5f && shot.BallSpeedMps < 12f;
+            if (!isPutt && AppSettings.Current.lieSlope && GroundProbe.TrySample(ball.position, out _, out Vector3 lieNormal))
+            {
+                float loft = shot.HasClubPath && shot.DynamicLoftDeg > 1f ? shot.DynamicLoftDeg : ActiveClub.LoftOf(string.IsNullOrEmpty(shot.ClubName) ? ActiveClub.Resolve() : shot.ClubName);
+                LieSlopePercent = SideSlopePercent(lieNormal, AimYawDegrees);
+                LieShiftDeg = LieShift(LieSlopePercent, loft);
+                if (Mathf.Abs(LieShiftDeg) > 0.05f)
+                {
+                    shot.LaunchDirectionDeg += LieShiftDeg;
+                    // The tilted face also adds draw / fade spin the same way.
+                    shot.SpinAxisDeg += LieShiftDeg * 0.5f;
+                    Debug.Log($"[GolfSimZA] Sloped lie: {LieSlopePercent:0.0}% side slope, loft {loft:0}° -> shot starts {Mathf.Abs(LieShiftDeg):0.0}° {(LieShiftDeg < 0f ? "left" : "right")}");
+                }
+            }
             float yaw = (AimYawDegrees + shot.LaunchDirectionDeg) * Mathf.Deg2Rad;
             Vector3 horizontal = new Vector3(Mathf.Sin(yaw), 0f, Mathf.Cos(yaw));
 
@@ -293,6 +342,9 @@ namespace GolfSimZA.Physics
 
         /// <summary>True while any ball in the scene is flying or rolling (other systems go easy on the CPU then).</summary>
         public static bool AnyInFlight { get; private set; }
+        /// <summary>Times a ball has hit a tree (leaves or trunk) / bounced off a solid obstacle (for the automatic test).</summary>
+        public static int TreeHits { get; private set; }
+        public static int ObstacleHits { get; private set; }
 
         // Smooth motion: the physics runs in fixed 10 ms steps, but frames do not line up with them
         // (at 60 fps a frame holds one step, then two; at 144 fps often none), which made the ball
@@ -394,12 +446,39 @@ namespace GolfSimZA.Physics
             Accelerate(ref velocity, ref currentSpinRpm, spinAxisRad, dt, ball.position.y - GroundProbe.HeightAt(ball.position));
 
             Vector3 move = new Vector3(velocity.x * horizontalScale, velocity.y, velocity.z * horizontalScale) * dt;
+            // Anything solid in the way this step (a hillside, cliff, rock, building, wall, tree
+            // with a collider)? Before 1.8.5 only the ground straight below the ball was checked,
+            // so a ball flew through mountains and trees.
+            if (Sweep(ball.position, ball.position + move, out RaycastHit hit))
+            {
+                if (IsWater(hit.collider))
+                {
+                    ball.position = hit.point;
+                    Splash(hit.point.y);
+                    return;
+                }
+                ball.position = hit.point + hit.normal * (BallRadius * 1.05f);
+                maxHeight = Mathf.Max(maxHeight, ball.position.y);
+                if (hit.normal.y >= 0.5f)
+                {
+                    // Ground the ball can land on (a slope it flies into counts too).
+                    totalMeters = HorizontalDistance(ball.position, launchPosition);
+                    if (!landedOnce) carryMeters = totalMeters;
+                    Impact(hit.normal);
+                }
+                else
+                {
+                    WallBounce(hit.normal);
+                }
+                return;
+            }
             ball.position += move;
 
             // Trees: leaves slow the ball down, trunks knock it back.
             TreeField trees = TreeField.Active;
             if (trees != null && trees.Collide(ball.position, ref velocity, treesHit))
             {
+                TreeHits++;
                 horizontalScale = 1f;
                 currentSpinRpm *= 0.5f;
             }
@@ -425,6 +504,90 @@ namespace GolfSimZA.Physics
                 ball.position = new Vector3(ball.position.x, groundHeight + BallRadius, ball.position.z);
                 Impact(normal);
             }
+        }
+
+        // ---------------- Obstacles ----------------
+
+        private static readonly RaycastHit[] SweepHits = new RaycastHit[16];
+        private static readonly System.Collections.Generic.Dictionary<Collider, bool> solidCache = new System.Collections.Generic.Dictionary<Collider, bool>();
+        private const int ObstacleMask = ~(1 << GroundProbe.IgnoreRaycastLayer);
+
+        /// <summary>The nearest solid thing between two points (invisible helper colliders and the flagstick are ignored).</summary>
+        private bool Sweep(Vector3 from, Vector3 to, out RaycastHit nearest)
+        {
+            nearest = default;
+            Vector3 d = to - from;
+            float length = d.magnitude;
+            if (length < 1e-5f) return false;
+            int count = UnityEngine.Physics.RaycastNonAlloc(from, d / length, SweepHits, length + BallRadius, ObstacleMask, QueryTriggerInteraction.Ignore);
+            float best = float.MaxValue;
+            bool found = false;
+            for (int i = 0; i < count; i++)
+            {
+                RaycastHit h = SweepHits[i];
+                if (h.collider == null || h.distance >= best || !IsSolid(h.collider)) continue;
+                // The flagstick never knocks the ball away from the cup.
+                if (hasHole && h.normal.y < 0.5f && HorizontalDistance(h.point, holePosition) < 0.6f) continue;
+                best = h.distance;
+                nearest = h;
+                found = true;
+            }
+            return found;
+        }
+
+        /// <summary>
+        /// Terrain, mini game map pieces and anything you can see. A collider with nothing drawn
+        /// on it (course designers' invisible boundary walls and camera blockers) is not solid.
+        /// </summary>
+        private static bool IsSolid(Collider c)
+        {
+            if (c is TerrainCollider) return true;
+            if (solidCache.TryGetValue(c, out bool solid)) return solid;
+            solid = c.name.StartsWith("Map_", StringComparison.Ordinal)
+                    || c.GetComponent<Renderer>() != null
+                    || c.GetComponentInChildren<Renderer>() != null
+                    || c.GetComponentInParent<LODGroup>() != null;
+            if (solidCache.Count > 20000) solidCache.Clear();
+            solidCache[c] = solid;
+            return solid;
+        }
+
+        private static int rollBlockLogs;
+        private static readonly string[] GroundWords = { "green", "fringe", "collar", "apron", "fairway", "rough", "tee", "bunker", "sand", "trap", "ground", "terrain", "course", "grass", "path", "cart", "road", "plane", "surface", "turf", "lip", "edge", "dirt", "mesh" };
+
+        /// <summary>
+        /// Something a ROLLING ball bounces off: a solid object standing at least 30 cm up off the
+        /// ground (a tree, rock, wall, building, post). Ground pieces (green, fringe, fairway, bunker
+        /// lips, paths ...) and low seams between them are rolled over.
+        /// </summary>
+        private static bool IsStandingObstacle(RaycastHit hit)
+        {
+            Collider c = hit.collider;
+            if (c == null || c is TerrainCollider) return false;
+            string n = c.name.ToLowerInvariant();
+            foreach (string w in GroundWords) if (n.Contains(w)) return false;
+            float ground = GroundProbe.HeightAt(hit.point + new Vector3(hit.normal.x, 0f, hit.normal.z) * 0.2f);
+            return c.bounds.max.y - ground > 0.3f;
+        }
+
+        private static bool IsWater(Collider c) => c != null && c.name.StartsWith("Map_Water", StringComparison.Ordinal);
+
+        /// <summary>A steep, hard surface (cliff, rock face, wall, trunk): the ball bounces off it and drops.</summary>
+        private void WallBounce(Vector3 normal)
+        {
+            velocity = new Vector3(velocity.x * horizontalScale, velocity.y, velocity.z * horizontalScale);
+            horizontalScale = 1f;
+            float into = Vector3.Dot(velocity, normal);
+            if (into < 0f)
+            {
+                Vector3 along = velocity - normal * into;
+                velocity = along * 0.55f - normal * into * 0.35f;
+            }
+            currentSpinRpm *= 0.4f;
+            airborne = true;
+            rolling = false;
+            ObstacleHits++;
+            Debug.Log("[GolfSimZA] Ball hit an obstacle at " + ball.position.ToString("0.0") + " and bounced off.");
         }
 
         private void Impact(Vector3 normal)
@@ -530,6 +693,21 @@ namespace GolfSimZA.Physics
             velocity = horizontalVelocity;
 
             Vector3 next = ball.position + velocity * dt;
+            // Rolling into something steep and solid (a wall, rock, tree trunk, steep bank): it
+            // bounces back instead of rolling through it.
+            // (Not on the green, and never the ground the ball is rolling on - its own bumps and
+            // seams are handled by the slope; only something standing up off the ground counts.)
+            Collider rollingOn = GroundProbe.LastCollider;
+            if (!(hasHole && IsOnGreen(ball.position))
+                && Sweep(ball.position + Vector3.up * 0.03f, next + Vector3.up * 0.03f, out RaycastHit wall) && wall.normal.y < 0.6f && !IsWater(wall.collider)
+                && wall.collider != rollingOn && IsStandingObstacle(wall))
+            {
+                if (rollBlockLogs++ < 30)
+                    Debug.Log($"[GolfSimZA] Rolling ball stopped by '{wall.collider.name}' at {wall.point:0.00} (normal {wall.normal:0.00}).");
+                Vector3 n = new Vector3(wall.normal.x, 0f, wall.normal.z).normalized;
+                velocity = Vector3.Reflect(velocity, n) * 0.4f;
+                return;
+            }
             float nextHeight = GroundProbe.HeightAt(next);
             if (GroundProbe.LastWasWater)
             {

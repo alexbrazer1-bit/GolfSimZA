@@ -51,13 +51,25 @@ Type: filesandordirs; Name: "{app}\MonoBleedingEdge"
 
 [Files]
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "*_BurstDebugInformation_DoNotShip\*,*_BackUpThisFolder_ButDontShipItWithYourGame\*"
+; SimLink agent setup always travels with GolfSimZA (built by ..\SimLink\Build-SimLink.ps1)
+Source: "..\SimLink\dist\SimLink-SimPC-Setup.exe"; DestDir: "{app}\SimLink"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\GolfSimZA"; Filename: "{app}\GolfSimZA.exe"
 Name: "{group}\Uninstall GolfSimZA"; Filename: "{uninstallexe}"
+Name: "{group}\SimLink agent setup (simulator PC)"; Filename: "{app}\SimLink\SimLink-SimPC-Setup.exe"
 Name: "{autodesktop}\GolfSimZA"; Filename: "{app}\GolfSimZA.exe"; Tasks: desktopicon
 
 [Run]
 ; Normal install: offer to start GolfSimZA. Silent update from the in-game button: restart it automatically.
 Filename: "{app}\GolfSimZA.exe"; Description: "{cm:LaunchProgram,GolfSimZA}"; Flags: nowait postinstall skipifsilent
 Filename: "{app}\GolfSimZA.exe"; Flags: nowait; Check: WizardSilent
+; Offer the SimLink agent only on interactive installs on a PC that does not have it yet (one admin prompt).
+Filename: "{app}\SimLink\SimLink-SimPC-Setup.exe"; Description: "Install the SimLink agent (lets the main PC and Claude manage this simulator PC)"; Flags: postinstall shellexec skipifsilent; Verb: "runas"; Check: not IsSimLinkAgentInstalled
+
+[Code]
+function IsSimLinkAgentInstalled: Boolean;
+begin
+  Result := RegKeyExists(HKLM64, 'Software\Microsoft\Windows\CurrentVersion\Uninstall\SimLinkSimPC') or
+            RegKeyExists(HKLM32, 'Software\Microsoft\Windows\CurrentVersion\Uninstall\SimLinkSimPC');
+end;
