@@ -6,8 +6,8 @@ using UnityEngine.InputSystem;
 namespace GolfSimZA.UI
 {
     /// <summary>
-    /// Club selector, bottom-left: a CLUB tile (current club) and a HAND tile (right / left
-    /// handed). Clicking the club tile opens the grid of every club in the player's bag (with its
+    /// Club selector, bottom-left: a CLUB tile (picture of the current club, its name and the
+    /// player's carry with it from MAP MY BAG) and a HAND tile (right / left handed). Clicking the club tile opens the grid of every club in the player's bag (with its
     /// loft) directly to the RIGHT of the HAND tile, along the bottom of the screen, so it never
     /// covers the hole map above the selector. Before every shot the game can suggest the club for
     /// the distance (<see cref="Suggest"/>): it is selected and marked NEXT on the club tile.
@@ -15,28 +15,40 @@ namespace GolfSimZA.UI
     /// </summary>
     public static class ClubBar
     {
-        private static GUIStyle tile, tileValue, tileLabel, clubButton, clubActive, clubLoft, panel;
+        private static GUIStyle tile, tileValue, tileLabel, clubButton, clubActive, clubLoft, panel, clubName, clubCarry, clubCarryTag, cellCarry;
         private static bool open;
         private static GUIStyle nextLabel;
 
         public const float Height = 64f;
+        /// <summary>Width of the club tile (picture + name + carry).</summary>
+        public const float ClubTileWidth = 214f;
         public static bool IsOpen => open;
 
         /// <summary>Club suggested for the next shot (null = none).</summary>
         public static string Suggested { get; private set; }
+        /// <summary>Distance (metres) the suggested club was chosen for (0 = unknown).</summary>
+        public static float SuggestedDistance { get; private set; }
         private static float suggestedAt = -10f;
 
-        /// <summary>Selects the club for the next shot and marks it NEXT on the club tile; closes the club grid.</summary>
-        public static void Suggest(string clubName)
+        /// <summary>
+        /// Selects the club for the next shot and marks it NEXT on the club tile; closes the club
+        /// grid. distance = the distance to the target it was chosen for (shown on the tile).
+        /// </summary>
+        public static void Suggest(string clubName, float distance = 0f)
         {
             if (string.IsNullOrWhiteSpace(clubName)) return;
             ActiveClub.Select(clubName);
             Suggested = clubName;
+            SuggestedDistance = Mathf.Max(0f, distance);
             suggestedAt = Time.unscaledTime;
             open = false;
         }
 
-        /// <summary>Best club for a distance (metres) from the player's bag: the shortest club that gets there.</summary>
+        /// <summary>
+        /// Best club for a distance (metres) from the player's bag, using the carry the player
+        /// hits each club (MAP MY BAG; an estimate from the loft for clubs not mapped yet): the
+        /// shortest club that gets there, e.g. 180 m and a 5 iron mapped at 178 m = 5 iron.
+        /// </summary>
         public static string ClubForDistance(float meters, bool onGreen)
         {
             var bag = ActiveClub.Bag;
@@ -95,7 +107,11 @@ namespace GolfSimZA.UI
                 active = { background = GolfSimTheme.Rounded(GolfSimTheme.Accent, 6), textColor = Color.white }
             };
             clubActive = new GUIStyle(clubButton) { normal = { background = GolfSimTheme.Rounded(GolfSimTheme.Accent, 6), textColor = Color.white } };
-            clubLoft = new GUIStyle(GUI.skin.label) { fontSize = 10, alignment = TextAnchor.LowerCenter, normal = { textColor = new Color(0.80f, 0.88f, 0.90f) } };
+            clubLoft = new GUIStyle(GUI.skin.label) { fontSize = 9, alignment = TextAnchor.LowerCenter, normal = { textColor = new Color(0.70f, 0.78f, 0.80f) } };
+            clubName = new GUIStyle(GUI.skin.label) { fontSize = 18, fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleLeft, clipping = TextClipping.Clip, normal = { textColor = Color.white } };
+            clubCarry = new GUIStyle(GUI.skin.label) { fontSize = 16, fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleLeft, normal = { textColor = GolfSimTheme.AccentHover } };
+            clubCarryTag = new GUIStyle(GUI.skin.label) { fontSize = 9, fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleLeft, normal = { textColor = GolfSimTheme.Muted } };
+            cellCarry = new GUIStyle(GUI.skin.label) { fontSize = 11, fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleCenter, normal = { textColor = GolfSimTheme.AccentHover } };
         }
 
         /// <summary>Draws the tiles with their bottom-left corner at (left, bottom).</summary>
@@ -105,23 +121,40 @@ namespace GolfSimZA.UI
             var bag = ActiveClub.Bag;
             string current = ActiveClub.Resolve();
 
-            Rect clubRect = new Rect(left, bottom - Height, 96f, Height);
+            Rect clubRect = new Rect(left, bottom - Height, ClubTileWidth, Height);
             if (GUI.Button(clubRect, GUIContent.none, tile)) open = !open;
-            GUI.Label(new Rect(clubRect.x, clubRect.y + 6f, clubRect.width, 30f), ShortOrName(current), tileValue);
+
+            // Picture of the club.
+            float loft = ActiveClub.LoftOf(current);
+            Rect iconRect = new Rect(clubRect.x + 4f, clubRect.y + 4f, Height - 8f, Height - 8f);
+            GUI.DrawTexture(iconRect, ClubIcons.For(current, loft), ScaleMode.ScaleToFit, true);
+
+            // Club name and the player's carry with it.
+            float textX = iconRect.xMax + 4f, textW = clubRect.xMax - textX - 6f;
+            GUI.Label(new Rect(textX, clubRect.y + 3f, textW, 22f), NameThatFits(current, textW), clubName);
+            float carry = ActiveClub.ExpectedCarry(current);
+            bool mapped = ActiveClub.HasMappedCarry(current);
+            string carryText = carry > 0f ? Units.DistanceText(carry, "0") : "-";
+            float carryW = clubCarry.CalcSize(new GUIContent(carryText)).x;
+            GUI.Label(new Rect(textX, clubRect.y + 24f, carryW + 2f, 20f), carryText, clubCarry);
+            GUI.Label(new Rect(textX + carryW + 6f, clubRect.y + 26f, textW - carryW - 6f, 18f), mapped ? "YOUR CARRY" : "EST. CARRY", clubCarryTag);
+
             bool isSuggested = Suggested != null && string.Equals(Suggested, current, System.StringComparison.OrdinalIgnoreCase);
+            Rect captionRect = new Rect(textX, clubRect.yMax - 19f, textW, 14f);
             if (isSuggested)
             {
                 // The suggested club for this shot: gold NEXT CLUB caption (pulses for a few seconds after it changes).
                 float pulse = Time.unscaledTime - suggestedAt < 4f ? 0.65f + 0.35f * Mathf.Abs(Mathf.Sin(Time.unscaledTime * 4f)) : 1f;
                 Color gold = GolfSimTheme.Gold;
-                if (nextLabel == null) nextLabel = new GUIStyle(tileLabel);
+                if (nextLabel == null) nextLabel = new GUIStyle(tileLabel) { alignment = TextAnchor.MiddleLeft };
                 nextLabel.normal.textColor = new Color(gold.r, gold.g, gold.b, pulse);
-                GUI.Label(new Rect(clubRect.x, clubRect.yMax - 24f, clubRect.width, 16f), "NEXT CLUB  " + (open ? "◀" : "▶"), nextLabel);
+                string forText = SuggestedDistance > 1f ? "  •  FOR " + Units.DistanceText(SuggestedDistance, "0").ToUpperInvariant() : "";
+                GUI.Label(captionRect, "NEXT CLUB" + forText + "  " + (open ? "◀" : "▶"), nextLabel);
             }
-            else GUI.Label(new Rect(clubRect.x, clubRect.yMax - 24f, clubRect.width, 16f), "CLUB  " + (open ? "◀" : "▶"), tileLabel);
+            else GUI.Label(captionRect, "CLUB  " + (open ? "◀" : "▶"), new GUIStyle(tileLabel) { alignment = TextAnchor.MiddleLeft });
 
             bool left_ = PlayerRoster.Current.IsLeftHanded(ActiveClub.Player);
-            Rect handRect = new Rect(left + 100f, bottom - Height, 70f, Height);
+            Rect handRect = new Rect(left + ClubTileWidth + 4f, bottom - Height, 70f, Height);
             if (GUI.Button(handRect, GUIContent.none, tile))
             {
                 PlayerProfile p = PlayerRoster.Current.Find(ActiveClub.Player);
@@ -137,7 +170,7 @@ namespace GolfSimZA.UI
             if (!open) return;
 
             // The club grid sits directly right of the HAND tile, bottom-aligned with it (two rows).
-            const float cell = 58f;
+            const float cell = 64f;
             int rows = bag.Count > 8 ? 2 : 1;
             int columns = Mathf.CeilToInt(bag.Count / (float)rows);
             float panelW = columns * cell + 16f, panelH = rows * cell + 16f;
@@ -155,15 +188,21 @@ namespace GolfSimZA.UI
                     ActiveClub.Select(bag[i].Name);
                     open = false;
                 }
-                GUI.Label(new Rect(b.x, b.y, b.width, b.height - 5f), bag[i].Loft.ToString("0.#") + "°", clubLoft);
+                // The player's carry with this club (MAP MY BAG; "~" = estimate, not mapped yet) and its loft.
+                float cellCarryValue = ActiveClub.ExpectedCarry(bag[i].Name);
+                string cellText = (ActiveClub.HasMappedCarry(bag[i].Name) ? "" : "~") + Units.DistanceText(cellCarryValue, "0");
+                GUI.Label(new Rect(b.x, b.y + 24f, b.width, 16f), cellText, cellCarry);
+                GUI.Label(new Rect(b.x, b.y, b.width, b.height - 4f), bag[i].Loft.ToString("0.#") + "°", clubLoft);
             }
         }
 
         public static void Close() => open = false;
 
-        private static string ShortOrName(string club)
+        /// <summary>The full club name when it fits the tile ("5 Iron"), otherwise its short name ("PW").</summary>
+        private static string NameThatFits(string club, float width)
         {
-            return club != null && club.Length <= 7 ? club : ActiveClub.ShortName(club);
+            if (string.IsNullOrWhiteSpace(club)) return "?";
+            return clubName.CalcSize(new GUIContent(club)).x <= width ? club : ActiveClub.ShortName(club);
         }
     }
 }

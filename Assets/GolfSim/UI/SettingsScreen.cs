@@ -282,7 +282,7 @@ namespace GolfSimZA.UI
             if (Choice(ref y, x, w, "FAIRWAY FIRMNESS", new[] { "SOFT", "NORMAL", "FIRM" }, ref firm)) s.fairwayFirmness = firm;
             Hint(ref y, x, w, "Firm fairways bounce and roll further; soft fairways stop the ball sooner.");
             Switch(ref y, x, w, "SLOPED LIES  (ball above / below your feet moves the shot)", ref s.lieSlope);
-            Hint(ref y, x, w, "Ball above your feet: the shot goes left for a right-handed golfer (right for a left-hander); below your feet the other way. More slope and more loft move it more; the driver hardly, a wedge a lot.");
+            Hint(ref y, x, w, "Ball above your feet: the shot goes left for a right-handed golfer (right for a left-hander); below your feet the other way. More slope and more loft move it more; the driver hardly, a wedge a lot. Nothing is shown on screen: read the lie and aim for it yourself, like on a real course.");
             Hint(ref y, x, w, "Gimme distance and mulligans are chosen per round in Round Settings.");
             return y;
         }

@@ -205,12 +205,59 @@ namespace GolfSimZA.Core
         /// </summary>
         public static float ExpectedCarry(string clubName)
         {
+            return CarryInfo(clubName, out _);
+        }
+
+        /// <summary>True when the current player has mapped this club in MAP MY BAG.</summary>
+        public static bool HasMappedCarry(string clubName)
+        {
+            CarryInfo(clubName, out bool mapped);
+            return mapped;
+        }
+
+        private static readonly System.Collections.Generic.Dictionary<string, float> carryCache = new System.Collections.Generic.Dictionary<string, float>();
+        private static readonly System.Collections.Generic.Dictionary<string, bool> mappedCache = new System.Collections.Generic.Dictionary<string, bool>();
+        private static string carryCachePlayer;
+        private static float carryCacheTime = -10f;
+
+        /// <summary>
+        /// Carry of a club for the current player (MAP MY BAG value when mapped, otherwise an
+        /// estimate from the loft). The HUD asks every frame, so the bag is re-read at most once a second.
+        /// </summary>
+        private static float CarryInfo(string clubName, out bool mapped)
+        {
+            mapped = false;
             if (string.IsNullOrWhiteSpace(clubName) || IsPutter(clubName)) return 0f;
-            GolfBagProfile profile = GolfBagProfile.Load(Player);
+            string who = Player;
+            if (who != carryCachePlayer || Time.unscaledTime - carryCacheTime > 1f || Time.unscaledTime < carryCacheTime)
+            {
+                carryCache.Clear();
+                mappedCache.Clear();
+                carryCachePlayer = who;
+                carryCacheTime = Time.unscaledTime;
+            }
+            string key = clubName.Trim().ToLowerInvariant();
+            if (carryCache.TryGetValue(key, out float cached))
+            {
+                mapped = mappedCache[key];
+                return cached;
+            }
+            GolfBagProfile profile = GolfBagProfile.Load(who);
             int index = profile.FindClubIndex(clubName);
-            if (index >= 0 && profile.CarryMeters[index] > 1f) return profile.CarryMeters[index];
-            float loft = index >= 0 ? profile.Lofts[index] : LoftOf(clubName);
-            return Mathf.Clamp(215f - (loft - 10f) * 3.1f, 35f, 230f);
+            float carry;
+            if (index >= 0 && profile.CarryMeters[index] > 1f)
+            {
+                carry = profile.CarryMeters[index];
+                mapped = true;
+            }
+            else
+            {
+                float loft = index >= 0 ? profile.Lofts[index] : LoftOf(clubName);
+                carry = Mathf.Clamp(215f - (loft - 10f) * 3.1f, 35f, 230f);
+            }
+            carryCache[key] = carry;
+            mappedCache[key] = mapped;
+            return carry;
         }
 
         public static bool IsPutter(string clubName)

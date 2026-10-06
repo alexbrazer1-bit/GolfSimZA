@@ -1265,28 +1265,20 @@ namespace GolfSimZA.UI
         }
 
         /// <summary>
-        /// Before every shot the club for the distance is selected (and shown as NEXT CLUB):
-        /// driver off a par 4/5 tee, the putter on the green, otherwise the shortest club that
-        /// reaches the target. The player can still pick any other club.
+        /// Before every shot the club for the distance is selected and shown as NEXT CLUB, from
+        /// the carry the player hits each club (MAP MY BAG): the shortest club that reaches the
+        /// target - the tee shot's landing area / aim point, otherwise the pin. On a long hole that
+        /// is the driver; 180 m with a 5 iron mapped at 178 m is the 5 iron. The player can still
+        /// pick any other club.
         /// </summary>
         private void SuggestNextClub(Vector3 from)
         {
-            bool teeShot = playerHoleStrokes[activePlayerIndex] == 0;
-            string club;
-            if (teeShot && CurrentPar >= 4)
-            {
-                var bag = ActiveClub.Bag;
-                club = bag.Count > 0 ? bag[0].Name : "Driver";
-            }
-            else
-            {
-                bool onGreen = ballFlightSimulator != null && ballFlightSimulator.IsOnGreen(from);
-                Vector3 target = AimTarget(from);
-                float toTarget = HorizontalDistance(from, target);
-                float toPin = HorizontalDistance(from, pinPosition);
-                club = ClubBar.ClubForDistance(Mathf.Min(toTarget > 1f ? toTarget : toPin, toPin), onGreen);
-            }
-            ClubBar.Suggest(club);
+            bool onGreen = ballFlightSimulator != null && ballFlightSimulator.IsOnGreen(from);
+            Vector3 target = AimTarget(from);
+            float toTarget = HorizontalDistance(from, target);
+            float toPin = HorizontalDistance(from, pinPosition);
+            float distance = Mathf.Min(toTarget > 1f ? toTarget : toPin, toPin);
+            ClubBar.Suggest(ClubBar.ClubForDistance(distance, onGreen), distance);
         }
 
         /// <summary>Puts the active player's ball down and aims at the next target.</summary>
@@ -1636,7 +1628,6 @@ namespace GolfSimZA.UI
                 else ClubBar.Close();
                 DrawShotCompletionAction();
                 DrawBallReady();
-                DrawLieInfo();
             }
             DrawBanner();
             if (mapExpanded && Event.current.type == EventType.Repaint) DrawExpandedHoleMap(margin);
@@ -1871,33 +1862,6 @@ namespace GolfSimZA.UI
         }
 
         /// <summary>"BALL READY" pill (Settings → SHOW BALL READY INDICATOR).</summary>
-        /// <summary>
-        /// Sloped lie before the shot: "BALL ABOVE YOUR FEET • 8% • starts about 5° left" with
-        /// what that means at the selected club's distance.
-        /// </summary>
-        private void DrawLieInfo()
-        {
-            if (!AppSettings.Current.lieSlope || ballFlightSimulator == null || ballFlightSimulator.IsInFlight || ball == null) return;
-            if (roundComplete || waitingForNextPlayer || pendingSelection >= 0 || AllHoled() || (presentation != null && presentation.IsFlyingOver)) return;
-            string club = ActiveClub.Resolve();
-            if (ActiveClub.IsPutter(club) || ballFlightSimulator.IsOnGreen(ball.position)) return;
-            if (!GroundProbe.TrySample(ball.position, out _, out Vector3 n)) return;
-            float pct = BallFlightSimulator.SideSlopePercent(n, ballFlightSimulator.AimYawDegrees);
-            if (Mathf.Abs(pct) < 2f) return;
-            float shift = BallFlightSimulator.LieShift(pct, ActiveClub.LoftOf(club));
-            bool left = GolfSimZA.Players.PlayerRoster.Current.IsLeftHanded(playerNames[activePlayerIndex]);
-            bool above = left ? pct < 0f : pct > 0f;
-            float carry = ActiveClub.ExpectedCarry(club);
-            float offset = Mathf.Tan(Mathf.Abs(shift) * Mathf.Deg2Rad) * carry;
-            string text = (above ? "BALL ABOVE YOUR FEET" : "BALL BELOW YOUR FEET") + "  •  " + Mathf.Abs(pct).ToString("0") + "% SLOPE  •  "
-                          + (Mathf.Abs(shift) < 0.5f ? "HARDLY ANY EFFECT" : "STARTS " + Mathf.Abs(shift).ToString("0.0") + "° " + (shift < 0f ? "LEFT" : "RIGHT") + "  (~" + Units.DistanceText(offset, "0") + " AT " + Units.DistanceText(carry, "0") + ")");
-            var style = new GUIStyle(centerStyle) { fontSize = 13, wordWrap = false, normal = { textColor = GolfSimTheme.Gold } };
-            float w = Mathf.Min(Screen.width - 40f, style.CalcSize(new GUIContent(text)).x + 40f);
-            Rect r = new Rect((Screen.width - w) * 0.5f, Screen.height - ClubBar.Height - 152f, w, 32f);
-            GUI.Box(r, GUIContent.none, GolfSimTheme.Card);
-            GUI.Label(r, text, style);
-        }
-
         private void DrawBallReady()
         {
             if (!AppSettings.Current.showBallReady || ballFlightSimulator == null || ballFlightSimulator.IsInFlight) return;

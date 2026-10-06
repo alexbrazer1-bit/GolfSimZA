@@ -207,7 +207,7 @@ namespace GolfSimZA.UI
             // Club selector (drawn last so its club list opens over the tiles) and the target distance.
             if (clubBar) ClubBar.Draw(m, Screen.height - m);
             else ClubBar.Close();
-            Rect pillRect = new Rect(m + (clubBar ? 180f : 0f), Screen.height - m - 44f, 170f, 40f);
+            Rect pillRect = new Rect(m + (clubBar ? ClubBar.ClubTileWidth + 4f + 70f + 6f : 0f), Screen.height - m - 44f, 170f, 40f);
             // (Hidden while the club grid is open: the grid sits right of the club tiles.)
             if (!ClubBar.IsOpen) GUI.Box(pillRect, "TARGET  " + Units.DistanceText(TargetOrAimDistance()), new GUIStyle(tmChip) { fontSize = 18 });
 

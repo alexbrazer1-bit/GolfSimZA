@@ -182,7 +182,7 @@ namespace GolfSimZA.UI
         {
             if (miniGame == null || range == null || GolfSimZA.Players.ClubMappingSession.IsActive) return;
             float distance = TargetOrAimDistance();
-            if (distance > 1f) ClubBar.Suggest(ClubBar.ClubForDistance(distance, false));
+            if (distance > 1f) ClubBar.Suggest(ClubBar.ClubForDistance(distance, false), distance);
         }
 
         /// <summary>Turns the shot towards the aim target (or the flag).</summary>
