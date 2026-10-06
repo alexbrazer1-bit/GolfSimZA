@@ -8,12 +8,13 @@ namespace GolfSimZA.Core
     /// The club the golfer is currently hitting. The Garmin R10 cannot identify the
     /// club, so every real shot is stamped with this value (like other simulators,
     /// the player chooses the club on screen). Resolution order:
-    /// 1. Map My Bag session club, 2. club picked in the distance advisor,
-    /// 3. club picked on the club bar / number keys, 4. Driver.
+    /// 1. Map My Bag session club, 2. club picked on the club bar / number keys or suggested
+    /// for the distance (NEXT CLUB), 3. Driver.
     /// </summary>
     public static class ActiveClub
     {
-        public const string AdvisorClubKey = "GolfSimZA.RoundClubName";
+        /// <summary>Saved by the old CLUB RECOMMENDATION panel (removed); cleared so it can never override the club.</summary>
+        private const string LegacyAdvisorClubKey = "GolfSimZA.RoundClubName";
         private const string MapModeKey = "GolfSimZA.MapMode";
         private const string MapPlayerKey = "GolfSimZA.MapPlayer";
         private const string MapClubKey = "GolfSimZA.MapClubIndex";
@@ -34,8 +35,6 @@ namespace GolfSimZA.Core
         {
             if (string.IsNullOrWhiteSpace(clubName)) return;
             selectedName = clubName.Trim();
-            // An explicit club-bar choice replaces an older advisor recommendation.
-            PlayerPrefs.DeleteKey(AdvisorClubKey);
             Changed?.Invoke(selectedName);
         }
 
@@ -43,6 +42,14 @@ namespace GolfSimZA.Core
         {
             int index = Mathf.Clamp(slot - 1, 0, SlotNames.Length - 1);
             Select(SlotNames[index]);
+        }
+
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
+        private static void ClearLegacyAdvisorClub()
+        {
+            if (!PlayerPrefs.HasKey(LegacyAdvisorClubKey)) return;
+            PlayerPrefs.DeleteKey(LegacyAdvisorClubKey);
+            PlayerPrefs.Save();
         }
 
         public static string Resolve()
@@ -62,9 +69,6 @@ namespace GolfSimZA.Core
                 }
                 if (!string.IsNullOrWhiteSpace(cachedMapName)) return cachedMapName;
             }
-
-            string advisor = PlayerPrefs.GetString(AdvisorClubKey, "");
-            if (!string.IsNullOrWhiteSpace(advisor)) return advisor;
 
             return string.IsNullOrWhiteSpace(selectedName) ? "Driver" : selectedName;
         }
