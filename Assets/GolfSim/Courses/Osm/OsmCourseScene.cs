@@ -126,9 +126,12 @@ namespace GolfSimZA.Courses.Osm
             // 5. Trees (planted by the loader into the tree field).
             progress?.Invoke("Planting trees...", 0.85f);
             yield return null;
-            PlanTrees();
+            treeDensity = Mathf.Clamp(GolfSimZA.Core.AppSettings.Current.treeDensity, 0.2f, 1f); // read here: settings are not for worker threads
+            Task plan = Task.Run(PlanTrees);
+            while (!plan.IsCompleted) yield return null;
+            if (plan.IsFaulted) Debug.LogWarning("[GolfSimZA] Tree planting failed: " + plan.Exception?.GetBaseException());
 
-            Summary = $"ground {heights.Size:0} m ({heights.Resolution - 1} cells), {lakes} water areas, {buildings} buildings, {treeSpots.Count} mapped trees";
+            Summary = $"ground {heights.Size:0} m ({heights.Resolution - 1} cells), {lakes} water areas, {buildings} buildings, {mappedTrees} mapped trees, {treeSpots.Count - mappedTrees - reeds} trees and bushes in the rough, {reeds} reed clumps at the water";
         }
 
         /// <summary>Adds the mapped trees, woods and scrub to the tree field (after the course look step cleared it).</summary>
@@ -346,7 +349,8 @@ namespace GolfSimZA.Courses.Osm
 
         private int MakeWater()
         {
-            Shader waterShader = Resources.Load<Shader>("GolfSimZA_Water");
+            Shader waterShader = Resources.Load<Shader>("GolfSimZA_CourseWater");
+            if (waterShader == null || !waterShader.isSupported) waterShader = Resources.Load<Shader>("GolfSimZA_Water");
             if (waterShader == null) return 0;
             var material = new Material(waterShader) { name = "GolfSimZA_CourseWater", enableInstancing = true };
             material.SetTexture("_BumpMap", ShaderRepair.RippleTexture());
@@ -470,57 +474,231 @@ namespace GolfSimZA.Courses.Osm
 
         // ---------------------------------------------------------------- trees
 
+        private int mappedTrees, reeds;
+        private float treeDensity = 0.6f;
+
+        /// <summary>
+        /// Plans the trees (worker thread): the mapped trees, woods and scrub, then - like the course
+        /// planners' drawings - belts of trees between the holes with single trees and bushes closer
+        /// to the fairways, palms near the water, and reed clumps along the banks. The playing lines
+        /// stay clear. Uses 2 m grids of distances (to the playing surfaces, the water, the course).
+        /// </summary>
         private void PlanTrees()
         {
             var random = new System.Random(features.courseOsmId.GetHashCode());
-            float density = Mathf.Clamp(GolfSimZA.Core.AppSettings.Current.treeDensity, 0.2f, 1f);
-            const int MaxTrees = 9000;
-            // Woods and scrub only near the course (mapped woods can run for kilometres).
-            Vector2[] near = null;
-            foreach (OsmShape b in features.boundary)
-                if (b.pts.Length >= 3 && (near == null || Poly2D.Area(b.pts) > Poly2D.Area(near))) near = b.pts;
-            bool NearCourse(Vector2 p) => near == null || Poly2D.Distance(near, p) < 120f;
+            float density = treeDensity;
+            int maxTrees = Mathf.RoundToInt(Mathf.Lerp(5000f, 11000f, density));
+            const int MaxReeds = 6000;
 
-            void Plant(Vector2 p, bool bush, bool mappedTree)
-            {
-                if (treeSpots.Count >= MaxTrees) return;
-                byte id = surface.At(p);
-                if (!mappedTree && id != OsmSurface.Rough && id != OsmSurface.Native) return;
-                if (!mappedTree && !NearCourse(p)) return;
-                if (mappedTree && (id == OsmSurface.Green || id == OsmSurface.Tee || id == OsmSurface.Bunker)) return;
-                float ground = heights.Sample(p);
-                if (bush)
+            // ---- 2 m grids over the ground square
+            const float cell = 2f;
+            int n = Mathf.CeilToInt(heights.Size / cell);
+            var gridMin = new Vector2(heights.OriginX, heights.OriginZ);
+            var play = new bool[n * n];      // fairway, green, tee, fringe, bunker
+            var blocked = new bool[n * n];   // paths, buildings, water
+            var water = new bool[n * n];
+            var course = new bool[n * n];
+            for (int z = 0; z < n; z++)
+                for (int x = 0; x < n; x++)
                 {
-                    treeSpots.Add(new TreeSpot
-                    {
-                        Base = new Vector3(p.x, ground, p.y), Kind = TreeField.Kind.Bush,
-                        Height = 1.6f + (float)random.NextDouble() * 1.6f, Width = 1.4f + (float)random.NextDouble() * 0.5f,
-                        Yaw = (float)random.NextDouble() * 360f, Colour = random.Next(3)
-                    });
-                    return;
+                    byte id = surface.At(gridMin + new Vector2((x + 0.5f) * cell, (z + 0.5f) * cell));
+                    play[z * n + x] = id == OsmSurface.Fairway || id == OsmSurface.Green || id == OsmSurface.Tee || id == OsmSurface.Fringe || id == OsmSurface.Bunker;
+                    blocked[z * n + x] = id == OsmSurface.Path;
                 }
-                bool pine = random.NextDouble() < 0.3;
-                treeSpots.Add(new TreeSpot
+            foreach (OsmShape w in features.water)
+                Poly2D.Rasterize(w.pts, gridMin, cell, n, n, (x, z) => { water[z * n + x] = true; blocked[z * n + x] = true; });
+            foreach (OsmShape b in features.buildings)
+                Poly2D.Rasterize(Grow(b.pts, 3f), gridMin, cell, n, n, (x, z) => blocked[z * n + x] = true);
+            foreach (OsmShape p in features.paths)
+                if (p.pts.Length >= 2) Poly2D.RasterizeLine(p.pts, Mathf.Max(1.5f, p.value * 0.5f + 0.5f), gridMin, cell, n, n, (x, z) => blocked[z * n + x] = true);
+            bool hasBoundary = false;
+            foreach (OsmShape b in features.boundary)
+                if (b.pts.Length >= 3) { hasBoundary = true; Poly2D.Rasterize(b.pts, gridMin, cell, n, n, (x, z) => course[z * n + x] = true); }
+            float[] toPlay = Distances(play, n, cell);
+            float[] toWater = Distances(water, n, cell);
+            float[] toCourse = hasBoundary ? Distances(course, n, cell) : null;
+            int Index(Vector2 p)
+            {
+                int x = Mathf.FloorToInt((p.x - gridMin.x) / cell), z = Mathf.FloorToInt((p.y - gridMin.y) / cell);
+                return x < 0 || z < 0 || x >= n || z >= n ? -1 : z * n + x;
+            }
+            // Planted near the course: inside its boundary or just outside it (mapped woods can run for kilometres).
+            bool NearCourse(int i) => i >= 0 && (toCourse != null ? toCourse[i] < 50f : toPlay[i] < 150f);
+
+            // Spatial hash so new trees keep clear of each other and of the mapped ones.
+            var taken = new HashSet<long>();
+            long Key(Vector2 p) => ((long)Mathf.FloorToInt(p.x / 4f) << 32) ^ (uint)Mathf.FloorToInt(p.y / 4f);
+            bool Free(Vector2 p)
+            {
+                for (int dx = -1; dx <= 1; dx++)
+                    for (int dz = -1; dz <= 1; dz++)
+                        if (taken.Contains(((long)(Mathf.FloorToInt(p.x / 4f) + dx) << 32) ^ (uint)(Mathf.FloorToInt(p.y / 4f) + dz))) return false;
+                return true;
+            }
+            float R(float a, float b) => a + (float)random.NextDouble() * (b - a);
+
+            void Add(Vector2 p, TreeField.Kind kind)
+            {
+                float h, w;
+                switch (kind)
                 {
-                    Base = new Vector3(p.x, ground, p.y),
-                    Kind = pine ? TreeField.Kind.Pine : TreeField.Kind.Broadleaf,
-                    Height = pine ? 13f + (float)random.NextDouble() * 9f : 8f + (float)random.NextDouble() * 8f,
-                    Width = pine ? 0.9f + (float)random.NextDouble() * 0.3f : 1.0f + (float)random.NextDouble() * 0.35f,
-                    Yaw = (float)random.NextDouble() * 360f,
-                    Colour = random.Next(3)
-                });
+                    case TreeField.Kind.Pine: h = R(13f, 24f); w = R(0.75f, 1.0f); break;
+                    case TreeField.Kind.Spreading: h = R(8f, 13f); w = R(1.4f, 1.8f); break;
+                    case TreeField.Kind.Flowering: h = R(6f, 10f); w = R(1.0f, 1.3f); break;
+                    case TreeField.Kind.Palm: h = R(8f, 15f); w = R(0.8f, 1.0f); break;
+                    case TreeField.Kind.Bush: h = R(1.6f, 3.4f); w = R(1.3f, 1.8f); break;
+                    case TreeField.Kind.Reed: h = R(1.3f, 2.4f); w = R(1.6f, 2.4f); break;
+                    default: h = R(9f, 17f); w = R(0.95f, 1.3f); break;
+                }
+                treeSpots.Add(new TreeSpot { Base = new Vector3(p.x, heights.Sample(p), p.y), Kind = kind, Height = h, Width = w, Yaw = R(0f, 360f), Colour = random.Next(3) });
+                if (kind != TreeField.Kind.Reed) taken.Add(Key(p));
             }
 
-            foreach (Vector2 t in features.trees) Plant(t, false, true);
+            var lines = new List<Vector2[]>();
+            foreach (OsmShape h in features.holes) if (h.pts.Length >= 2) lines.Add(h.pts);
+            float FromLine(Vector2 p)
+            {
+                float best = float.MaxValue;
+                foreach (Vector2[] line in lines) best = Mathf.Min(best, Poly2D.LineDistance(line, p));
+                return best;
+            }
+
+            // ---- 1. Mapped trees, tree rows, woods and scrub
+            void PlantMapped(Vector2 p, bool bush, bool exact)
+            {
+                if (treeSpots.Count >= maxTrees) return;
+                int i = Index(p);
+                if (i < 0 || water[i]) return;
+                byte id = surface.At(p);
+                if (id == OsmSurface.Green || id == OsmSurface.Tee || id == OsmSurface.Bunker) return;
+                if (!exact && (play[i] || blocked[i] || !NearCourse(i))) return;
+                // A mapped tree inside a fairway outline right on the playing line: left out (the
+                // fairway outlines often run over the trees between two holes; those stay).
+                if (play[i] && FromLine(p) < 18f) return;
+                double r = random.NextDouble();
+                TreeField.Kind kind = bush ? TreeField.Kind.Bush
+                    : toWater[i] < 25f && r < 0.3 ? TreeField.Kind.Palm
+                    : r < 0.3 ? TreeField.Kind.Pine : r < 0.42 ? TreeField.Kind.Spreading : TreeField.Kind.Broadleaf;
+                Add(p, kind);
+            }
+            foreach (Vector2 t in features.trees) PlantMapped(t, false, true);
             foreach (OsmShape row in features.treeRows)
             {
                 float length = Poly2D.LineLength(row.pts);
-                for (float d = 0f; d <= length; d += 8f) Plant(Poly2D.PointAlong(row.pts, d), false, true);
+                for (float d = 0f; d <= length; d += 8f) PlantMapped(Poly2D.PointAlong(row.pts, d), false, true);
             }
-            float woodStep = Mathf.Lerp(16f, 9f, density);
-            foreach (OsmShape wood in features.woods) Scatter(wood.pts, woodStep, random, p => Plant(p, random.NextDouble() < 0.12, false));
+            float woodStep = Mathf.Lerp(14f, 8f, density);
+            foreach (OsmShape wood in features.woods) Scatter(wood.pts, woodStep, random, p => { if (Free(p)) PlantMapped(p, random.NextDouble() < 0.12, false); });
             float scrubStep = Mathf.Lerp(12f, 7f, density);
-            foreach (OsmShape s in features.scrub) Scatter(s.pts, scrubStep, random, p => Plant(p, random.NextDouble() < 0.75, false));
+            foreach (OsmShape sc in features.scrub) Scatter(sc.pts, scrubStep, random, p => { if (Free(p)) PlantMapped(p, random.NextDouble() < 0.75, false); });
+            mappedTrees = treeSpots.Count;
+
+            // ---- 2. Tree belts between the holes (the playing lines stay clear)
+            float step = Mathf.Lerp(11f, 7f, density);
+            for (float y = gridMin.y + step * 0.5f; y < gridMin.y + heights.Size; y += step)
+                for (float x = gridMin.x + step * 0.5f; x < gridMin.x + heights.Size; x += step)
+                {
+                    if (treeSpots.Count >= maxTrees) break;
+                    var p = new Vector2(x + R(-0.45f, 0.45f) * step, y + R(-0.45f, 0.45f) * step);
+                    int i = Index(p);
+                    if (i < 0 || play[i] || blocked[i] || !NearCourse(i)) continue;
+                    float fromPlay = toPlay[i];
+                    if (fromPlay < 4f) continue; // a strip of rough along every fairway
+                    if (FromLine(p) < 20f) continue; // the playing line itself
+                    bool edge = fromPlay < 14f;
+                    if (random.NextDouble() > (edge ? 0.22 : 0.85)) continue;
+                    if (!Free(p)) continue;
+                    double r = random.NextDouble();
+                    bool nearWater = toWater[i] < 22f;
+                    TreeField.Kind kind;
+                    if (nearWater && r < 0.30) kind = TreeField.Kind.Palm;
+                    else if (edge) kind = r < 0.35 ? TreeField.Kind.Bush : r < 0.47 ? TreeField.Kind.Flowering : r < 0.80 ? TreeField.Kind.Broadleaf : r < 0.92 ? TreeField.Kind.Spreading : TreeField.Kind.Pine;
+                    else kind = r < 0.13 ? TreeField.Kind.Bush : r < 0.18 ? TreeField.Kind.Flowering : r < 0.60 ? TreeField.Kind.Broadleaf : r < 0.72 ? TreeField.Kind.Spreading : r < 0.96 ? TreeField.Kind.Pine : TreeField.Kind.Palm;
+                    Add(p, kind);
+                }
+
+            // ---- 3. Reeds along the banks of lakes, ponds and streams
+            int treesBefore = treeSpots.Count;
+            foreach (OsmShape w in features.water)
+            {
+                if (w.pts.Length < 3) continue;
+                for (int k = 0; k < w.pts.Length && treeSpots.Count - treesBefore < MaxReeds; k++)
+                {
+                    Vector2 a = w.pts[k], b = w.pts[(k + 1) % w.pts.Length];
+                    float length = (b - a).magnitude;
+                    if (length < 0.01f) continue;
+                    Vector2 along = (b - a) / length;
+                    Vector2 normal = new Vector2(along.y, -along.x);
+                    for (float d = 0f; d < length; d += 1.4f)
+                    {
+                        if (random.NextDouble() > 0.55) continue;
+                        Vector2 at = a + along * d;
+                        // Outward = away from the water.
+                        Vector2 outward = Poly2D.Contains(w.pts, at + normal * 0.8f) ? -normal : normal;
+                        Vector2 p = at + outward * R(-0.6f, 2.2f);
+                        int i = Index(p);
+                        if (i < 0 || !NearCourse(i) || toPlay[i] < 2f) continue;
+                        byte id = surface.At(p);
+                        if (id == OsmSurface.Green || id == OsmSurface.Tee || id == OsmSurface.Fairway || id == OsmSurface.Bunker || id == OsmSurface.Path) continue;
+                        Add(p, TreeField.Kind.Reed);
+                    }
+                }
+            }
+            reeds = treeSpots.Count - treesBefore;
+        }
+
+        /// <summary>A polygon pushed out by m metres from its centre (rough, for keeping clear of buildings).</summary>
+        private static Vector2[] Grow(Vector2[] poly, float m)
+        {
+            if (poly.Length < 3) return poly;
+            Vector2 c = Poly2D.Centroid(poly);
+            var grown = new Vector2[poly.Length];
+            for (int i = 0; i < poly.Length; i++)
+            {
+                Vector2 d = poly[i] - c;
+                grown[i] = poly[i] + (d.sqrMagnitude > 1e-6f ? d.normalized * m : Vector2.zero);
+            }
+            return grown;
+        }
+
+        /// <summary>Distance (m) from every cell to the nearest set cell (two-pass chamfer).</summary>
+        private static float[] Distances(bool[] set, int n, float cell)
+        {
+            const float Far = 1e7f, Diagonal = 1.41421356f;
+            var d = new float[n * n];
+            for (int i = 0; i < d.Length; i++) d[i] = set[i] ? 0f : Far;
+            for (int z = 0; z < n; z++)
+                for (int x = 0; x < n; x++)
+                {
+                    int i = z * n + x;
+                    float v = d[i];
+                    if (v == 0f) continue;
+                    if (x > 0) v = Mathf.Min(v, d[i - 1] + 1f);
+                    if (z > 0)
+                    {
+                        v = Mathf.Min(v, d[i - n] + 1f);
+                        if (x > 0) v = Mathf.Min(v, d[i - n - 1] + Diagonal);
+                        if (x < n - 1) v = Mathf.Min(v, d[i - n + 1] + Diagonal);
+                    }
+                    d[i] = v;
+                }
+            for (int z = n - 1; z >= 0; z--)
+                for (int x = n - 1; x >= 0; x--)
+                {
+                    int i = z * n + x;
+                    float v = d[i];
+                    if (v == 0f) continue;
+                    if (x < n - 1) v = Mathf.Min(v, d[i + 1] + 1f);
+                    if (z < n - 1)
+                    {
+                        v = Mathf.Min(v, d[i + n] + 1f);
+                        if (x < n - 1) v = Mathf.Min(v, d[i + n + 1] + Diagonal);
+                        if (x > 0) v = Mathf.Min(v, d[i + n - 1] + Diagonal);
+                    }
+                    d[i] = v;
+                }
+            for (int i = 0; i < d.Length; i++) d[i] *= cell;
+            return d;
         }
 
         private static void Scatter(Vector2[] poly, float step, System.Random random, Action<Vector2> plant)

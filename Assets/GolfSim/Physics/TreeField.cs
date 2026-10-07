@@ -5,15 +5,17 @@ using UnityEngine.Rendering;
 namespace GolfSimZA.Physics
 {
     /// <summary>
-    /// GolfSim ZA trees: pines and broadleaf trees built in code (no downloaded models), drawn
-    /// with GPU instancing so hundreds of trees stay cheap. The ball collides with them: a ball
-    /// that flies into the leaves is slowed down and knocked about, a ball that hits a trunk
-    /// bounces back.
+    /// GolfSim ZA trees: broadleaf, spreading and flowering trees, pines, palms, bushes and reeds
+    /// built in code (no downloaded models, see <see cref="TreeMeshes"/>), drawn with GPU
+    /// instancing - full detail near the camera, a lighter model further away - so thousands of
+    /// trees stay cheap. The ball collides with the trees (not with reeds): a ball that flies into
+    /// the leaves is slowed down and knocked about, a ball that hits a trunk bounces back.
     /// </summary>
     public sealed class TreeField : MonoBehaviour
     {
-        public enum Kind { Pine, Broadleaf, Palm, Bush }
-        private const int Kinds = 4;
+        public enum Kind { Pine, Broadleaf, Palm, Bush, Spreading, Flowering, Reed }
+        private const int Kinds = 7;
+        private const int Variants = 3;
 
         private struct TreeInfo
         {
@@ -30,13 +32,24 @@ namespace GolfSimZA.Physics
         private readonly Dictionary<Vector2Int, List<int>> grid = new Dictionary<Vector2Int, List<int>>();
         private const float Cell = 20f;
 
-        // Instanced drawing: per (kind, colour variant) a list of matrices in batches of 1023.
-        private readonly List<Matrix4x4>[,] matrices = new List<Matrix4x4>[Kinds, 3];
-        private readonly List<Matrix4x4[]>[,] batches = new List<Matrix4x4[]>[Kinds, 3];
-        private static Mesh pineMesh, broadMesh, palmMesh;
-        private static Material palmTrunkMaterial;
-        private static Material trunkMaterial;
+        // Instanced drawing: per (kind, colour variant) every instance; per detail level the
+        // matrices in lists of at most 1023 (one instanced draw each), regrouped as the camera moves.
+        private struct Instance
+        {
+            public Matrix4x4 Matrix;
+            public Vector3 Position;
+        }
+
+        private readonly List<Instance>[,] instances = new List<Instance>[Kinds, Variants];
+        private readonly List<List<Matrix4x4>>[,,] drawLists = new List<List<Matrix4x4>>[Kinds, Variants, 2];
+        private static Mesh[,] meshes;          // [kind, detail level]
+        private static Material barkMaterial;
         private static Material[,] foliageMaterials;
+        private Vector3 groupedFrom = new Vector3(float.MaxValue, 0f, 0f);
+        private bool dirty = true;
+
+        /// <summary>Trees further than this from the camera are drawn with the lighter model.</summary>
+        private static float FarDistance => GolfSimZA.Core.AppSettings.Current.graphicsQuality >= 2 ? 260f : 170f;
 
         public int Count => trees.Count;
 
@@ -51,45 +64,60 @@ namespace GolfSimZA.Physics
             trees.Clear();
             grid.Clear();
             for (int k = 0; k < Kinds; k++)
-                for (int v = 0; v < 3; v++)
+                for (int v = 0; v < Variants; v++)
                 {
-                    matrices[k, v]?.Clear();
-                    batches[k, v]?.Clear();
+                    instances[k, v]?.Clear();
+                    for (int lod = 0; lod < 2; lod++) drawLists[k, v, lod]?.Clear();
                 }
+            dirty = true;
         }
 
-        /// <summary>Adds a tree standing on the ground at basePosition.</summary>
+        /// <summary>Adds a tree (or reed clump) standing on the ground at basePosition.</summary>
         public void Add(Kind kind, Vector3 basePosition, float height, float yawDeg, float widthScale, int colourVariant)
         {
             EnsureAssets();
-            int k = (int)kind, v = Mathf.Clamp(colourVariant, 0, 2);
-            if (matrices[k, v] == null) matrices[k, v] = new List<Matrix4x4>();
+            int k = (int)kind, v = Mathf.Clamp(colourVariant, 0, Variants - 1);
+            if (instances[k, v] == null) instances[k, v] = new List<Instance>();
             float width = height * widthScale;
-            // Meshes are built 1 unit tall; sink the base a little so slopes show no gap.
-            Matrix4x4 m = Matrix4x4.TRS(basePosition - Vector3.up * 0.3f, Quaternion.Euler(0f, yawDeg, 0f), new Vector3(width, height, width));
-            matrices[k, v].Add(m);
+            // Models are built 1 unit tall; sink the base a little so slopes show no gap.
+            Matrix4x4 m = Matrix4x4.TRS(basePosition - Vector3.up * (kind == Kind.Reed ? 0.15f : 0.3f), Quaternion.Euler(0f, yawDeg, 0f), new Vector3(width, height, width));
+            instances[k, v].Add(new Instance { Matrix = m, Position = basePosition });
+            dirty = true;
+            if (kind == Kind.Reed) return; // reeds do not stop the ball
 
             var info = new TreeInfo { Base = basePosition, Height = height };
-            if (kind == Kind.Palm)
+            switch (kind)
             {
-                info.TrunkRadius = 0.025f * width + 0.1f;
-                info.CanopyCentre = basePosition + Vector3.up * height * 0.9f;
-                info.CanopyRadius = 0.3f * width;
-                info.CanopyHalfHeight = height * 0.1f;
-            }
-            else if (kind == Kind.Pine)
-            {
-                info.TrunkRadius = 0.035f * width + 0.1f;
-                info.CanopyCentre = basePosition + Vector3.up * height * 0.55f;
-                info.CanopyRadius = 0.26f * width;
-                info.CanopyHalfHeight = height * 0.42f;
-            }
-            else
-            {
-                info.TrunkRadius = 0.04f * width + 0.1f;
-                info.CanopyCentre = basePosition + Vector3.up * height * 0.66f;
-                info.CanopyRadius = 0.38f * width;
-                info.CanopyHalfHeight = height * 0.30f;
+                case Kind.Palm:
+                    info.TrunkRadius = 0.025f * width + 0.1f;
+                    info.CanopyCentre = basePosition + Vector3.up * height * 0.88f;
+                    info.CanopyRadius = 0.36f * width;
+                    info.CanopyHalfHeight = height * 0.12f;
+                    break;
+                case Kind.Pine:
+                    info.TrunkRadius = 0.035f * width + 0.1f;
+                    info.CanopyCentre = basePosition + Vector3.up * height * 0.58f;
+                    info.CanopyRadius = 0.3f * width;
+                    info.CanopyHalfHeight = height * 0.4f;
+                    break;
+                case Kind.Spreading:
+                    info.TrunkRadius = 0.045f * width + 0.1f;
+                    info.CanopyCentre = basePosition + Vector3.up * height * 0.72f;
+                    info.CanopyRadius = 0.5f * width;
+                    info.CanopyHalfHeight = height * 0.18f;
+                    break;
+                case Kind.Bush:
+                    info.TrunkRadius = 0.1f;
+                    info.CanopyCentre = basePosition + Vector3.up * height * 0.45f;
+                    info.CanopyRadius = 0.45f * width;
+                    info.CanopyHalfHeight = height * 0.42f;
+                    break;
+                default: // broadleaf, flowering
+                    info.TrunkRadius = 0.045f * width + 0.1f;
+                    info.CanopyCentre = basePosition + Vector3.up * height * 0.66f;
+                    info.CanopyRadius = 0.38f * width;
+                    info.CanopyHalfHeight = height * 0.28f;
+                    break;
             }
             int index = trees.Count;
             trees.Add(info);
@@ -146,39 +174,78 @@ namespace GolfSimZA.Physics
             return best < float.MaxValue;
         }
 
-        /// <summary>Call after adding trees: packs the matrices for drawing.</summary>
-        public void Commit()
+        /// <summary>Call after adding trees (the drawing lists are rebuilt on the next frame).</summary>
+        public void Commit() => dirty = true;
+
+        /// <summary>Number of reed clumps and trees drawn (for reports).</summary>
+        public int DrawnCount
         {
-            for (int k = 0; k < Kinds; k++)
-                for (int v = 0; v < 3; v++)
-                {
-                    if (batches[k, v] == null) batches[k, v] = new List<Matrix4x4[]>();
-                    batches[k, v].Clear();
-                    List<Matrix4x4> all = matrices[k, v];
-                    if (all == null) continue;
-                    for (int i = 0; i < all.Count; i += 1023)
-                        batches[k, v].Add(all.GetRange(i, Mathf.Min(1023, all.Count - i)).ToArray());
-                }
+            get
+            {
+                int n = 0;
+                foreach (List<Instance> list in instances) if (list != null) n += list.Count;
+                return n;
+            }
         }
 
         private void LateUpdate()
         {
-            if (trees.Count == 0) return;
-            for (int k = 0; k < Kinds; k++)
+            Camera cam = Camera.main;
+            if (cam == null || meshes == null) return;
+            Vector3 camPos = cam.transform.position;
+            float far = FarDistance;
+            Vector3 moved = camPos - groupedFrom;
+            moved.y = 0f;
+            if (dirty || moved.sqrMagnitude > 12f * 12f)
             {
-                Mesh mesh = k == 0 ? pineMesh : k == 2 ? palmMesh : broadMesh;
-                Material trunk = k == 2 ? palmTrunkMaterial : trunkMaterial;
-                for (int v = 0; v < 3; v++)
-                {
-                    List<Matrix4x4[]> list = batches[k, v];
-                    if (list == null) continue;
-                    foreach (Matrix4x4[] batch in list)
+                Regroup(camPos, far);
+                groupedFrom = camPos;
+                dirty = false;
+            }
+            for (int k = 0; k < Kinds; k++)
+                for (int v = 0; v < Variants; v++)
+                    for (int lod = 0; lod < 2; lod++)
                     {
-                        Graphics.DrawMeshInstanced(mesh, 0, trunk, batch, batch.Length, null, ShadowCastingMode.On, true);
-                        Graphics.DrawMeshInstanced(mesh, 1, foliageMaterials[k, v], batch, batch.Length, null, ShadowCastingMode.On, true);
+                        List<List<Matrix4x4>> lists = drawLists[k, v, lod];
+                        if (lists == null) continue;
+                        Mesh mesh = meshes[k, lod];
+                        bool bark = mesh.GetSubMesh(0).indexCount > 0;
+                        ShadowCastingMode shadows = lod == 0 ? ShadowCastingMode.On : ShadowCastingMode.Off;
+                        foreach (List<Matrix4x4> batch in lists)
+                        {
+                            if (batch.Count == 0) continue;
+                            if (bark) Graphics.DrawMeshInstanced(mesh, 0, barkMaterial, batch, null, shadows, true);
+                            Graphics.DrawMeshInstanced(mesh, 1, foliageMaterials[k, v], batch, null, shadows, true);
+                        }
+                    }
+        }
+
+        /// <summary>Sorts every instance into the near (full detail) or far (light model) lists.</summary>
+        private void Regroup(Vector3 camPos, float far)
+        {
+            float far2 = far * far;
+            for (int k = 0; k < Kinds; k++)
+                for (int v = 0; v < Variants; v++)
+                {
+                    for (int lod = 0; lod < 2; lod++)
+                    {
+                        if (drawLists[k, v, lod] == null) drawLists[k, v, lod] = new List<List<Matrix4x4>>();
+                        foreach (List<Matrix4x4> l in drawLists[k, v, lod]) l.Clear();
+                    }
+                    List<Instance> all = instances[k, v];
+                    if (all == null) continue;
+                    var used = new int[2];
+                    foreach (Instance i in all)
+                    {
+                        float dx = i.Position.x - camPos.x, dz = i.Position.z - camPos.z;
+                        int lod = dx * dx + dz * dz < far2 ? 0 : 1;
+                        List<List<Matrix4x4>> lists = drawLists[k, v, lod];
+                        int slot = used[lod] / 1023;
+                        while (lists.Count <= slot) lists.Add(new List<Matrix4x4>(1023));
+                        lists[slot].Add(i.Matrix);
+                        used[lod]++;
                     }
                 }
-            }
         }
 
         private static Vector2Int CellOf(Vector3 p) => new Vector2Int(Mathf.FloorToInt(p.x / Cell), Mathf.FloorToInt(p.z / Cell));
@@ -249,217 +316,59 @@ namespace GolfSimZA.Physics
 
         // ------------------------------------------------------------ Assets
 
+        private static TreeMeshes.Model ModelOf(Kind kind)
+        {
+            switch (kind)
+            {
+                case Kind.Pine: return TreeMeshes.Model.Pine;
+                case Kind.Palm: return TreeMeshes.Model.Palm;
+                case Kind.Bush: return TreeMeshes.Model.Bush;
+                case Kind.Spreading: return TreeMeshes.Model.Spreading;
+                case Kind.Flowering: return TreeMeshes.Model.Flowering;
+                case Kind.Reed: return TreeMeshes.Model.Reed;
+                default: return TreeMeshes.Model.Broadleaf;
+            }
+        }
+
         private static void EnsureAssets()
         {
-            if (pineMesh != null) return;
-            pineMesh = BuildPine();
-            broadMesh = BuildBroadleaf();
-            palmMesh = BuildPalm();
-            trunkMaterial = MakeMaterial(new Color(0.30f, 0.22f, 0.15f));
-            palmTrunkMaterial = MakeMaterial(new Color(0.46f, 0.38f, 0.29f));
-            foliageMaterials = new Material[Kinds, 3];
-            Color[] palms = { new Color(0.24f, 0.40f, 0.14f), new Color(0.30f, 0.45f, 0.16f), new Color(0.21f, 0.36f, 0.13f) };
-            Color[] bushes = { new Color(0.34f, 0.38f, 0.20f), new Color(0.40f, 0.42f, 0.24f), new Color(0.28f, 0.34f, 0.17f) };
-            Color[] pines = { new Color(0.10f, 0.26f, 0.12f), new Color(0.12f, 0.30f, 0.14f), new Color(0.09f, 0.23f, 0.13f) };
-            Color[] broad = { new Color(0.22f, 0.42f, 0.14f), new Color(0.27f, 0.47f, 0.16f), new Color(0.19f, 0.38f, 0.13f) };
-            for (int v = 0; v < 3; v++)
+            if (meshes != null) return;
+            meshes = new Mesh[Kinds, 2];
+            for (int k = 0; k < Kinds; k++)
             {
-                foliageMaterials[0, v] = MakeMaterial(pines[v]);
-                foliageMaterials[1, v] = MakeMaterial(broad[v]);
-                foliageMaterials[2, v] = MakeMaterial(palms[v]);
-                foliageMaterials[3, v] = MakeMaterial(bushes[v]);
+                Mesh[] built = TreeMeshes.Build(ModelOf((Kind)k));
+                meshes[k, 0] = built[0];
+                meshes[k, 1] = built[1];
             }
+            Texture2D atlas = TreeMeshes.Atlas();
+            barkMaterial = MakeMaterial(atlas, new Color(0.55f, 0.47f, 0.40f), 0.5f, 0.02f);
+            foliageMaterials = new Material[Kinds, Variants];
+            // Colour variants per kind (yellow-green, mid green, dark green; flowers: pink, coral, yellow).
+            Color[][] tints =
+            {
+                new[] { new Color(0.17f, 0.36f, 0.19f), new Color(0.20f, 0.40f, 0.20f), new Color(0.14f, 0.31f, 0.18f) },   // pine
+                new[] { new Color(0.42f, 0.62f, 0.22f), new Color(0.31f, 0.53f, 0.19f), new Color(0.24f, 0.43f, 0.17f) },   // broadleaf
+                new[] { new Color(0.38f, 0.58f, 0.22f), new Color(0.44f, 0.62f, 0.24f), new Color(0.32f, 0.50f, 0.19f) },   // palm
+                new[] { new Color(0.36f, 0.52f, 0.20f), new Color(0.44f, 0.56f, 0.24f), new Color(0.28f, 0.44f, 0.18f) },   // bush
+                new[] { new Color(0.36f, 0.56f, 0.21f), new Color(0.46f, 0.62f, 0.24f), new Color(0.28f, 0.47f, 0.18f) },   // spreading
+                new[] { new Color(0.95f, 0.50f, 0.62f), new Color(0.95f, 0.42f, 0.22f), new Color(0.78f, 0.78f, 0.26f) },   // flowering
+                new[] { new Color(0.55f, 0.62f, 0.32f), new Color(0.64f, 0.66f, 0.36f), new Color(0.47f, 0.57f, 0.28f) },   // reed
+            };
+            float[] wind = { 0.03f, 0.05f, 0.08f, 0.04f, 0.04f, 0.05f, 0.14f };
+            for (int k = 0; k < Kinds; k++)
+                for (int v = 0; v < Variants; v++)
+                    foliageMaterials[k, v] = MakeMaterial(atlas, tints[k][v], 0.45f, wind[k]);
         }
 
-        private static Material MakeMaterial(Color color)
+        private static Material MakeMaterial(Texture2D atlas, Color tint, float cutoff, float wind)
         {
-            Shader shader = Shader.Find("Standard");
-            var m = new Material(shader) { color = color, enableInstancing = true };
-            if (m.HasProperty("_Glossiness")) m.SetFloat("_Glossiness", 0.08f);
+            Shader shader = Resources.Load<Shader>("GolfSimZA_Foliage");
+            if (shader == null || !shader.isSupported) shader = Shader.Find("Legacy Shaders/Transparent/Cutout/Diffuse");
+            var m = new Material(shader) { color = tint, enableInstancing = true, hideFlags = HideFlags.DontSave };
+            m.mainTexture = atlas;
+            if (m.HasProperty("_Cutoff")) m.SetFloat("_Cutoff", cutoff);
+            if (m.HasProperty("_WindStrength")) m.SetFloat("_WindStrength", wind);
             return m;
-        }
-
-        private static Mesh BuildPine()
-        {
-            var b = new MeshBuilder(new System.Random(7));
-            b.Cylinder(0, 0.035f, 0.025f, 0f, 0.35f, 7);
-            // Stacked cones, widest at the bottom.
-            float[] bottoms = { 0.14f, 0.32f, 0.50f, 0.68f };
-            float[] radii = { 0.32f, 0.27f, 0.20f, 0.13f };
-            float[] tops = { 0.52f, 0.68f, 0.84f, 1.0f };
-            for (int i = 0; i < bottoms.Length; i++) b.Cone(1, radii[i], bottoms[i], tops[i], 11, 0.05f);
-            return b.ToMesh("GolfSimZA_Pine");
-        }
-
-        private static Mesh BuildBroadleaf()
-        {
-            var b = new MeshBuilder(new System.Random(11));
-            b.Cylinder(0, 0.045f, 0.03f, 0f, 0.55f, 7);
-            b.Blob(1, new Vector3(0f, 0.66f, 0f), new Vector3(0.30f, 0.24f, 0.30f), 0.12f);
-            b.Blob(1, new Vector3(0.17f, 0.58f, 0.05f), new Vector3(0.22f, 0.18f, 0.22f), 0.14f);
-            b.Blob(1, new Vector3(-0.15f, 0.60f, -0.09f), new Vector3(0.22f, 0.19f, 0.22f), 0.14f);
-            b.Blob(1, new Vector3(0.02f, 0.80f, 0.10f), new Vector3(0.21f, 0.17f, 0.21f), 0.14f);
-            b.Blob(1, new Vector3(-0.06f, 0.56f, 0.19f), new Vector3(0.19f, 0.16f, 0.19f), 0.14f);
-            return b.ToMesh("GolfSimZA_Broadleaf");
-        }
-
-        /// <summary>
-        /// Palm: a slightly curved, ringed trunk and a crown of arching fronds (both sides drawn).
-        /// Built 1 unit tall; the fronds reach about 0.36 of the width scale.
-        /// </summary>
-        private static Mesh BuildPalm()
-        {
-            var b = new MeshBuilder(new System.Random(17));
-            const int rings = 10;
-            Vector3 prev = Vector3.zero;
-            for (int r = 0; r < rings; r++)
-            {
-                float t0 = r / (float)rings, t1 = (r + 1) / (float)rings;
-                Vector3 c0 = new Vector3(0.06f * t0 * t0, t0 * 0.92f, 0f), c1 = new Vector3(0.06f * t1 * t1, t1 * 0.92f, 0f);
-                b.Segment(0, c0, c1, Mathf.Lerp(0.03f, 0.018f, t0) * (r % 2 == 0 ? 1.08f : 1f), Mathf.Lerp(0.03f, 0.018f, t1), 7);
-            }
-            Vector3 top = new Vector3(0.06f, 0.92f, 0f);
-            for (int f = 0; f < 13; f++)
-            {
-                float yaw = f / 13f * Mathf.PI * 2f + (f % 2) * 0.2f;
-                float lift = f % 3 == 0 ? 0.10f : 0.05f;
-                b.Frond(1, top, new Vector3(Mathf.Cos(yaw), 0f, Mathf.Sin(yaw)), 0.36f, lift, 0.05f);
-            }
-            return b.ToMesh("GolfSimZA_Palm");
-        }
-
-        /// <summary>Tiny mesh builder with two submeshes (0 = trunk, 1 = leaves).</summary>
-        private sealed class MeshBuilder
-        {
-            private readonly List<Vector3> vertices = new List<Vector3>();
-            private readonly List<Vector3> normals = new List<Vector3>();
-            private readonly List<int>[] triangles = { new List<int>(), new List<int>() };
-            private readonly System.Random random;
-
-            public MeshBuilder(System.Random random) { this.random = random; }
-
-            private float Jitter(float amount) => (float)(random.NextDouble() * 2.0 - 1.0) * amount;
-
-            public void Cylinder(int sub, float r0, float r1, float y0, float y1, int segments)
-            {
-                int start = vertices.Count;
-                for (int i = 0; i <= segments; i++)
-                {
-                    float a = i / (float)segments * Mathf.PI * 2f;
-                    Vector3 n = new Vector3(Mathf.Cos(a), 0f, Mathf.Sin(a));
-                    vertices.Add(n * r0 + Vector3.up * y0); normals.Add(n);
-                    vertices.Add(n * r1 + Vector3.up * y1); normals.Add(n);
-                }
-                for (int i = 0; i < segments; i++)
-                {
-                    int a = start + i * 2;
-                    triangles[sub].AddRange(new[] { a, a + 1, a + 2, a + 1, a + 3, a + 2 });
-                }
-            }
-
-            public void Cone(int sub, float radius, float y0, float y1, int segments, float jitter)
-            {
-                int start = vertices.Count;
-                float slope = radius / (y1 - y0);
-                for (int i = 0; i < segments; i++)
-                {
-                    float a = i / (float)segments * Mathf.PI * 2f;
-                    float r = radius * (1f + Jitter(0.12f));
-                    Vector3 dir = new Vector3(Mathf.Cos(a), 0f, Mathf.Sin(a));
-                    vertices.Add(dir * r + Vector3.up * (y0 + Jitter(jitter)));
-                    normals.Add((dir + Vector3.up * slope).normalized);
-                }
-                int tip = vertices.Count;
-                vertices.Add(Vector3.up * y1); normals.Add(Vector3.up);
-                int centre = vertices.Count;
-                vertices.Add(Vector3.up * (y0 + 0.02f)); normals.Add(Vector3.down);
-                for (int i = 0; i < segments; i++)
-                {
-                    int a = start + i, bIndex = start + (i + 1) % segments;
-                    triangles[sub].AddRange(new[] { a, tip, bIndex });
-                    triangles[sub].AddRange(new[] { a, bIndex, centre });
-                }
-            }
-
-            public void Blob(int sub, Vector3 centre, Vector3 radius, float jitter)
-            {
-                const int rings = 6, segments = 10;
-                int start = vertices.Count;
-                for (int r = 0; r <= rings; r++)
-                {
-                    float v = r / (float)rings * Mathf.PI;
-                    for (int s = 0; s <= segments; s++)
-                    {
-                        float u = s / (float)segments * Mathf.PI * 2f;
-                        Vector3 n = new Vector3(Mathf.Sin(v) * Mathf.Cos(u), Mathf.Cos(v), Mathf.Sin(v) * Mathf.Sin(u));
-                        float bump = (r == 0 || r == rings || s == segments) ? 1f : 1f + Jitter(jitter);
-                        vertices.Add(centre + Vector3.Scale(n, radius) * bump);
-                        normals.Add(n);
-                    }
-                }
-                for (int r = 0; r < rings; r++)
-                    for (int s = 0; s < segments; s++)
-                    {
-                        int a = start + r * (segments + 1) + s;
-                        int bIndex = a + segments + 1;
-                        triangles[sub].AddRange(new[] { a, a + 1, bIndex, a + 1, bIndex + 1, bIndex });
-                    }
-            }
-
-            /// <summary>Tapered tube between two points (palm trunk rings).</summary>
-            public void Segment(int sub, Vector3 a, Vector3 b, float ra, float rb, int segments)
-            {
-                int start = vertices.Count;
-                for (int i = 0; i <= segments; i++)
-                {
-                    float ang = i / (float)segments * Mathf.PI * 2f;
-                    Vector3 n = new Vector3(Mathf.Cos(ang), 0f, Mathf.Sin(ang));
-                    vertices.Add(a + n * ra); normals.Add(n);
-                    vertices.Add(b + n * rb); normals.Add(n);
-                }
-                for (int i = 0; i < segments; i++)
-                {
-                    int k = start + i * 2;
-                    triangles[sub].AddRange(new[] { k, k + 1, k + 2, k + 1, k + 3, k + 2 });
-                }
-            }
-
-            /// <summary>A frond: a strip that rises a little then arches down, drawn on both sides.</summary>
-            public void Frond(int sub, Vector3 root, Vector3 dir, float length, float lift, float width)
-            {
-                const int steps = 7;
-                Vector3 side = Vector3.Cross(Vector3.up, dir).normalized;
-                int start = vertices.Count;
-                for (int i = 0; i <= steps; i++)
-                {
-                    float t = i / (float)steps;
-                    float y = lift * Mathf.Sin(t * Mathf.PI * 0.6f) - 0.22f * length * t * t;
-                    Vector3 c = root + dir * (length * t) + Vector3.up * y;
-                    float w = width * Mathf.Sin(Mathf.Lerp(0.25f, 1f, t) * Mathf.PI) * (1f + Jitter(0.15f));
-                    vertices.Add(c - side * w); normals.Add(Vector3.up);
-                    vertices.Add(c + side * w); normals.Add(Vector3.up);
-                }
-                for (int i = 0; i < steps; i++)
-                {
-                    int k = start + i * 2;
-                    triangles[sub].AddRange(new[] { k, k + 2, k + 1, k + 1, k + 2, k + 3 });
-                    triangles[sub].AddRange(new[] { k, k + 1, k + 2, k + 1, k + 3, k + 2 });
-                }
-            }
-
-            public Mesh ToMesh(string name)
-            {
-                var mesh = new Mesh { name = name };
-                mesh.SetVertices(vertices);
-                mesh.SetNormals(normals);
-                mesh.subMeshCount = 2;
-                mesh.SetTriangles(triangles[0], 0);
-                mesh.SetTriangles(triangles[1], 1);
-                mesh.RecalculateBounds();
-                // Instances are scaled up a lot; keep culling generous.
-                mesh.bounds = new Bounds(new Vector3(0f, 0.5f, 0f), new Vector3(1.2f, 1.2f, 1.2f));
-                return mesh;
-            }
         }
     }
 }

@@ -85,7 +85,8 @@ namespace GolfSimZA.Courses
 
             // 2. GolfSim ZA trees.
             int mode = AppSettings.Current.addTrees;
-            bool plant = mode == 2 || (mode == 1 && stats.VisibleTrees < FewTrees);
+            // OpenStreetMap courses plant their own trees (mapped trees, belts between the holes, reeds).
+            bool plant = !(course != null && course.IsOpenStreetMap) && (mode == 2 || (mode == 1 && stats.VisibleTrees < FewTrees));
             TreeField field = host.GetComponent<TreeField>();
             if (field == null) field = host.AddComponent<TreeField>();
             field.Clear();

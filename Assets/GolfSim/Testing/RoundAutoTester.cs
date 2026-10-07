@@ -403,6 +403,20 @@ namespace GolfSimZA.Testing
             if (samePlayerSameHole && strokesNow - lastHitStrokes == 1 && Flat(ball.position - lastHitFrom) < 3f) stuckHits++;
             else stuckHits = 0;
             if (stuckHits > 0) distance *= Mathf.Pow(1.5f, Mathf.Min(stuckHits, 4));
+            // Replaying from the same spot after a penalty again (a tree in the way, the ball drops
+            // into the water): like a real golfer, play out sideways - 25 / 50 degrees left or right.
+            if (samePlayerSameHole && strokesNow - lastHitStrokes >= 2 && Flat(ball.position - lastHitFrom) < 3f) replays++;
+            else replays = 0;
+            if (replays >= 1)
+            {
+                float turn = (replays % 2 == 1 ? 1f : -1f) * (replays <= 2 ? 25f : 50f);
+                Vector3 dir = Quaternion.Euler(0f, turn, 0f) * (target - ball.position);
+                dir.y = 0f;
+                float escape = Mathf.Min(distance, 90f);
+                target = ball.position + dir.normalized * escape;
+                target.y = GroundProbe.HeightAt(target);
+                distance = escape;
+            }
             lastHitFrom = ball.position;
             lastHitHole = Get<int>("holeIndex");
             lastHitPlayer = active;
@@ -483,7 +497,7 @@ namespace GolfSimZA.Testing
         // Run-out learnt per club (total / carry - 1) from this test's own shots.
         private readonly Dictionary<string, float> rollRatio = new Dictionary<string, float>();
         private Vector3 lastHitFrom = new Vector3(float.MaxValue, 0f, 0f);
-        private int lastHitHole = -1, lastHitPlayer = -1, lastHitStrokes, stuckHits;
+        private int lastHitHole = -1, lastHitPlayer = -1, lastHitStrokes, stuckHits, replays;
         private bool treeTestDone, treeTestPending;
         private Vector3 treeTestFrom;
         private float treeTestDistance;

@@ -178,6 +178,8 @@ namespace GolfSimZA.Courses
             Debug.Log("[GolfSimZA] Course lighting: " + GolfSimZA.Visual.CourseLighting.Apply(courseScene));
             // The built ground is lit by the sun and sky like the range: less sky fill than imported courses need.
             RenderSettings.ambientIntensity = 0.85f;
+            // The course water shades by depth (clear at the bank, darker further in): it reads the camera depth.
+            if (ourCamera != null) ourCamera.depthTextureMode |= DepthTextureMode.Depth;
             try
             {
                 Debug.Log("[GolfSimZA] Course look: " + CourseScenery.ImproveCourse(courseScene, Course, gameObject, ourCamera));
