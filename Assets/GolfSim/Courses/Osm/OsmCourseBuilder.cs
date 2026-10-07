@@ -772,22 +772,33 @@ namespace GolfSimZA.Courses.Osm
             });
         }
 
+        /// <summary>Height of the grass lip around a bunker (m).</summary>
+        private const float BunkerLip = 0.22f;
+
+        /// <summary>
+        /// A bunker like the course planners draw it: a raised grass lip all round, a sand face
+        /// running down from the edge (about 2 m wide) and a flatter, slightly bowled floor. Depth
+        /// grows with the bunker's size (0.55 - 1.0 m). Steepest part about 40 degrees.
+        /// </summary>
         private static void ShapeBunker(OsmHeightField h, OsmShape b)
         {
             if (b.pts.Length < 3) return;
             float area = Poly2D.Area(b.pts);
-            float depth = Mathf.Clamp(0.35f + Mathf.Sqrt(area) * 0.03f, 0.4f, 0.9f);
-            ForPoints(h, b.pts, 0.5f, (x, z, p) =>
+            float depth = Mathf.Clamp(0.5f + Mathf.Sqrt(area) * 0.03f, 0.55f, 1.0f);
+            const float lipOut = 2.5f, lipIn = 0.6f, face = 2.2f;
+            ForPoints(h, b.pts, lipOut, (x, z, p) =>
             {
                 float sd = Poly2D.SignedDistance(b.pts, p);
                 int i = z * h.Resolution + x;
                 if (sd > 0f)
                 {
-                    // A small lip just outside.
-                    h.Heights[i] += 0.08f * (1f - Smooth(0f, 0.5f, sd));
+                    // The grass lip outside, falling away to the surrounding ground.
+                    h.Heights[i] += BunkerLip * (1f - Smooth(0f, lipOut, sd));
                     return;
                 }
-                h.Heights[i] -= depth * Smooth(0f, 3f, -sd);
+                float inside = -sd;
+                // Lip edge (continuous with the outside), then the sand face, then a gentle bowl.
+                h.Heights[i] += BunkerLip * (1f - Smooth(0f, lipIn, inside)) - depth * Smooth(0f, face, inside) - 0.12f * Smooth(face, 8f, inside);
             });
         }
 

@@ -23,6 +23,17 @@ namespace GolfSimZA.UI
 
         /// <summary>Draws the toggle button and (when shown) the tiles, anchored at the top-right corner.</summary>
         /// <param name="maxBottom">Lowest screen y the tiles may use (tiles shrink to fit); 0 = screen bottom.</param>
+        /// <summary>Smallest height the tiles need below 'top' (button plus rows at the smallest tile size).</summary>
+        public static float MinimumHeight
+        {
+            get
+            {
+                if (!GameOptions.ShowDataTiles) return 34f;
+                int rows = (Selected.Count + 1) / 2;
+                return 40f + rows * 48f;
+            }
+        }
+
         public static void Draw(float right, float top, ShotData shot, float maxBottom = 0f)
         {
             Ensure();

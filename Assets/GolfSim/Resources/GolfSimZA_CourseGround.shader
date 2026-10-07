@@ -11,6 +11,7 @@ Shader "Hidden/GolfSimZA/CourseGround"
         _Splat1 ("Weights 4-7", 2D) = "black" {}
         _Layers ("Surfaces", 2DArray) = "" {}
         _Macro ("Large variation", 2D) = "gray" {}
+        _GroundNormal ("Ground shape (world normal x, z, y)", 2D) = "bump" {}
         _TileA ("Tiles per metre 0-3", Vector) = (0.5, 0.45, 0.6, 0.5)
         _TileB ("Tiles per metre 4-7", Vector) = (0.35, 0.4, 0.5, 0.25)
         _StripeDir ("Mowing stripe direction (x, z)", Vector) = (0, 1, 0, 0)
@@ -30,6 +31,7 @@ Shader "Hidden/GolfSimZA/CourseGround"
         sampler2D _Splat0;
         sampler2D _Splat1;
         sampler2D _Macro;
+        sampler2D _GroundNormal;
         float4 _TileA;
         float4 _TileB;
         float4 _StripeDir;
@@ -39,6 +41,7 @@ Shader "Hidden/GolfSimZA/CourseGround"
         {
             float2 uv_Splat0;
             float3 worldPos;
+            float4 color : COLOR; // r = 1: the course ground (detailed shape), 0: the flat land around it
         };
 
         half3 Layer(float2 xz, float tile, float index)
@@ -58,6 +61,17 @@ Shader "Hidden/GolfSimZA/CourseGround"
             w0 /= total;
             w1 /= total;
             float2 xz = IN.worldPos.xz;
+
+            // Bunkers: a crisp sand edge (the weights are soft over about a metre), and the grass
+            // lip just outside the sand a little darker - the edge reads like a cut lip.
+            half sandRaw = w1.x;
+            half sand = smoothstep(0.28, 0.62, sandRaw);
+            half rest = 1 - sandRaw;
+            half keep = rest > 0.001 ? (1 - sand) / rest : 0;
+            w0 *= keep;
+            w1.yzw *= keep;
+            w1.x = sand;
+            half lip = saturate(sandRaw * 3.0) * (1 - sand);
 
             half3 col = 0;
             if (w0.x > 0.003) col += Layer(xz, _TileA.x, 0) * w0.x;
@@ -83,9 +97,16 @@ Shader "Hidden/GolfSimZA/CourseGround"
             half s = lerp(stripe, greenStripe, saturate(w0.z * 1.5));
             col *= 1 + (s - 0.5) * 0.11 * mown;
 
+            col *= 1 - 0.28 * lip;
+
             o.Albedo = col;
             o.Metallic = 0;
-            o.Smoothness = 0.08 + 0.10 * w0.z + 0.04 * w0.y;
+            o.Smoothness = 0.08 + 0.10 * w0.z + 0.04 * w0.y - 0.05 * w1.x;
+            // The ground's shape from the full-detail heights (the mesh is coarser): lips, faces of
+            // bunkers, green contours. The meshes' normal is straight up with tangent +x, so the
+            // world normal (x, y, z) is (x, z, y) in tangent space.
+            half3 n = tex2D(_GroundNormal, IN.uv_Splat0).xyz * 2 - 1;
+            o.Normal = normalize(lerp(half3(0, 0, 1), n, IN.color.r));
             o.Alpha = 1;
         }
         ENDCG

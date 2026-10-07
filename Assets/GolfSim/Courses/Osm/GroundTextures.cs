@@ -20,7 +20,7 @@ namespace GolfSimZA.Courses.Osm
             new Color32(78, 126, 40, 255),   // fairway
             new Color32(82, 140, 48, 255),   // green
             new Color32(80, 128, 42, 255),   // tee
-            new Color32(206, 186, 140, 255), // bunker sand
+            new Color32(218, 204, 170, 255), // bunker sand (bright cream, like the course planners' drawings)
             new Color32(112, 108, 98, 255),  // path
             new Color32(72, 116, 36, 255),   // fringe
             new Color32(112, 106, 60, 255),  // natural veld
@@ -31,12 +31,12 @@ namespace GolfSimZA.Courses.Osm
             new Color32(66, 110, 32, 255),
             new Color32(70, 126, 40, 255),
             new Color32(68, 112, 34, 255),
-            new Color32(186, 164, 120, 255),
+            new Color32(198, 180, 142, 255),
             new Color32(94, 90, 82, 255),
             new Color32(62, 102, 30, 255),
             new Color32(84, 94, 42, 255),
         };
-        private static readonly float[] Speckle = { 0.22f, 0.12f, 0.06f, 0.10f, 0.12f, 0.18f, 0.10f, 0.26f };
+        private static readonly float[] Speckle = { 0.22f, 0.12f, 0.06f, 0.10f, 0.11f, 0.18f, 0.10f, 0.26f };
         private static readonly float[] Blades = { 0.6f, 0.25f, 0.1f, 0.25f, 0f, 0f, 0.35f, 0.8f };
 
         public static Texture2DArray Layers
@@ -85,6 +85,9 @@ namespace GolfSimZA.Courses.Osm
                             float streak = Periodic(x, y * 4 % Size, 128, seed + 29);
                             c *= 1f + (streak - 0.5f) * 0.18f * Blades[layer];
                         }
+                        // Bunker sand: faint rake lines (a whole number of lines per tile so it repeats cleanly).
+                        if (layer == OsmSurface.Bunker)
+                            c *= 1f + 0.06f * Mathf.Sin((y + 3f * Mathf.Sin(x * 6.2832f * 2f / Size)) * 6.2832f * 48f / Size);
                         // Fine speckle (sand grains, gravel, individual grass tips).
                         float s = (float)random.NextDouble() - 0.5f;
                         c *= 1f + s * Speckle[layer] * 2f;

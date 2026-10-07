@@ -1712,9 +1712,20 @@ namespace GolfSimZA.UI
                 using (GuiMarkers.Get("RoundUI.CenterTop").Auto()) DrawCenterTop(margin);
                 float cardBottom;
                 using (GuiMarkers.Get("RoundUI.HoleCard").Auto()) cardBottom = DrawHoleCard(Screen.width - margin, margin);
-                float tilesBottom = settings.miniMapRight ? Screen.height - margin - MiniMapHeight - 8f : Screen.height - margin;
+                // The LIE panel above the mini map: full (with the description) when the data tiles
+                // still fit above it, otherwise a one-line bar.
+                bool liePanel = CurrentLie(out _) >= 0;
+                lieHeight = LiePanelHeight;
+                if (liePanel && settings.miniMapRight)
+                {
+                    float room = Screen.height - margin - MiniMapHeight - 8f - (cardBottom + 8f + ShotDataTiles.MinimumHeight);
+                    if (room < LiePanelHeight + 8f) lieHeight = LieBarHeight;
+                    if (room < LieBarHeight + 8f) lieHeight = 0f; // no room: the lie goes in the mini map's header
+                }
+                float tilesBottom = settings.miniMapRight ? Screen.height - margin - MiniMapHeight - 8f - (liePanel && lieHeight > 0f ? lieHeight + 8f : 0f) : Screen.height - margin;
                 using (GuiMarkers.Get("RoundUI.ShotDataTiles").Auto()) ShotDataTiles.Draw(Screen.width - margin, cardBottom + 8f, simulatorController != null ? simulatorController.LastShot : default(ShotData), tilesBottom);
                 using (GuiMarkers.Get("RoundUI.MiniMap").Auto()) DrawMiniMap();
+                using (GuiMarkers.Get("RoundUI.Lie").Auto()) DrawLiePanel();
                 bool clubBar = settings.clubSelectorMode == 0 || (settings.clubSelectorMode == 2 && !flying);
                 if (clubBar) using (GuiMarkers.Get("RoundUI.ClubBar").Auto()) ClubBar.Draw(margin, Screen.height - margin);
                 else ClubBar.Close();
@@ -1984,6 +1995,128 @@ namespace GolfSimZA.UI
             return points;
         }
 
+        // ---------------------------------------------------------------- lie (above the mini map)
+
+        private const float LiePanelHeight = 66f;
+        private const float LieBarHeight = 26f;
+        private float lieHeight = LiePanelHeight;
+
+        private enum Lie { TeeBox, Fairway, FirstCut, Rough, Fringe, Green, Bunker, CartPath }
+
+        private static readonly string[] LieNames = { "TEE BOX", "FAIRWAY", "FIRST CUT", "ROUGH", "FRINGE (APRON)", "GREEN", "BUNKER", "CART PATH" };
+
+        private static readonly string[] LieText =
+        {
+            "The flat, designated starting area where you hit the first shot of the hole.",
+            "Short, closely mown grass between the tee and the green - the best place to play from.",
+            "A narrow strip of intermediate-length grass between the fairway and the deep rough.",
+            "Longer, unmowed grass framing the fairway. Harder to play from: the thick grass grabs the club head.",
+            "The short collar around the green, cut a little higher than the green but lower than the fairway.",
+            "The smooth, ultra-short grass around the hole, made for predictable rolls when putting.",
+            "A sand-filled hazard built into the fairway or around the green to penalise poor shots.",
+            "A path for golf carts and walking."
+        };
+
+        private static readonly Color[] LieColours =
+        {
+            new Color(0.45f, 0.80f, 0.40f), new Color(0.35f, 0.78f, 0.35f), new Color(0.55f, 0.72f, 0.30f), new Color(0.62f, 0.62f, 0.25f),
+            new Color(0.40f, 0.85f, 0.50f), new Color(0.30f, 0.90f, 0.55f), new Color(0.93f, 0.84f, 0.60f), new Color(0.70f, 0.70f, 0.70f)
+        };
+
+        private Vector3 lieCachedAt = new Vector3(float.MaxValue, 0f, 0f);
+        private int lieCached = -1, lieLoggedPlayer = -1;
+
+        /// <summary>
+        /// What the active player's ball lies on (-1 = nothing to show: in the air, holed, no course).
+        /// Built courses use their surface map (first cut = rough within 1.5 m of the fairway);
+        /// imported courses the name of the ground piece under the ball.
+        /// </summary>
+        private int CurrentLie(out Vector3 at)
+        {
+            at = ball != null ? ball.position : Vector3.zero;
+            if (ball == null || roundComplete || !UsingCourse) return -1;
+            if (ballFlightSimulator != null && ballFlightSimulator.IsInFlight) return -1;
+            if (activePlayerIndex < 0 || activePlayerIndex >= playerHoled.Length || playerHoled[activePlayerIndex]) return -1;
+            if ((at - lieCachedAt).sqrMagnitude < 0.0004f) return lieCached;
+            lieCachedAt = at;
+            int found = (int)FindLie(at);
+            if (found != lieCached || lieLoggedPlayer != activePlayerIndex)
+                Debug.Log($"[GolfSimZA] Lie: {playerNames[activePlayerIndex]} - {LieNames[found]} (hole {holeIndex + 1}, shot {playerHoleStrokes[activePlayerIndex] + 1})");
+            lieLoggedPlayer = activePlayerIndex;
+            lieCached = found;
+            return lieCached;
+        }
+
+        private Lie FindLie(Vector3 p)
+        {
+            // Off the tee: the first shot of the hole is played from the tee box.
+            if (playerHoleStrokes[activePlayerIndex] == 0) return Lie.TeeBox;
+            if (CourseSurfaceMap.Active)
+            {
+                switch (CourseSurfaceMap.At(p))
+                {
+                    case CourseSurfaceMap.Tee: return Lie.TeeBox;
+                    case CourseSurfaceMap.Fairway: return Lie.Fairway;
+                    case CourseSurfaceMap.Green: return Lie.Green;
+                    case CourseSurfaceMap.Fringe: return Lie.Fringe;
+                    case CourseSurfaceMap.Bunker: return Lie.Bunker;
+                    case CourseSurfaceMap.Path: return Lie.CartPath;
+                    case CourseSurfaceMap.Rough:
+                    case CourseSurfaceMap.Native:
+                        for (int i = 0; i < 8; i++)
+                        {
+                            float a = i * Mathf.PI / 4f;
+                            if (CourseSurfaceMap.At(p + new Vector3(Mathf.Cos(a), 0f, Mathf.Sin(a)) * 1.5f) == CourseSurfaceMap.Fairway) return Lie.FirstCut;
+                        }
+                        return Lie.Rough;
+                }
+            }
+            if (ballFlightSimulator != null && ballFlightSimulator.IsOnGreen(p)) return Lie.Green;
+            // Imported courses: the name of the ground under the ball.
+            if (GroundProbe.TrySample(p, out _, out _) && GroundProbe.LastCollider != null)
+            {
+                string n = GroundProbe.LastCollider.name.ToLowerInvariant();
+                if (n.Contains("fringe") || n.Contains("collar") || n.Contains("apron")) return Lie.Fringe;
+                if (n.Contains("green")) return Lie.Green;
+                if (n.Contains("bunker") || n.Contains("sand") || n.Contains("trap")) return Lie.Bunker;
+                if (n.Contains("tee")) return Lie.TeeBox;
+                if (n.Contains("firstcut") || n.Contains("first cut") || n.Contains("first_cut") || n.Contains("semi") || n.Contains("intermediate")) return Lie.FirstCut;
+                if (n.Contains("fairway")) return Lie.Fairway;
+                if (n.Contains("path") || n.Contains("cart") || n.Contains("road")) return Lie.CartPath;
+            }
+            return Lie.Rough;
+        }
+
+        /// <summary>LIE panel above the mini map: the surface the ball lies on and what it means.</summary>
+        private void DrawLiePanel()
+        {
+            int lie = CurrentLie(out _);
+            if (lie < 0) return;
+            float margin = Mathf.Clamp(Screen.width * 0.015f, 10f, 24f);
+            float width = MiniMapWidth;
+            bool right = AppSettings.Current.miniMapRight;
+            float x = right ? Screen.width - width - margin : margin;
+            float mapTop = Screen.height - MiniMapHeight - margin - (right ? 0f : ClubBar.Height + 10f);
+            float h = right ? lieHeight : LiePanelHeight;
+            if (h <= 0f) return; // shown in the mini map's header instead
+            var r = new Rect(x, mapTop - h - 8f, width, h);
+            GUI.Box(r, GUIContent.none, darkPanel);
+            GUI.color = LieColours[lie];
+            GUI.DrawTexture(new Rect(r.x, r.y, 5f, r.height), whiteTexture);
+            GUI.color = Color.white;
+            if (h < LiePanelHeight)
+            {
+                // One-line bar (small screens): LIE  FAIRWAY
+                GUI.Label(new Rect(r.x + 12f, r.y, 30f, r.height), "LIE", new GUIStyle(mapStyle) { alignment = TextAnchor.MiddleLeft, fontSize = 9 });
+                GUI.Label(new Rect(r.x + 40f, r.y, width - 46f, r.height), LieNames[lie], new GUIStyle(titleStyle) { normal = { textColor = LieColours[lie] } });
+                return;
+            }
+            GUI.Label(new Rect(r.x + 12f, r.y + 4f, width - 18f, 14f), "LIE", new GUIStyle(mapStyle) { alignment = TextAnchor.MiddleLeft, fontSize = 9 });
+            GUI.Label(new Rect(r.x + 12f, r.y + 16f, width - 18f, 18f), LieNames[lie], new GUIStyle(titleStyle) { normal = { textColor = LieColours[lie] } });
+            GUI.Label(new Rect(r.x + 12f, r.y + 34f, width - 18f, r.height - 36f), LieText[lie],
+                new GUIStyle(smallStyle) { wordWrap = true, fontSize = 9, alignment = TextAnchor.UpperLeft });
+        }
+
         private void DrawMiniMap()
         {
             float margin = Mathf.Clamp(Screen.width * 0.015f, 10f, 24f);
@@ -1995,7 +2128,13 @@ namespace GolfSimZA.UI
             float y = Screen.height - height - margin - (right ? 0f : ClubBar.Height + 10f);
 
             GUI.Box(new Rect(x, y, width, height), GUIContent.none, darkPanel);
-            GUI.Label(new Rect(x + 10f, y + 6f, width - 20f, 18f), "HOLE " + (holeIndex + 1), titleStyle);
+            int lie = right && lieHeight <= 0f ? CurrentLie(out _) : -1;
+            if (lie >= 0)
+            {
+                GUI.Label(new Rect(x + 10f, y + 6f, width - 20f, 18f), "HOLE " + (holeIndex + 1), titleStyle);
+                GUI.Label(new Rect(x + 72f, y + 6f, width - 82f, 18f), LieNames[lie], new GUIStyle(mapStyle) { alignment = TextAnchor.MiddleLeft, fontSize = 10, normal = { textColor = LieColours[lie] } });
+            }
+            else GUI.Label(new Rect(x + 10f, y + 6f, width - 20f, 18f), "HOLE " + (holeIndex + 1), titleStyle);
             GUI.Label(new Rect(x + 10f, y + 6f, width - 20f, 18f), Units.DistanceText(DistanceToPin(activePlayerIndex)) + " TO PIN", new GUIStyle(mapStyle) { alignment = TextAnchor.MiddleRight, fontSize = 11 });
             DrawMiniMapGraphic(new Rect(x + 6f, y + 28f, width - 12f, height - 34f), false);
             if (!mapExpanded) GUI.Label(new Rect(x + 10f, y + height - 22f, width - 20f, 16f), "⤢ CLICK TO ENLARGE", new GUIStyle(mapStyle) { alignment = TextAnchor.MiddleRight, fontSize = 10 });

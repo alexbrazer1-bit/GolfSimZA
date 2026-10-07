@@ -47,7 +47,7 @@ namespace GolfSimZA.Courses.Osm
             progress?.Invoke("Reading the course...", 0.05f);
 
             // 1. Files and the splat maps (worker thread).
-            byte[] splat0 = null, splat1 = null;
+            byte[] splat0 = null, splat1 = null, groundNormals = null;
             float[,] normalized = null;
             float minH = 0f, maxH = 0f;
             Task load = Task.Run(() =>
@@ -56,6 +56,7 @@ namespace GolfSimZA.Courses.Osm
                 surface = OsmSurfaceGrid.Load(Path.Combine(folder, OsmCourseBuilder.SurfaceFile));
                 features = JsonUtility.FromJson<OsmCourseFeatures>(File.ReadAllText(Path.Combine(folder, OsmCourseBuilder.FeaturesFile)));
                 MakeSplats(surface, out splat0, out splat1);
+                groundNormals = MakeGroundNormals(heights);
                 minH = heights.MinHeight - 2f;
                 maxH = heights.MaxHeight + 2f;
                 int res = heights.Resolution;
@@ -95,6 +96,7 @@ namespace GolfSimZA.Courses.Osm
             // own meshes and surface material (Unity's terrain drawing needs terrain shaders).
             terrain.drawHeightmap = false;
             Material ground = GroundMaterial(splat0, splat1, surface.Cells, course);
+            ground.SetTexture("_GroundNormal", GroundNormalTexture(groundNormals, heights.Resolution));
             progress?.Invoke("Making the ground...", 0.45f);
             yield return null;
             int chunks = 0;
@@ -166,6 +168,8 @@ namespace GolfSimZA.Courses.Osm
                     var verts = new Vector3[(nx + 1) * (nz + 1)];
                     var normals = new Vector3[verts.Length];
                     var uvs = new Vector2[verts.Length];
+                    var tangents = new Vector4[verts.Length];
+                    var colours = new Color32[verts.Length];
                     for (int z = 0; z <= nz; z++)
                         for (int x = 0; x <= nx; x++)
                         {
@@ -173,9 +177,11 @@ namespace GolfSimZA.Courses.Osm
                             float h = heights.At(hx, hz);
                             int i = z * (nx + 1) + x;
                             verts[i] = new Vector3(heights.OriginX + hx * heights.Spacing, h, heights.OriginZ + hz * heights.Spacing);
-                            float dx = heights.At(hx + Step, hz) - heights.At(hx - Step, hz);
-                            float dz = heights.At(hx, hz + Step) - heights.At(hx, hz - Step);
-                            normals[i] = new Vector3(-dx, 2f * spacing, -dz).normalized;
+                            // Lighting uses the full-detail shape texture (_GroundNormal): the mesh
+                            // normal is straight up with tangent +x so that texture holds world normals.
+                            normals[i] = Vector3.up;
+                            tangents[i] = new Vector4(1f, 0f, 0f, -1f);
+                            colours[i] = new Color32(255, 255, 255, 255);
                             uvs[i] = new Vector2(hx / (float)(res - 1), hz / (float)(res - 1));
                         }
                     var tris = new int[nx * nz * 6];
@@ -191,6 +197,8 @@ namespace GolfSimZA.Courses.Osm
                     var mesh = new Mesh { name = "Ground" + cx + "_" + cz };
                     mesh.vertices = verts;
                     mesh.normals = normals;
+                    mesh.tangents = tangents;
+                    mesh.colors32 = colours;
                     mesh.uv = uvs;
                     mesh.triangles = tris;
                     mesh.RecalculateBounds();
@@ -242,7 +250,13 @@ namespace GolfSimZA.Courses.Osm
             mesh.SetVertices(verts);
             mesh.SetUVs(0, uvs);
             mesh.SetTriangles(tris, 0);
-            mesh.RecalculateNormals();
+            var up = new List<Vector3>();
+            var tangents = new List<Vector4>();
+            var flat = new List<Color32>();
+            for (int i = 0; i < verts.Count; i++) { up.Add(Vector3.up); tangents.Add(new Vector4(1f, 0f, 0f, -1f)); flat.Add(new Color32(0, 0, 0, 255)); }
+            mesh.SetNormals(up);
+            mesh.SetTangents(tangents);
+            mesh.SetColors(flat); // flat land: not the detailed ground shape
             mesh.RecalculateBounds();
             owned.Add(mesh);
             var go = new GameObject("GolfSimZA_Surroundings");
@@ -290,6 +304,48 @@ namespace GolfSimZA.Courses.Osm
             if (dir.sqrMagnitude < 0.01f) dir = Vector2.up;
             material.SetVector("_StripeDir", new Vector4(dir.normalized.x, dir.normalized.y, 0f, 0f));
             return material;
+        }
+
+        /// <summary>
+        /// The ground's shape at full detail (one normal per height point) as RGBA bytes: world
+        /// normal x, z, y mapped to 0..255 (the layout the ground shader expects). Worker thread.
+        /// </summary>
+        private static byte[] MakeGroundNormals(OsmHeightField h)
+        {
+            int res = h.Resolution;
+            float twoSpacing = 2f * h.Spacing;
+            var bytes = new byte[res * res * 4];
+            Parallel.For(0, res, z =>
+            {
+                for (int x = 0; x < res; x++)
+                {
+                    float dx = h.At(Math.Min(res - 1, x + 1), z) - h.At(Math.Max(0, x - 1), z);
+                    float dz = h.At(x, Math.Min(res - 1, z + 1)) - h.At(x, Math.Max(0, z - 1));
+                    Vector3 n = new Vector3(-dx, twoSpacing, -dz).normalized;
+                    int i = (z * res + x) * 4;
+                    bytes[i] = (byte)Mathf.Clamp(Mathf.RoundToInt((n.x * 0.5f + 0.5f) * 255f), 0, 255);
+                    bytes[i + 1] = (byte)Mathf.Clamp(Mathf.RoundToInt((n.z * 0.5f + 0.5f) * 255f), 0, 255);
+                    bytes[i + 2] = (byte)Mathf.Clamp(Mathf.RoundToInt((n.y * 0.5f + 0.5f) * 255f), 0, 255);
+                    bytes[i + 3] = 255;
+                }
+            });
+            return bytes;
+        }
+
+        private Texture2D GroundNormalTexture(byte[] rgba, int size)
+        {
+            var tex = new Texture2D(size, size, TextureFormat.RGBA32, true, true)
+            {
+                name = "GolfSimZA_GroundShape",
+                wrapMode = TextureWrapMode.Clamp,
+                filterMode = FilterMode.Trilinear,
+                anisoLevel = 4,
+                hideFlags = HideFlags.DontSave
+            };
+            tex.SetPixelData(rgba, 0);
+            tex.Apply(true, true);
+            owned.Add(tex);
+            return tex;
         }
 
         private Texture2D SplatTexture(byte[] rgba, int size, string name)

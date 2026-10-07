@@ -16,7 +16,7 @@ namespace GolfSimZA
         public static readonly string[] Names =
         {
             "RoundUI.GroundLabels", "RoundUI.DistanceBanner", "RoundUI.PlayerBanner", "RoundUI.CenterTop", "RoundUI.HoleCard",
-            "RoundUI.ShotDataTiles", "RoundUI.MiniMap", "RoundUI.ClubBar", "RoundUI.ShotCompletion", "RoundUI.BallReady",
+            "RoundUI.ShotDataTiles", "RoundUI.MiniMap", "RoundUI.Lie", "RoundUI.ClubBar", "RoundUI.ShotCompletion", "RoundUI.BallReady",
             "RoundUI.Banner", "RoundUI.ExpandedMap", "RoundUI.Scorecard", "GameMenu.OnGUI", "SimulatorHUD.OnGUI"
         };
 

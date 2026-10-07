@@ -25,14 +25,19 @@ namespace GolfSimZA.EditorTools
         private static void OsmBuildOnly() => OsmBuild("Glenvista", false);
 
         [MenuItem("GolfSimZA/Test/Auto-play 18 holes - newest OpenStreetMap course, 2 players")]
-        private static void PlayNewestOsm()
+        private static void PlayNewestOsm() => PlayNewestOsm(2);
+
+        [MenuItem("GolfSimZA/Test/Auto-play 18 holes - newest OpenStreetMap course, 1 player")]
+        private static void PlayNewestOsmSolo() => PlayNewestOsm(1);
+
+        private static void PlayNewestOsm(int players)
         {
             CourseLibrary.Reload();
             CourseDefinition newest = null;
             foreach (CourseDefinition c in CourseLibrary.All)
                 if (c.IsOpenStreetMap && (newest == null || string.CompareOrdinal(c.importedAtUtc, newest.importedAtUtc) > 0)) newest = c;
             if (newest == null) { Debug.LogError("[GolfSimZA] No OpenStreetMap course built yet."); return; }
-            Run(newest.name, "Stroke Play", 2, null);
+            Run(newest.name, "Stroke Play", players, null);
         }
 
         private static void OsmBuild(string courses, bool thenPlay)

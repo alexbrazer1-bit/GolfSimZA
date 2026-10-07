@@ -51,7 +51,7 @@ namespace GolfSimZA.Testing
         private float waitSince;
         private bool waitingForAuto;
         private int autoAdvances;
-        private bool guestTried, guestAdded, guestExistedBefore;
+        private bool guestTried, guestAdded, guestExistedBefore, soloRound;
         private int guestHole = -1, guestIndex = -1;
         private string savedPlayers;
         private int[] savedTeams;
@@ -146,6 +146,7 @@ namespace GolfSimZA.Testing
         {
             Application.logMessageReceived += OnLog;
             savedPlayers = CourseSession.PlayerNames;
+            soloRound = !string.IsNullOrEmpty(savedPlayers) && savedPlayers.Split('|').Length == 1;
             savedTeams = CourseSession.Teams;
             guestExistedBefore = GolfSimZA.Players.PlayerRoster.Current.Find(GuestName) != null;
             AppSettings s = AppSettings.Current;
@@ -348,7 +349,8 @@ namespace GolfSimZA.Testing
             }
 
             // ADD PLAYER mid round: a guest joins at the start of the round's third hole.
-            if (!guestTried && hole == Get<int>("holeIndex") && hole >= FirstHoleOfRound() + 2 && holeStartsNow())
+            // (Not in a one-player test round: that stays one player.)
+            if (!guestTried && !soloRound && hole == Get<int>("holeIndex") && hole >= FirstHoleOfRound() + 2 && holeStartsNow())
                 AddGuest(hole);
 
             bool[] holed = Get<bool[]>("playerHoled");
