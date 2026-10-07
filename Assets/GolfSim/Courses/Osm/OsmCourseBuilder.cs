@@ -827,14 +827,93 @@ namespace GolfSimZA.Courses.Osm
             float level = LakeLevel(h, w);
             w.value = level;
             float shore = level + 0.3f;
-            ForPoints(h, w.pts, BankReach, (x, z, p) =>
-            {
-                float sd = Poly2D.SignedDistance(w.pts, p);
-                if (sd <= 0f || sd > BankReach) return;
-                float limit = shore + BankSlope * Mathf.Min(sd, BankNear) + BankSlopeFar * Mathf.Max(0f, sd - BankNear);
-                int i = z * h.Resolution + x;
-                if (h.Heights[i] > limit) h.Heights[i] = limit;
-            });
+            EdgeDistance edge = DistanceToEdge(h, w.pts, BankReach);
+            if (edge == null) return;
+            for (int z = edge.Z0; z < edge.Z0 + edge.H; z++)
+                for (int x = edge.X0; x < edge.X0 + edge.W; x++)
+                {
+                    float sd = edge.At(x, z);
+                    if (sd <= 0f || sd > BankReach) continue;
+                    float limit = shore + BankSlope * Mathf.Min(sd, BankNear) + BankSlopeFar * Mathf.Max(0f, sd - BankNear);
+                    int i = z * h.Resolution + x;
+                    if (h.Heights[i] > limit) h.Heights[i] = limit;
+                }
+        }
+
+        /// <summary>Signed distance (m) of the height points near a shape to its edge: positive outside, negative inside.</summary>
+        private sealed class EdgeDistance
+        {
+            public int X0, Z0, W, H;
+            public float[] D;
+            public float At(int x, int z) => D[(z - Z0) * W + (x - X0)];
+        }
+
+        /// <summary>
+        /// Distance to a shape's edge for every height point within reach of it, from a rasterised mask
+        /// and a two-pass chamfer distance transform. The time depends on the area covered, not on the
+        /// length of the outline (a mapped river can have thousands of points). Null when the shape
+        /// does not reach the ground grid.
+        /// </summary>
+        private static EdgeDistance DistanceToEdge(OsmHeightField h, Vector2[] poly, float reach)
+        {
+            if (poly.Length < 3) return null;
+            Poly2D.Bounds(poly, out Vector2 min, out Vector2 max);
+            float sp = h.Spacing;
+            int res = h.Resolution;
+            int x0 = Mathf.Max(0, Mathf.FloorToInt((min.x - reach - h.OriginX) / sp));
+            int x1 = Mathf.Min(res - 1, Mathf.CeilToInt((max.x + reach - h.OriginX) / sp));
+            int z0 = Mathf.Max(0, Mathf.FloorToInt((min.y - reach - h.OriginZ) / sp));
+            int z1 = Mathf.Min(res - 1, Mathf.CeilToInt((max.y + reach - h.OriginZ) / sp));
+            if (x1 < x0 || z1 < z0) return null;
+            int w = x1 - x0 + 1, ht = z1 - z0 + 1;
+            var inside = new bool[w * ht];
+            // Cells centred on the height points.
+            Poly2D.Rasterize(poly, new Vector2(h.OriginX + (x0 - 0.5f) * sp, h.OriginZ + (z0 - 0.5f) * sp), sp, w, ht, (gx, gz) => inside[gz * w + gx] = true);
+            float[] toInside = Chamfer(inside, w, ht, true);
+            float[] toOutside = Chamfer(inside, w, ht, false);
+            var d = new float[w * ht];
+            for (int i = 0; i < d.Length; i++)
+                d[i] = inside[i] ? -(toOutside[i] - 0.5f) * sp : (toInside[i] - 0.5f) * sp;
+            return new EdgeDistance { X0 = x0, Z0 = z0, W = w, H = ht, D = d };
+        }
+
+        /// <summary>Distance in cells from every cell to the nearest cell whose mask equals target (8 neighbours, 1 / 1.414).</summary>
+        private static float[] Chamfer(bool[] mask, int w, int ht, bool target)
+        {
+            const float Far = 1e7f, Diagonal = 1.41421356f;
+            var d = new float[w * ht];
+            for (int i = 0; i < d.Length; i++) d[i] = mask[i] == target ? 0f : Far;
+            for (int z = 0; z < ht; z++)
+                for (int x = 0; x < w; x++)
+                {
+                    int i = z * w + x;
+                    float v = d[i];
+                    if (v == 0f) continue;
+                    if (x > 0) v = Mathf.Min(v, d[i - 1] + 1f);
+                    if (z > 0)
+                    {
+                        v = Mathf.Min(v, d[i - w] + 1f);
+                        if (x > 0) v = Mathf.Min(v, d[i - w - 1] + Diagonal);
+                        if (x < w - 1) v = Mathf.Min(v, d[i - w + 1] + Diagonal);
+                    }
+                    d[i] = v;
+                }
+            for (int z = ht - 1; z >= 0; z--)
+                for (int x = w - 1; x >= 0; x--)
+                {
+                    int i = z * w + x;
+                    float v = d[i];
+                    if (v == 0f) continue;
+                    if (x < w - 1) v = Mathf.Min(v, d[i + 1] + 1f);
+                    if (z < ht - 1)
+                    {
+                        v = Mathf.Min(v, d[i + w] + 1f);
+                        if (x < w - 1) v = Mathf.Min(v, d[i + w + 1] + Diagonal);
+                        if (x > 0) v = Mathf.Min(v, d[i + w - 1] + Diagonal);
+                    }
+                    d[i] = v;
+                }
+            return d;
         }
 
         /// <summary>Lowers the ground under a lake / stream (level from ShapeWaterBanks, in w.value).</summary>
@@ -843,14 +922,17 @@ namespace GolfSimZA.Courses.Osm
             if (!IsLake(w)) return false;
             bool stream = w.tag == "stream";
             float level = stream ? 0f : w.value;
-            ForPoints(h, w.pts, 0f, (x, z, p) =>
-            {
-                float sd = Poly2D.SignedDistance(w.pts, p);
-                if (sd > 0f) return;
-                int i = z * h.Resolution + x;
-                float bed = (stream ? h.Heights[i] - 0.9f : level) - 0.3f - 1.4f * Smooth(0f, 6f, -sd);
-                if (h.Heights[i] > bed) h.Heights[i] = bed;
-            });
+            EdgeDistance edge = DistanceToEdge(h, w.pts, 1f);
+            if (edge == null) return true;
+            for (int z = edge.Z0; z < edge.Z0 + edge.H; z++)
+                for (int x = edge.X0; x < edge.X0 + edge.W; x++)
+                {
+                    float sd = edge.At(x, z);
+                    if (sd > 0f) continue;
+                    int i = z * h.Resolution + x;
+                    float bed = (stream ? h.Heights[i] - 0.9f : level) - 0.3f - 1.4f * Smooth(0f, 6f, -sd);
+                    if (h.Heights[i] > bed) h.Heights[i] = bed;
+                }
             return true;
         }
 

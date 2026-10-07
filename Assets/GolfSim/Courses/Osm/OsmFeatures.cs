@@ -141,7 +141,12 @@ namespace GolfSimZA.Courses.Osm
                 else if (golf == "rough") target = f.roughs;
                 else if (golf == "driving_range") { target = f.fairways; kind = "range"; }
                 else if (golf == "water_hazard" || golf == "lateral_water_hazard") { target = f.water; kind = golf == "lateral_water_hazard" ? "lateral" : "hazard"; }
-                else if (e.Is("natural", "water") || e.Has("water") || e.Is("landuse", "reservoir") || e.Is("landuse", "basin") || e.Is("waterway", "riverbank")) { target = f.water; kind = "water"; }
+                else if (e.Is("natural", "water") || e.Has("water") || e.Is("landuse", "reservoir") || e.Is("landuse", "basin") || e.Is("waterway", "riverbank"))
+                {
+                    target = f.water;
+                    // A river / canal area runs downhill: shaped like a stream (follows the ground), not as a flat lake.
+                    kind = e.Is("water", "river") || e.Is("water", "canal") || e.Is("water", "stream") || e.Is("waterway", "riverbank") ? "stream" : "water";
+                }
                 else if (e.Is("natural", "wood") || e.Is("landuse", "forest")) target = f.woods;
                 else if (e.Is("natural", "scrub") || e.Is("natural", "heath")) target = f.scrub;
                 else if (e.Has("building")) { target = f.buildings; }
