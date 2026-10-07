@@ -265,6 +265,16 @@ namespace GolfSimZA.Visual
             groundColour = new Color(0f, 0f, 0f, 0f);
             heightScale = 1f;
             Collider col = hit.collider;
+            if (GolfSimZA.Physics.CourseSurfaceMap.IsGroundCollider(col))
+            {
+                // Built (OpenStreetMap) course: grass only in the rough and the natural ground around it.
+                Count("built course ground");
+                int id = GolfSimZA.Physics.CourseSurfaceMap.At(hit.point);
+                if (id != GolfSimZA.Physics.CourseSurfaceMap.Rough && id != GolfSimZA.Physics.CourseSurfaceMap.Native) return false;
+                groundColour = id == GolfSimZA.Physics.CourseSurfaceMap.Native ? new Color(0.46f, 0.47f, 0.27f, 1f) : new Color(0.29f, 0.42f, 0.17f, 1f);
+                heightScale = id == GolfSimZA.Physics.CourseSurfaceMap.Native ? 1.35f : 1f;
+                return true;
+            }
             if (col is TerrainCollider tc)
             {
                 Count("terrain:" + col.name);

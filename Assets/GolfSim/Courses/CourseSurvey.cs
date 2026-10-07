@@ -251,6 +251,12 @@ namespace GolfSimZA.Courses
             foreach (CourseDefinition course in courses)
             {
                 Current = course.name;
+                if (course.IsOpenStreetMap)
+                {
+                    report.AppendLine(course.name + ":  built from OpenStreetMap (GolfSimZA ground, no course file to check)");
+                    Done++;
+                    continue;
+                }
                 if (!CourseLibrary.IsAvailable(course))
                 {
                     report.AppendLine(course.name + ":  FILE MISSING (" + course.bundleFile + ")");

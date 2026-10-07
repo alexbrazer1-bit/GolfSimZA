@@ -72,7 +72,19 @@ namespace GolfSimZA.Courses
 
         public static bool IsAvailable(CourseDefinition course)
         {
-            return course != null && !string.IsNullOrEmpty(course.bundleFile) && File.Exists(course.bundleFile);
+            if (course == null) return false;
+            if (course.IsOpenStreetMap)
+            {
+                string data = Path.Combine(RootFolder, string.IsNullOrEmpty(course.sourceFolder) ? SafeId(course.id) : course.sourceFolder);
+                return File.Exists(Path.Combine(data, "heights.bin")) && File.Exists(Path.Combine(data, "surface.bin")) && File.Exists(Path.Combine(data, "features.json"));
+            }
+            return !string.IsNullOrEmpty(course.bundleFile) && File.Exists(course.bundleFile);
+        }
+
+        /// <summary>Folder with an OpenStreetMap course's ground files.</summary>
+        public static string DataFolderFor(CourseDefinition course)
+        {
+            return Path.Combine(RootFolder, string.IsNullOrEmpty(course.sourceFolder) ? SafeId(course.id) : course.sourceFolder);
         }
 
         public static void Save(CourseDefinition course)

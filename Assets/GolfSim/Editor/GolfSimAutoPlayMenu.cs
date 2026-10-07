@@ -16,6 +16,36 @@ namespace GolfSimZA.EditorTools
     internal static class GolfSimAutoPlayMenu
     {
         private const string QueueKey = "GolfSimZA.AutoPlayQueue";
+        private const string OsmThenPlayKey = "GolfSimZA.OsmThenPlay";
+
+        [MenuItem("GolfSimZA/Test/OpenStreetMap - build Glenvista + Royal Oak, then play Glenvista")]
+        private static void OsmBuildAndPlay() => OsmBuild("Glenvista;Royal Oak", true);
+
+        [MenuItem("GolfSimZA/Test/OpenStreetMap - build Glenvista only (no round)")]
+        private static void OsmBuildOnly() => OsmBuild("Glenvista", false);
+
+        [MenuItem("GolfSimZA/Test/Auto-play 18 holes - newest OpenStreetMap course, 2 players")]
+        private static void PlayNewestOsm()
+        {
+            CourseLibrary.Reload();
+            CourseDefinition newest = null;
+            foreach (CourseDefinition c in CourseLibrary.All)
+                if (c.IsOpenStreetMap && (newest == null || string.CompareOrdinal(c.importedAtUtc, newest.importedAtUtc) > 0)) newest = c;
+            if (newest == null) { Debug.LogError("[GolfSimZA] No OpenStreetMap course built yet."); return; }
+            Run(newest.name, "Stroke Play", 2, null);
+        }
+
+        private static void OsmBuild(string courses, bool thenPlay)
+        {
+            if (EditorApplication.isPlaying) { Debug.LogWarning("[GolfSimZA] Stop Play mode first."); return; }
+            if (!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo()) return;
+            PlayerPrefs.SetString(GolfSimZA.Testing.OsmBuildTester.QueueKey, courses);
+            PlayerPrefs.DeleteKey(GolfSimZA.Testing.OsmBuildTester.ResultKey);
+            PlayerPrefs.Save();
+            EditorPrefs.SetInt(OsmThenPlayKey, thenPlay ? 1 : 0);
+            EditorSceneManager.OpenScene(GolfSimZA.Editor.GolfSimBuildScenes.CourseSelection);
+            EditorApplication.isPlaying = true;
+        }
 
         static GolfSimAutoPlayMenu()
         {
@@ -23,6 +53,14 @@ namespace GolfSimZA.EditorTools
             EditorApplication.playModeStateChanged += state =>
             {
                 if (state != PlayModeStateChange.EnteredEditMode) return;
+                // OpenStreetMap build test finished: play a round on the course it built.
+                if (EditorPrefs.GetInt(OsmThenPlayKey, 0) == 1)
+                {
+                    EditorPrefs.SetInt(OsmThenPlayKey, 0);
+                    string built = PlayerPrefs.GetString(GolfSimZA.Testing.OsmBuildTester.ResultKey, "");
+                    if (!string.IsNullOrEmpty(built)) EditorApplication.delayCall += () => Run(built, "Stroke Play", 2, null);
+                    return;
+                }
                 string queue = EditorPrefs.GetString(QueueKey, "");
                 if (string.IsNullOrEmpty(queue)) return;
                 string[] items = queue.Split(';');

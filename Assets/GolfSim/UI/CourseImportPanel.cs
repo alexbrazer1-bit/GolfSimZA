@@ -17,6 +17,20 @@ namespace GolfSimZA.UI
         private string message = "";
         private bool messageIsError;
         private CourseDefinition confirmRemove;
+        private readonly OsmCoursePanel osmPanel = new OsmCoursePanel();
+        private int tab; // 0 = course files, 1 = OpenStreetMap
+        private int drawnTab;
+
+        /// <summary>The OpenStreetMap page (tests start builds through it).</summary>
+        public OsmCoursePanel OpenStreetMap => osmPanel;
+
+        /// <summary>Opens the screen on the OpenStreetMap page.</summary>
+        public void OpenOpenStreetMap()
+        {
+            Open();
+            tab = 1;
+            osmPanel.Open();
+        }
 
         public bool IsOpen { get; private set; }
 
@@ -44,6 +58,36 @@ namespace GolfSimZA.UI
             GUILayout.FlexibleSpace();
             if (GUILayout.Button("CLOSE", GolfSimTheme.Button, GUILayout.Width(120))) Close();
             GUILayout.EndHorizontal();
+
+            if (Event.current.type == EventType.Layout) drawnTab = tab;
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("COURSE FILES", drawnTab == 0 ? GolfSimTheme.AccentButton : GolfSimTheme.SmallButton, GUILayout.Width(200))) tab = 0;
+            if (GUILayout.Button("OPENSTREETMAP  •  SOUTH AFRICA", drawnTab == 1 ? GolfSimTheme.AccentButton : GolfSimTheme.SmallButton, GUILayout.Width(300)))
+            {
+                tab = 1;
+                osmPanel.Open();
+            }
+            GUILayout.FlexibleSpace();
+            GUILayout.EndHorizontal();
+            GUILayout.Space(8);
+
+            if (drawnTab == 1)
+            {
+                GUILayout.BeginHorizontal();
+                GUILayout.BeginVertical(GUILayout.Width((area.width - 60f) * 0.58f));
+                osmPanel.Draw((area.width - 60f) * 0.58f);
+                GUILayout.EndVertical();
+                GUILayout.Space(16);
+                DrawLibrary();
+                GUILayout.EndHorizontal();
+                GUILayout.EndArea();
+                if (osmPanel.LibraryChanged && Event.current.type == EventType.Layout)
+                {
+                    osmPanel.LibraryChanged = false;
+                    CourseLibrary.Reload();
+                }
+                return;
+            }
 
             GUILayout.Label("Point GolfSimZA at a folder that holds course folders (each with a .unity3d course file and a .GKD hole file). " +
                             "Encrypted .gspcrse courses are listed but cannot be imported. Course files stay where they are - GolfSimZA only stores the hole data and a preview.",
@@ -95,7 +139,14 @@ namespace GolfSimZA.UI
             GUILayout.EndVertical();
 
             GUILayout.Space(16);
+            DrawLibrary();
 
+            GUILayout.EndHorizontal();
+            GUILayout.EndArea();
+        }
+
+        private void DrawLibrary()
+        {
             // ---- library
             GUILayout.BeginVertical();
             GUILayout.Label($"YOUR COURSES  ({CourseLibrary.All.Count})", GolfSimTheme.Label);
@@ -106,7 +157,9 @@ namespace GolfSimZA.UI
                 GUILayout.Label(course.name, GolfSimTheme.Heading);
                 GUILayout.Label($"{course.HoleCount} holes  •  par {course.TotalPar}  •  tees: {string.Join(", ", course.tees)}", GolfSimTheme.Subtitle);
                 bool available = CourseLibrary.IsAvailable(course);
-                GUILayout.Label(available ? "Ready to play" : "Course file missing: " + course.bundleFile, available ? GolfSimTheme.Good_ : GolfSimTheme.Warning_);
+                string ready = course.IsOpenStreetMap ? "Ready to play  •  built from OpenStreetMap" : "Ready to play";
+                string missing = course.IsOpenStreetMap ? "Ground files missing - build it again" : "Course file missing: " + course.bundleFile;
+                GUILayout.Label(available ? ready : missing, available ? GolfSimTheme.Good_ : GolfSimTheme.Warning_);
                 GUILayout.BeginHorizontal();
                 GUILayout.FlexibleSpace();
                 if (confirmRemove == course)
@@ -132,9 +185,6 @@ namespace GolfSimZA.UI
             }
             GUILayout.EndScrollView();
             GUILayout.EndVertical();
-
-            GUILayout.EndHorizontal();
-            GUILayout.EndArea();
         }
 
         private void StartScan()

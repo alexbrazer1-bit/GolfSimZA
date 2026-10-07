@@ -25,6 +25,12 @@ namespace GolfSimZA.Physics
 
         public static Kind At(Vector3 p)
         {
+            // Courses GolfSimZA builds itself (OpenStreetMap) carry their own surface map.
+            if (CourseSurfaceMap.Active)
+            {
+                int id = CourseSurfaceMap.At(p);
+                if (id != CourseSurfaceMap.Unknown) return id == CourseSurfaceMap.Green ? Kind.Green : Kind.NotGreen;
+            }
             int count = UnityEngine.Physics.RaycastNonAlloc(new Vector3(p.x, p.y + 30f, p.z), Vector3.down, Hits, 200f, ~(1 << GroundProbe.IgnoreRaycastLayer), QueryTriggerInteraction.Ignore);
             int best = -1;
             float bestDistance = float.MaxValue;
