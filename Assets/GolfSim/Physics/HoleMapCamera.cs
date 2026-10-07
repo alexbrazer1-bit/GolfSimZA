@@ -75,6 +75,39 @@ namespace GolfSimZA.Physics
             HasImage = true;
         }
 
+        /// <summary>
+        /// Frames the view from the ball (bottom) to the flag (top) - plus the aim point when it is
+        /// off that line - and renders it: the closer the ball is to the green, the closer the view.
+        /// minLength keeps a sensible size around the green when the ball is very close.
+        /// </summary>
+        public void RenderView(Vector3 ball, Vector3 pin, Vector3 aim, float minLength)
+        {
+            if (cam == null) return;
+            Vector3 axis = pin - ball;
+            axis.y = 0f;
+            if (axis.sqrMagnitude < 1f) axis = Vector3.forward;
+            axis.Normalize();
+            Vector3 side = new Vector3(axis.z, 0f, -axis.x);
+            float length = Mathf.Max(Vector3.Dot(pin - ball, axis), 1f);
+            float aimAlong = Vector3.Dot(aim - ball, axis), aimSide = Mathf.Abs(Vector3.Dot(aim - ball, side));
+            float minAlong = Mathf.Min(0f, aimAlong), maxAlong = Mathf.Max(length, aimAlong);
+            float span = Mathf.Max(minLength, (maxAlong - minAlong) * 1.25f + 20f);
+            float aspect = texture.width / (float)texture.height;
+            float halfHeight = Mathf.Max(span * 0.5f, (aimSide + 15f) / aspect);
+            // Ball near the bottom edge, flag towards the top.
+            float centreAlong = (minAlong + maxAlong) * 0.5f;
+            Vector3 centre = ball + axis * centreAlong;
+            cam.orthographicSize = halfHeight;
+            cam.transform.position = new Vector3(centre.x, Mathf.Max(ball.y, pin.y) + 800f, centre.z);
+            cam.transform.rotation = Quaternion.LookRotation(Vector3.down, axis);
+
+            bool fog = RenderSettings.fog;
+            RenderSettings.fog = false;
+            cam.Render();
+            RenderSettings.fog = fog;
+            HasImage = true;
+        }
+
         /// <summary>Position inside the map rect (GUI coordinates) → point on the ground, or false.</summary>
         public bool FromMap(Vector2 guiPoint, Rect area, out Vector3 world)
         {

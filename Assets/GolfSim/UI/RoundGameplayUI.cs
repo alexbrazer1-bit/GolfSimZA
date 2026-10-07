@@ -134,6 +134,7 @@ namespace GolfSimZA.UI
             puttGrid = gameObject.AddComponent<PuttGridRenderer>();
             markers = gameObject.AddComponent<CourseMarkers>();
             holeMap = gameObject.AddComponent<HoleMapCamera>();
+            zoomMap = gameObject.AddComponent<HoleMapCamera>(); // the corner map: ball to flag, zooms in near the green
             aimPointer = gameObject.AddComponent<AimPointer>();
             aimPointer.CanInteract = () => !GameMenuOverlay.IsOpen && ballFlightSimulator != null && !ballFlightSimulator.IsInFlight
                                            && !roundComplete && pendingSelection < 0 && !showScorecard
@@ -329,7 +330,10 @@ namespace GolfSimZA.UI
             float toTarget = d.magnitude;
             float carry = GolfSimZA.Core.ActiveClub.ExpectedCarry(GolfSimZA.Core.ActiveClub.Resolve());
             float distance = carry > 1f ? Mathf.Min(carry, toTarget) : toTarget;
-            if (HorizontalDistance(from, pinPosition) <= carry) distance = HorizontalDistance(from, pinPosition);
+            float toPin = HorizontalDistance(from, pinPosition);
+            // Reaches the flag, or within 200 m of it: the aim point goes on the green (the flag),
+            // whatever the club carries - never short of the green on the fairway.
+            if (toPin <= carry || toPin <= 200f) distance = toPin;
             Vector3 dir = d.sqrMagnitude > 0.01f ? d.normalized : Vector3.forward;
             aimPointer.Set(from, from + dir * Mathf.Max(1f, distance));
             aimMoved = false;
@@ -1382,6 +1386,8 @@ namespace GolfSimZA.UI
 
         private Vector3 AimTarget(Vector3 from)
         {
+            // Within 200 m of the flag: aim at the green, never at a fairway aim point.
+            if (HorizontalDistance(from, pinPosition) <= 200f) return pinPosition;
             if (UsingCourse)
             {
                 // Doglegs: aim at the next aim point that is still ahead of the ball (nearer the flag
@@ -1417,6 +1423,7 @@ namespace GolfSimZA.UI
         /// <summary>A new club moves the aim target to that club's distance (until the player moves it).</summary>
         private void LateUpdate()
         {
+            UpdateMiniMapView();
             if (aimPointer == null || ball == null || ballFlightSimulator == null || ballFlightSimulator.IsInFlight) return;
             string club = GolfSimZA.Core.ActiveClub.Resolve();
             if (club == lastClubForAim) return;
@@ -1982,6 +1989,11 @@ namespace GolfSimZA.UI
         private static float MiniMapWidth => Mathf.Clamp(Screen.width * 0.14f, 180f, 240f);
         private static float MiniMapHeight => MiniMapWidth * 1.5f + 36f;
         private HoleMapCamera holeMap;
+        private HoleMapCamera zoomMap;
+        private Vector3 zoomFramedAt = new Vector3(float.MaxValue, 0f, 0f);
+        private int zoomFramedHole = -1, zoomFramedPlayer = -1;
+        private readonly List<Vector3> shotTrail = new List<Vector3>();
+        private bool trailFlying;
 
         private List<Vector3> HolePoints()
         {
@@ -2136,7 +2148,7 @@ namespace GolfSimZA.UI
             }
             else GUI.Label(new Rect(x + 10f, y + 6f, width - 20f, 18f), "HOLE " + (holeIndex + 1), titleStyle);
             GUI.Label(new Rect(x + 10f, y + 6f, width - 20f, 18f), Units.DistanceText(DistanceToPin(activePlayerIndex)) + " TO PIN", new GUIStyle(mapStyle) { alignment = TextAnchor.MiddleRight, fontSize = 11 });
-            DrawMiniMapGraphic(new Rect(x + 6f, y + 28f, width - 12f, height - 34f), false);
+            DrawCornerMap(new Rect(x + 6f, y + 28f, width - 12f, height - 34f));
             if (!mapExpanded) GUI.Label(new Rect(x + 10f, y + height - 22f, width - 20f, 16f), "⤢ CLICK TO ENLARGE", new GUIStyle(mapStyle) { alignment = TextAnchor.MiddleRight, fontSize = 10 });
         }
 
@@ -2183,6 +2195,95 @@ namespace GolfSimZA.UI
                 GUI.color = Color.white;
                 GUI.Label(new Rect(legend.x + 184f, legend.y, 116f, legend.height), "PENALTY AREA", ls);
             }
+        }
+
+        /// <summary>
+        /// Corner map: the current shot's trail and re-framing of the ball-to-flag view (only when the
+        /// ball has come to rest somewhere new, the player changes or a new hole starts).
+        /// </summary>
+        private void UpdateMiniMapView()
+        {
+            if (ball == null || ballFlightSimulator == null) return;
+            bool flying = ballFlightSimulator.IsInFlight;
+            if (flying)
+            {
+                if (!trailFlying) { shotTrail.Clear(); shotTrail.Add(ball.position); }
+                if ((ball.position - shotTrail[shotTrail.Count - 1]).sqrMagnitude > 0.25f) shotTrail.Add(ball.position);
+                trailFlying = true;
+                return;
+            }
+            if (trailFlying) { shotTrail.Add(ball.position); trailFlying = false; }
+            if (zoomMap == null || !UsingCourse || roundComplete) return;
+            if (zoomFramedHole != holeIndex) shotTrail.Clear();
+            if (zoomFramedHole == holeIndex && zoomFramedPlayer == activePlayerIndex && (ball.position - zoomFramedAt).sqrMagnitude < 1f) return;
+            zoomFramedAt = ball.position;
+            zoomFramedHole = holeIndex;
+            zoomFramedPlayer = activePlayerIndex;
+            // The view from the ball to the flag (at least 90 m long: near the green it shows the green and its surrounds).
+            zoomMap.RenderView(ball.position, pinPosition, AimTarget(ball.position), 90f);
+        }
+
+        /// <summary>
+        /// The corner map, kept simple: the ball, ONE aim line, the shot being played, the flag and
+        /// one distance box. Zoomed from the ball to the flag. A click enlarges it (the full hole).
+        /// </summary>
+        private void DrawCornerMap(Rect area)
+        {
+            if (zoomMap == null || !zoomMap.HasImage) { DrawMiniMapGraphic(area, false); return; }
+            GUI.DrawTexture(area, zoomMap.Texture, ScaleMode.StretchToFill);
+            Event e = Event.current;
+            if (!mapExpanded && e.type == EventType.MouseDown && e.button == 0 && area.Contains(e.mousePosition) && !GameMenuOverlay.IsOpen && !showScorecard)
+            {
+                mapExpanded = true;
+                e.Use();
+            }
+            if (e.type != EventType.Repaint) return;
+            Rect clip = new Rect(0f, 0f, area.width, area.height);
+            Vector2 offset = new Vector2(area.x, area.y);
+            Vector2 M(Vector3 w) => zoomMap.ToMap(w, area) - offset;
+            GUI.BeginClip(area);
+
+            // The shot being played (its flight so far, or the last shot until the next one).
+            for (int i = 1; i < shotTrail.Count; i++)
+                GolfSimZA.Visual.CourseBoundaryLines.Line(M(shotTrail[i - 1]), M(shotTrail[i]), 2f, new Color(1f, 1f, 1f, 0.95f), clip);
+
+            bool flying = ballFlightSimulator != null && ballFlightSimulator.IsInFlight;
+            Vector2 at = ball != null ? M(ball.position) : Vector2.zero;
+            if (!flying && ball != null)
+            {
+                // ONE aim line from the ball to the aim point.
+                Vector3 aimWorld = aimPointer != null && aimPointer.Visible ? aimPointer.Point : AimTarget(ball.position);
+                Vector2 aim = M(aimWorld);
+                GolfSimZA.Visual.CourseBoundaryLines.Line(at, aim, 2f, GolfSimTheme.Gold, clip);
+                GUI.color = GolfSimTheme.Gold;
+                GUI.DrawTexture(new Rect(aim.x - 4f, aim.y - 4f, 8f, 8f), whiteTexture);
+                GUI.color = Color.white;
+
+                // ONE distance box, at the aim point.
+                string text = Units.DistanceText(HorizontalDistance(ball.position, aimWorld));
+                var style = new GUIStyle(mapStyle) { fontSize = 11, normal = { textColor = GolfSimTheme.Gold } };
+                Vector2 size = style.CalcSize(new GUIContent(text));
+                Rect box = new Rect(aim.x - size.x * 0.5f - 6f, aim.y - size.y - 14f, size.x + 12f, size.y + 4f);
+                box.x = Mathf.Clamp(box.x, 2f, area.width - box.width - 2f);
+                box.y = Mathf.Clamp(box.y, 2f, area.height - box.height - 2f);
+                GUI.Box(box, GUIContent.none, darkPanel);
+                GUI.Label(box, text, style);
+            }
+
+            // Flag.
+            Vector2 pinMap = M(pinPosition);
+            GUI.DrawTexture(new Rect(pinMap.x - 1f, pinMap.y - 12f, 2f, 12f), whiteTexture);
+            GUI.DrawTexture(new Rect(pinMap.x + 1f, pinMap.y - 12f, 7f, 5f), redTexture);
+
+            // The ball (the active player's colour).
+            if (ball != null && activePlayerIndex >= 0 && activePlayerIndex < playerHoled.Length && !playerHoled[activePlayerIndex])
+            {
+                GUI.DrawTexture(new Rect(at.x - 6f, at.y - 6f, 12f, 12f), darkerTexture);
+                GUI.color = PlayerColor(activePlayerIndex);
+                GUI.DrawTexture(new Rect(at.x - 5f, at.y - 5f, 10f, 10f), whiteTexture);
+                GUI.color = Color.white;
+            }
+            GUI.EndClip();
         }
 
         /// <summary>Top-down picture of the hole (tee bottom, pin top) with the route, pin and every player's ball.</summary>

@@ -120,6 +120,20 @@ namespace GolfSimZA.Testing
             yield return new WaitForSecondsRealtime(1.5f);
             if (round != null) typeof(RoundGameplayUI).GetField("mapExpanded", F).SetValue(round, false);
         }
+        private int cornerPictureShot = -1;
+
+        private System.Collections.IEnumerator CornerPicture(int hole, int shot)
+        {
+            yield return new WaitForEndOfFrame();
+            int w = Mathf.RoundToInt(Screen.width * 0.3f), h = Mathf.RoundToInt(Screen.height * 0.62f);
+            var tex = new Texture2D(w, h, TextureFormat.RGB24, false);
+            tex.ReadPixels(new Rect(Screen.width - w, 0, w, h), 0, 0);
+            tex.Apply();
+            string dir = Path.Combine(Directory.GetParent(Application.dataPath).FullName, "Logs", "corner-maps");
+            Directory.CreateDirectory(dir);
+            File.WriteAllBytes(Path.Combine(dir, "h" + hole.ToString("00") + "-s" + shot + ".png"), tex.EncodeToPNG());
+            Destroy(tex);
+        }
         private float stateSince;
         private string lastState = "";
         private float holeStartTime;
@@ -298,6 +312,15 @@ namespace GolfSimZA.Testing
                 typeof(RoundGameplayUI).GetField("mapExpanded", F).SetValue(round, true);
                 StartCoroutine(MapPicture());
                 nextActionAt = Time.unscaledTime + 3f;
+                return;
+            }
+
+            // Before every shot: a picture of the corner map as the player sees it (Logs/corner-maps).
+            if (!flying && cornerPictureShot != totalShots && Time.unscaledTime >= nextActionAt && !(Get<bool>("wasInFlight") || Get<bool>("awaitingFinish") || flyover))
+            {
+                cornerPictureShot = totalShots;
+                StartCoroutine(CornerPicture(hole + 1, shotsThisHole + 1));
+                nextActionAt = Time.unscaledTime + 0.5f;
                 return;
             }
 
