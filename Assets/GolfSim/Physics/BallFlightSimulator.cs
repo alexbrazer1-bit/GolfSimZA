@@ -766,8 +766,66 @@ namespace GolfSimZA.Physics
             return delta.magnitude / Mathf.Max(0.0001f, metersToUnity);
         }
 
+        /// <summary>Steepest ground a ball can stay on (surface normal y; 0.7 is about 45 degrees).</summary>
+        private const float SteepestRestNormalY = 0.7f;
+        /// <summary>Flattest-enough ground to put a ball that slid off a steep face (about 30 degrees).</summary>
+        private const float PlayableNormalY = 0.86f;
+
+        /// <summary>
+        /// A ball cannot come to rest on a face steeper than about 45 degrees (the foot of a wall, a
+        /// cliff, a steep bank wedged against an object): in real life it slides or drops off it.
+        /// It is moved to the nearest playable ground, preferring lower ground (where it would fall).
+        /// </summary>
+        private void SettleOffSteepGround()
+        {
+            if (!GroundProbe.TrySample(ball.position, out _, out Vector3 restNormal) || restNormal.y >= SteepestRestNormalY)
+                return;
+            Vector3 start = ball.position;
+            float unit = Mathf.Max(0.0001f, metersToUnity);
+            bool found = false;
+            Vector3 best = start;
+            float bestScore = float.MaxValue;
+            for (float r = 0.5f; r <= 10f && !found; r += 0.5f)
+            {
+                int steps = Mathf.Clamp(Mathf.RoundToInt(r * 8f), 12, 48);
+                for (int k = 0; k < steps; k++)
+                {
+                    float a = k * (Mathf.PI * 2f / steps);
+                    Vector3 probe = start + new Vector3(Mathf.Sin(a), 0f, Mathf.Cos(a)) * (r * unit);
+                    probe.y = start.y + 30f * unit;
+                    if (!GroundProbe.TrySample(probe, out float h, out Vector3 n) || n.y < PlayableNormalY || GroundProbe.LastWasWater)
+                        continue;
+                    if (!(GroundProbe.LastCollider is TerrainCollider) && GroundProbe.LastCollider != null && IsSolidObjectTop(GroundProbe.LastCollider))
+                        continue;
+                    // Nearest first; among equally near spots, the lower one (downhill, where it would drop).
+                    float score = r + Mathf.Max(0f, h - start.y) / unit * 0.5f;
+                    if (score < bestScore)
+                    {
+                        bestScore = score;
+                        best = new Vector3(probe.x, h + BallRadius, probe.z);
+                        found = true;
+                    }
+                }
+            }
+            if (!found)
+                return;
+            ball.position = best;
+            totalMeters = HorizontalDistance(ball.position, launchPosition);
+            Debug.Log($"[GolfSimZA] Ball could not stay on a steep face ({Mathf.Acos(Mathf.Clamp01(restNormal.y)) * Mathf.Rad2Deg:0} degrees) and dropped {HorizontalDistance(best, start):0.0} m to playable ground.");
+        }
+
+        /// <summary>The top of a building, rock or other standing object is not a place to play from.</summary>
+        private static bool IsSolidObjectTop(Collider c)
+        {
+            string n = c.name.ToLowerInvariant();
+            foreach (string w in GroundWords) if (n.Contains(w)) return false;
+            return IsSolid(c);
+        }
+
         private void CompleteShot()
         {
+            if (!WasHoled && !InWater && !puttMode)
+                SettleOffSteepGround();
             Vector3 fromLaunch = ball.position - launchPosition;
             fromLaunch.y = 0f;
             Vector3 right = Vector3.Cross(Vector3.up, AimDirection);

@@ -134,13 +134,18 @@ namespace GolfSimZA.UI
                             "mapped can be built. Map data © OpenStreetMap contributors (ODbL).", GolfSimTheme.Subtitle);
             GUILayout.Space(6);
 
+            // Search on its own row so the box keeps a usable width on narrow screens.
             GUILayout.BeginHorizontal();
             GUILayout.Label("SEARCH", GolfSimTheme.Label, GUILayout.Width(70));
-            search = GUILayout.TextField(search ?? "", GolfSimTheme.TextField);
+            search = GUILayout.TextField(search ?? "", GolfSimTheme.TextField, GUILayout.MinWidth(180f), GUILayout.ExpandWidth(true));
+            GUILayout.EndHorizontal();
+            GUILayout.Space(4);
+            GUILayout.BeginHorizontal();
             mappedOnly = GUILayout.Toggle(mappedOnly, mappedOnly ? "  HOLES MAPPED ONLY" : "  ALL COURSES", GolfSimTheme.SmallButton, GUILayout.Width(190));
             GUI.enabled = !IsBusy;
             if (GUILayout.Button("REFRESH LIST", GolfSimTheme.SmallButton, GUILayout.Width(140))) LoadList(true);
             GUI.enabled = true;
+            GUILayout.FlexibleSpace();
             GUILayout.EndHorizontal();
 
             if (!string.IsNullOrEmpty(vMessage))

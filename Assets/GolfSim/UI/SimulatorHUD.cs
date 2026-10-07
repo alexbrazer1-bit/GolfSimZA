@@ -41,6 +41,11 @@ namespace GolfSimZA.UI
 
         private void OnGUI()
         {
+            using (GuiMarkers.Get("SimulatorHUD.OnGUI").Auto()) DrawGui();
+        }
+
+        private void DrawGui()
+        {
             EnsureStyles();
 
             if (simulatorController == null)

@@ -78,6 +78,11 @@ namespace GolfSimZA.UI
 
         private void OnGUI()
         {
+            using (GuiMarkers.Get("GameMenu.OnGUI").Auto()) DrawGui();
+        }
+
+        private void DrawGui()
+        {
             if (!OnPlayScreen) return;
             Ensure();
             GUI.depth = -3000;

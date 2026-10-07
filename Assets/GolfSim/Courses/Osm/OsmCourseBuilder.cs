@@ -38,6 +38,14 @@ namespace GolfSimZA.Courses.Osm
         private const float Margin = 150f;          // ground built around the course boundary
         private const float GreenRampOut = 6f;
         private const float TeeRampOut = 3f;
+        /// <summary>Furthest a green / tee bank reaches out on a steep hillside.</summary>
+        private const float PlatformReach = 24f;
+        /// <summary>Rise per metre of the bank around a levelled green / tee (the smooth ramp peaks at 1.5x: about 28 degrees).</summary>
+        private const float PlatformBankSlope = 0.35f;
+
+        /// <summary>Width of the ramp from a levelled green / tee to the natural ground: wider where it has to climb or drop more.</summary>
+        private static float RampWidth(float minimum, float heightDifference) =>
+            Mathf.Clamp(Mathf.Abs(heightDifference) / PlatformBankSlope, minimum, PlatformReach);
 
         public static string BaseId(string osmType, long osmId) => "osm-" + (osmType == "relation" ? "r" : "w") + osmId;
 
@@ -293,6 +301,9 @@ namespace GolfSimZA.Courses.Osm
 
             // ---- ground shaping
             ShapeFairways(heights, surface);
+            // Lake levels and their banks first, so greens / tees / bunkers next to the water are
+            // fitted to the graded ground; the lake beds are carved last.
+            foreach (OsmShape w in f.water) ShapeWaterBanks(heights, w);
             foreach (OsmShape g in f.greens) ShapeGreen(heights, g);
             foreach (OsmShape t in f.tees) ShapeTee(heights, t);
             foreach (OsmShape b in f.bunkers) ShapeBunker(heights, b);
@@ -720,16 +731,18 @@ namespace GolfSimZA.Courses.Osm
             double slope = Math.Sqrt(a * a + b * b);
             if (slope > 0.025) { a *= 0.025 / slope; b *= 0.025 / slope; }
             float seed = c.x * 0.013f + c.y * 0.007f;
-            ForPoints(h, g.pts, GreenRampOut, (x, z, p) =>
+            ForPoints(h, g.pts, PlatformReach, (x, z, p) =>
             {
                 float sd = Poly2D.SignedDistance(g.pts, p);
-                if (sd > GreenRampOut) return;
+                if (sd > PlatformReach) return;
                 float target = (float)(mean + a * (p.x - c.x) + b * (p.y - c.y));
                 // Gentle breaks and a slight crown.
                 float inside = Mathf.Clamp01(-sd / 6f);
                 target += 0.16f * inside + 0.14f * (Noise(p.x / 13f + seed, p.y / 13f) - 0.5f) + 0.06f * (Noise(p.x / 5f, p.y / 5f + seed) - 0.5f);
-                float w = sd <= 0f ? 1f : 1f - Smooth(0f, GreenRampOut, sd);
                 int i = z * h.Resolution + x;
+                float ramp = RampWidth(GreenRampOut, target - h.Heights[i]);
+                if (sd > ramp) return;
+                float w = sd <= 0f ? 1f : 1f - Smooth(0f, ramp, sd);
                 h.Heights[i] = Mathf.Lerp(h.Heights[i], target, w);
             });
         }
@@ -747,12 +760,14 @@ namespace GolfSimZA.Courses.Osm
             });
             if (count == 0) { Vector2 c = Poly2D.Centroid(t.pts); sum = h.Sample(c); count = 1; }
             float level = (float)(sum / count) + 0.35f;
-            ForPoints(h, t.pts, TeeRampOut, (x, z, p) =>
+            ForPoints(h, t.pts, PlatformReach, (x, z, p) =>
             {
                 float sd = Poly2D.SignedDistance(t.pts, p);
-                if (sd > TeeRampOut) return;
-                float w = sd <= 0f ? 1f : 1f - Smooth(0f, TeeRampOut, sd);
+                if (sd > PlatformReach) return;
                 int i = z * h.Resolution + x;
+                float ramp = RampWidth(TeeRampOut, level - h.Heights[i]);
+                if (sd > ramp) return;
+                float w = sd <= 0f ? 1f : 1f - Smooth(0f, ramp, sd);
                 h.Heights[i] = Mathf.Lerp(h.Heights[i], level, w);
             });
         }
@@ -772,20 +787,62 @@ namespace GolfSimZA.Courses.Osm
                     h.Heights[i] += 0.08f * (1f - Smooth(0f, 0.5f, sd));
                     return;
                 }
-                h.Heights[i] -= depth * Smooth(0f, 2.2f, -sd);
+                h.Heights[i] -= depth * Smooth(0f, 3f, -sd);
             });
         }
 
-        /// <summary>Lowers the ground under a lake / stream; stores the water level in w.value.</summary>
-        private static bool ShapeWater(OsmHeightField h, OsmShape w)
+        private static bool IsLake(OsmShape w) => w.pts.Length >= 3 && Poly2D.Area(w.pts) >= 8f;
+
+        /// <summary>Water level of a lake: just under the lowest point of its shore.</summary>
+        private static float LakeLevel(OsmHeightField h, OsmShape w)
         {
-            if (w.pts.Length < 3 || Poly2D.Area(w.pts) < 8f) return false;
             float level = float.MaxValue;
             foreach (Vector2 p in w.pts) level = Mathf.Min(level, h.Sample(p));
-            // Long streams fall along their length: follow the ground but stay under the banks.
-            bool stream = w.tag == "stream";
-            level -= 0.35f;
+            return level - 0.35f;
+        }
+
+        /// <summary>Bank slope for the first BankNear metres from the water (rise per metre, about 17 degrees).</summary>
+        private const float BankSlope = 0.3f;
+        /// <summary>Steepest ground further out (about 31 degrees: a ball still stops on it).</summary>
+        private const float BankSlopeFar = 0.6f;
+        private const float BankNear = 10f;
+        private const float BankReach = 60f;
+
+        /// <summary>
+        /// The lake level comes from the LOWEST point of its shore, so on a hillside the uphill shore
+        /// stands metres above the water and the ground would drop to the water in one step (a wall
+        /// that traps a ball). Around a lake the ground may rise at most BankSlope for the first
+        /// BankNear metres and BankSlopeFar after that: ground above that limit is lowered onto it.
+        /// The limit is one continuous surface, so it never leaves a step of its own. Stores the
+        /// water level in w.value (streams: worked out when the scene is built).
+        /// </summary>
+        private static void ShapeWaterBanks(OsmHeightField h, OsmShape w)
+        {
+            if (!IsLake(w)) return;
+            if (w.tag == "stream")
+            {
+                w.value = StreamLevel;
+                return;
+            }
+            float level = LakeLevel(h, w);
             w.value = level;
+            float shore = level + 0.3f;
+            ForPoints(h, w.pts, BankReach, (x, z, p) =>
+            {
+                float sd = Poly2D.SignedDistance(w.pts, p);
+                if (sd <= 0f || sd > BankReach) return;
+                float limit = shore + BankSlope * Mathf.Min(sd, BankNear) + BankSlopeFar * Mathf.Max(0f, sd - BankNear);
+                int i = z * h.Resolution + x;
+                if (h.Heights[i] > limit) h.Heights[i] = limit;
+            });
+        }
+
+        /// <summary>Lowers the ground under a lake / stream (level from ShapeWaterBanks, in w.value).</summary>
+        private static bool ShapeWater(OsmHeightField h, OsmShape w)
+        {
+            if (!IsLake(w)) return false;
+            bool stream = w.tag == "stream";
+            float level = stream ? 0f : w.value;
             ForPoints(h, w.pts, 0f, (x, z, p) =>
             {
                 float sd = Poly2D.SignedDistance(w.pts, p);
@@ -794,7 +851,6 @@ namespace GolfSimZA.Courses.Osm
                 float bed = (stream ? h.Heights[i] - 0.9f : level) - 0.3f - 1.4f * Smooth(0f, 6f, -sd);
                 if (h.Heights[i] > bed) h.Heights[i] = bed;
             });
-            if (stream) w.value = StreamLevel; // the water surface follows the stream (worked out when the scene is built)
             return true;
         }
 

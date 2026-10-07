@@ -558,6 +558,7 @@ namespace GolfSimZA.UI
                 AddStrokes(activePlayerIndex, 1);
                 playerPositions[activePlayerIndex] = playerPreviousPositions[activePlayerIndex];
                 ShowBanner("OUT OF BOUNDS  •  +1 STROKE");
+                Debug.Log($"[GolfSimZA] Out of bounds: {playerNames[activePlayerIndex]} replays from the last spot (+1).");
                 return true;
             }
 
@@ -566,19 +567,101 @@ namespace GolfSimZA.UI
                 foreach (HazardDefinition hazard in course.hazards)
                 {
                     if (hazard.area == null || !hazard.area.Contains(rest)) continue;
+                    Vector3 previous = playerPreviousPositions[activePlayerIndex];
                     if (hazard.freeDrop)
                     {
-                        playerPositions[activePlayerIndex] = hazard.hasDropZone ? hazard.dropZone : playerPreviousPositions[activePlayerIndex];
+                        playerPositions[activePlayerIndex] = hazard.hasDropZone ? hazard.dropZone
+                            : TryBackOnTheLineDrop(hazard, previous, rest, out Vector3 freeSpot) ? freeSpot : previous;
                         ShowBanner("FREE DROP");
                         return true;
                     }
                     AddStrokes(activePlayerIndex, 1);
-                    playerPositions[activePlayerIndex] = hazard.hasDropZone && !hazard.innerOutOfBounds ? hazard.dropZone : playerPreviousPositions[activePlayerIndex];
-                    ShowBanner(hazard.innerOutOfBounds ? "OUT OF BOUNDS  •  +1 STROKE" : "PENALTY AREA  •  +1 STROKE");
+                    if (hazard.innerOutOfBounds)
+                    {
+                        playerPositions[activePlayerIndex] = previous;
+                        ShowBanner("OUT OF BOUNDS  •  +1 STROKE");
+                        Debug.Log($"[GolfSimZA] Out of bounds (inner): {playerNames[activePlayerIndex]} replays from the last spot (+1).");
+                    }
+                    else if (hazard.hasDropZone)
+                    {
+                        playerPositions[activePlayerIndex] = hazard.dropZone;
+                        ShowBanner("PENALTY AREA  •  +1 STROKE  •  DROP ZONE");
+                        Debug.Log($"[GolfSimZA] Penalty area: {playerNames[activePlayerIndex]} plays from the drop zone (+1).");
+                    }
+                    else if (TryBackOnTheLineDrop(hazard, previous, rest, out Vector3 drop)
+                             && HorizontalDistance(drop, pinPosition) < HorizontalDistance(previous, pinPosition))
+                    {
+                        // Penalty area relief: drop behind it on the line from the flag through the
+                        // point where the ball went in (better than replaying from the last spot).
+                        playerPositions[activePlayerIndex] = drop;
+                        ShowBanner("PENALTY AREA  •  +1 STROKE  •  DROP BEHIND IT");
+                        Debug.Log($"[GolfSimZA] Penalty area: {playerNames[activePlayerIndex]} drops behind it, {HorizontalDistance(drop, pinPosition):0} m from the flag.");
+                    }
+                    else
+                    {
+                        playerPositions[activePlayerIndex] = previous;
+                        ShowBanner("PENALTY AREA  •  +1 STROKE");
+                        Debug.Log($"[GolfSimZA] Penalty area: {playerNames[activePlayerIndex]} replays from the last spot (+1).");
+                    }
                     return true;
                 }
             }
             return false;
+        }
+
+        /// <summary>
+        /// Penalty area relief "back on the line": finds where the ball crossed into the area (on the
+        /// line from the previous spot to where it ended), then walks back away from the flag along the
+        /// line flag - entry point until the ground is dry, in bounds, outside every penalty area and
+        /// playable (not a steep bank, not on a building).
+        /// </summary>
+        private bool TryBackOnTheLineDrop(HazardDefinition hazard, Vector3 from, Vector3 rest, out Vector3 drop)
+        {
+            drop = from;
+            Vector3 path = rest - from;
+            path.y = 0f;
+            float pathLength = path.magnitude;
+            if (pathLength < 0.5f) return false;
+
+            // Entry point: the last spot on the way in that is still outside the area.
+            Vector3 entry = rest;
+            const float step = 0.5f;
+            for (float d = pathLength; d >= 0f; d -= step)
+            {
+                Vector3 q = from + path * (d / pathLength);
+                if (!hazard.area.Contains(q)) { entry = q; break; }
+                if (d - step < 0f) return false; // started inside it: nothing to measure from
+            }
+
+            Vector3 away = entry - pinPosition;
+            away.y = 0f;
+            if (away.sqrMagnitude < 0.01f) away = -path;
+            away.Normalize();
+            for (float back = 1f; back <= 120f; back += 1f)
+            {
+                Vector3 q = entry + away * back;
+                if (!IsPlayableDropSpot(q, out Vector3 spot)) continue;
+                // One more metre clear of the line so the ball does not sit on it.
+                if (IsPlayableDropSpot(q + away, out Vector3 safer)) spot = safer;
+                drop = spot;
+                return true;
+            }
+            return false;
+        }
+
+        private bool IsPlayableDropSpot(Vector3 q, out Vector3 spot)
+        {
+            spot = q;
+            if (course.outOfBounds != null && course.outOfBounds.IsValid && !course.outOfBounds.Contains(q)) return false;
+            if (course.hazards != null)
+                foreach (HazardDefinition h in course.hazards)
+                    if (h.area != null && h.area.Contains(q)) return false;
+            if (!GroundProbe.TrySample(new Vector3(q.x, q.y + 60f, q.z), out float height, out Vector3 normal)) return false;
+            if (GroundProbe.LastWasWater || normal.y < 0.86f) return false;
+            Collider c = GroundProbe.LastCollider;
+            if (c != null && !(c is TerrainCollider) && (c.name.StartsWith("Buildings_", StringComparison.Ordinal) || c.GetComponentInParent<LODGroup>() != null)) return false;
+            spot = new Vector3(q.x, height, q.z);
+            return true;
         }
 
         private void MarkHoled(int player, string message)
@@ -1299,12 +1382,20 @@ namespace GolfSimZA.UI
 
         private Vector3 AimTarget(Vector3 from)
         {
-            if (UsingCourse && playerHoleStrokes[activePlayerIndex] == 0)
+            if (UsingCourse)
             {
-                // From the tee, aim at the first aim point (doglegs) when there is one.
+                // Doglegs: aim at the next aim point that is still ahead of the ball (nearer the flag
+                // than the ball, and not right next to it) - from the tee, and also after a short
+                // shot, a drop or a replay that leaves the ball before the corner. Past the last
+                // aim point: the flag.
                 HoleDefinition hole = course.GetHole(holeIndex);
-                if (hole.aimPoints != null && hole.aimPoints.Length > 0)
-                    return hole.aimPoints[0];
+                if (hole != null && hole.aimPoints != null)
+                {
+                    float ballToPin = HorizontalDistance(from, pinPosition);
+                    foreach (Vector3 point in hole.aimPoints)
+                        if (HorizontalDistance(point, pinPosition) < ballToPin - 20f && HorizontalDistance(from, point) > 30f)
+                            return point;
+                }
             }
             return pinPosition;
         }
@@ -1615,24 +1706,25 @@ namespace GolfSimZA.UI
 
             if (!hideUi)
             {
-                DrawGroundLabels();
-                DrawDistanceBanner();
-                DrawPlayerBanner(margin + 132f, margin);
-                DrawCenterTop(margin);
-                float cardBottom = DrawHoleCard(Screen.width - margin, margin);
+                using (GuiMarkers.Get("RoundUI.GroundLabels").Auto()) DrawGroundLabels();
+                using (GuiMarkers.Get("RoundUI.DistanceBanner").Auto()) DrawDistanceBanner();
+                using (GuiMarkers.Get("RoundUI.PlayerBanner").Auto()) DrawPlayerBanner(margin + 132f, margin);
+                using (GuiMarkers.Get("RoundUI.CenterTop").Auto()) DrawCenterTop(margin);
+                float cardBottom;
+                using (GuiMarkers.Get("RoundUI.HoleCard").Auto()) cardBottom = DrawHoleCard(Screen.width - margin, margin);
                 float tilesBottom = settings.miniMapRight ? Screen.height - margin - MiniMapHeight - 8f : Screen.height - margin;
-                ShotDataTiles.Draw(Screen.width - margin, cardBottom + 8f, simulatorController != null ? simulatorController.LastShot : default(ShotData), tilesBottom);
-                DrawMiniMap();
+                using (GuiMarkers.Get("RoundUI.ShotDataTiles").Auto()) ShotDataTiles.Draw(Screen.width - margin, cardBottom + 8f, simulatorController != null ? simulatorController.LastShot : default(ShotData), tilesBottom);
+                using (GuiMarkers.Get("RoundUI.MiniMap").Auto()) DrawMiniMap();
                 bool clubBar = settings.clubSelectorMode == 0 || (settings.clubSelectorMode == 2 && !flying);
-                if (clubBar) ClubBar.Draw(margin, Screen.height - margin);
+                if (clubBar) using (GuiMarkers.Get("RoundUI.ClubBar").Auto()) ClubBar.Draw(margin, Screen.height - margin);
                 else ClubBar.Close();
-                DrawShotCompletionAction();
-                DrawBallReady();
+                using (GuiMarkers.Get("RoundUI.ShotCompletion").Auto()) DrawShotCompletionAction();
+                using (GuiMarkers.Get("RoundUI.BallReady").Auto()) DrawBallReady();
             }
-            DrawBanner();
-            if (mapExpanded && Event.current.type == EventType.Repaint) DrawExpandedHoleMap(margin);
+            using (GuiMarkers.Get("RoundUI.Banner").Auto()) DrawBanner();
+            if (mapExpanded && Event.current.type == EventType.Repaint) using (GuiMarkers.Get("RoundUI.ExpandedMap").Auto()) DrawExpandedHoleMap(margin);
             bool autoScorecard = scorecardUntil > 0f && Time.unscaledTime < scorecardUntil;
-            if (roundComplete || showScorecard || autoScorecard) DrawScorecard();
+            if (roundComplete || showScorecard || autoScorecard) using (GuiMarkers.Get("RoundUI.Scorecard").Auto()) DrawScorecard();
         }
 
         private void DrawLoading()

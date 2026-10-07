@@ -9,6 +9,9 @@ using GolfSimZA.Courses;
 using GolfSimZA.LaunchMonitors;
 using GolfSimZA.Physics;
 using GolfSimZA.UI;
+using Unity.Profiling;
+using Unity.Profiling.LowLevel;
+using Unity.Profiling.LowLevel.Unsafe;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 
@@ -159,11 +162,14 @@ namespace GolfSimZA.Testing
         private void OnDestroy()
         {
             Application.logMessageReceived -= OnLog;
+            foreach (CostRecorder c in costs) c.Recorder.Dispose();
+            costs.Clear();
             Time.timeScale = 1f;
         }
 
         private void OnLog(string message, string stack, LogType type)
         {
+            logLines++;
             if (type == LogType.Error || type == LogType.Exception || type == LogType.Assert)
             {
                 string line = type + ": " + message + (string.IsNullOrEmpty(stack) ? "" : "  @ " + stack.Split('\n')[0]);
@@ -227,6 +233,7 @@ namespace GolfSimZA.Testing
 
             frames++;
             frameTime += Time.unscaledDeltaTime;
+            SampleFrameCosts();
 
             if (Get<bool>("waitingForCourse")) return;
             string error = Get<string>("courseError");
@@ -242,6 +249,7 @@ namespace GolfSimZA.Testing
                 holeStartTime = Time.unscaledTime;
                 frames = 0;
                 frameTime = 0f;
+                ResetFrameCosts();
             }
 
             if (Get<bool>("roundComplete"))
@@ -384,6 +392,22 @@ namespace GolfSimZA.Testing
             float distance = d.magnitude;
             if (toPin < distance) { target = pin; distance = toPin; }
 
+            // Uphill / downhill: a real golfer plays a shot up a slope longer ("plays like" about
+            // 1 m per metre of rise; a short chip up a bank needs to carry onto the top, so more).
+            float rise = target.y - ball.position.y;
+            distance = Mathf.Max(1f, distance + rise * (rise > 0f && distance < 40f ? 2f : 1f));
+            // A shot that hardly moved the ball (stuck below a bank, in heavy rough): hit it harder.
+            // (Not after a penalty: a ball back on the same spot after water / out of bounds is a replay, not stuck.)
+            int strokesNow = Get<int[]>("playerHoleStrokes")[active];
+            bool samePlayerSameHole = lastHitHole == Get<int>("holeIndex") && lastHitPlayer == active;
+            if (samePlayerSameHole && strokesNow - lastHitStrokes == 1 && Flat(ball.position - lastHitFrom) < 3f) stuckHits++;
+            else stuckHits = 0;
+            if (stuckHits > 0) distance *= Mathf.Pow(1.5f, Mathf.Min(stuckHits, 4));
+            lastHitFrom = ball.position;
+            lastHitHole = Get<int>("holeIndex");
+            lastHitPlayer = active;
+            lastHitStrokes = strokesNow;
+
             // Like a real golfer, land the ball short so it runs out to the target (learnt per club).
             float runOut = 1f;
 
@@ -403,8 +427,8 @@ namespace GolfSimZA.Testing
                 if (ta != null) { ta.Set(ball.position, treeBase); Call("OnAimMoved", ta.Point); }
                 ShotData low = TestShotProvider.BuildShot(tClub, ActiveClub.LoftOf(tClub));
                 // Flat enough to be at crown height when it reaches the tree, long enough to carry well past it.
-                float rise = Mathf.Max(2f, crownY - ball.position.y);
-                low.LaunchAngleDeg = Mathf.Clamp(Mathf.Atan2(rise * 1.6f, treeTestDistance) * Mathf.Rad2Deg, 3f, 14f);
+                float crownRise = Mathf.Max(2f, crownY - ball.position.y);
+                low.LaunchAngleDeg = Mathf.Clamp(Mathf.Atan2(crownRise * 1.6f, treeTestDistance) * Mathf.Rad2Deg, 3f, 14f);
                 low.BackSpinRpm = 3500f;
                 low.LaunchDirectionDeg = 0f;
                 low.SpinAxisDeg = 0f;
@@ -458,6 +482,8 @@ namespace GolfSimZA.Testing
 
         // Run-out learnt per club (total / carry - 1) from this test's own shots.
         private readonly Dictionary<string, float> rollRatio = new Dictionary<string, float>();
+        private Vector3 lastHitFrom = new Vector3(float.MaxValue, 0f, 0f);
+        private int lastHitHole = -1, lastHitPlayer = -1, lastHitStrokes, stuckHits;
         private bool treeTestDone, treeTestPending;
         private Vector3 treeTestFrom;
         private float treeTestDistance;
@@ -520,6 +546,134 @@ namespace GolfSimZA.Testing
             try { File.WriteAllText(Path.Combine(Application.persistentDataPath, "autoplay-trace.txt"), trace.ToString()); } catch (Exception) { }
             report.AppendLine(string.Format("Hole {0,2}  par {1}  |  {2}  |  {3} shots  |  {4:0}s  |  {5:0} fps{6}",
                 hole + 1, par, string.Join(", ", parts), shotsThisHole, seconds, fps, string.IsNullOrEmpty(status) ? "" : "  |  " + status));
+            report.AppendLine("  " + ResourceCounts());
+            report.AppendLine("  " + FrameCosts(hole));
+        }
+
+        /// <summary>Counts of scene objects and loaded resources: a number that grows every hole shows a leak (the frame rate falling during a round).</summary>
+        private static string ResourceCounts()
+        {
+            int objects = UnityEngine.Object.FindObjectsByType<Transform>(FindObjectsInactive.Include, FindObjectsSortMode.None).Length;
+            int renderers = UnityEngine.Object.FindObjectsByType<Renderer>(FindObjectsInactive.Exclude, FindObjectsSortMode.None).Length;
+            int lines = UnityEngine.Object.FindObjectsByType<LineRenderer>(FindObjectsInactive.Exclude, FindObjectsSortMode.None).Length;
+            int materials = Resources.FindObjectsOfTypeAll<Material>().Length;
+            int textures = Resources.FindObjectsOfTypeAll<Texture>().Length;
+            int meshes = Resources.FindObjectsOfTypeAll<Mesh>().Length;
+            long managed = GC.GetTotalMemory(false) / (1024 * 1024);
+            long unity = UnityEngine.Profiling.Profiler.GetTotalAllocatedMemoryLong() / (1024 * 1024);
+            return string.Format("resources: {0} objects, {1} renderers, {2} lines, {3} materials, {4} textures, {5} meshes, {6} MB managed, {7} MB allocated, {8} log lines",
+                objects, renderers, lines, materials, textures, meshes, managed, unity, logLines);
+        }
+
+        private static int logLines;
+
+        // ---------------- Frame cost per hole (why the frame rate falls during a round)
+
+        private sealed class CostRecorder
+        {
+            public string Name;
+            public bool IsTime;
+            public ProfilerRecorder Recorder;
+            public double Sum;
+            public double FirstHole = -1;
+            public double LastHole;
+        }
+
+        private readonly List<CostRecorder> costs = new List<CostRecorder>();
+        private int costFrames;
+        private bool costsStarted;
+
+        private static bool WantCost(string n) =>
+            n == "Main Thread" || n == "PlayerLoop" || n == "EditorLoop" || n == "Render Thread" ||
+            n == "Batches Count" || n == "SetPass Calls Count" || n == "Triangles Count" || n == "Shadow Casters Count" ||
+            n == "GC Allocated In Frame" || n == "Physics.Simulate" || n == "Camera.Render" || n == "Gfx.WaitForPresentOnGfxThread" ||
+            n == "Gfx.WaitForGfxCommandsFromMainThread" || n == "GUI.Repaint" || n == "GUIUtility.ProcessEvent" ||
+            n.StartsWith("Update.", StringComparison.Ordinal) || n.StartsWith("PreLateUpdate.", StringComparison.Ordinal) ||
+            n.StartsWith("PostLateUpdate.", StringComparison.Ordinal) || n.StartsWith("FixedUpdate.", StringComparison.Ordinal) ||
+            n.StartsWith("PreUpdate.", StringComparison.Ordinal) || n.StartsWith("EarlyUpdate.", StringComparison.Ordinal) ||
+            n.StartsWith(GuiMarkers.Prefix, StringComparison.Ordinal);
+
+        private void StartFrameCosts()
+        {
+            costsStarted = true;
+            var handles = new List<ProfilerRecorderHandle>();
+            foreach (string n in GuiMarkers.Names) GuiMarkers.Get(n); // make sure the interface sections exist before listing
+            ProfilerRecorderHandle.GetAvailable(handles);
+            var seen = new HashSet<string>();
+            foreach (ProfilerRecorderHandle h in handles)
+            {
+                ProfilerRecorderDescription d = ProfilerRecorderHandle.GetDescription(h);
+                if (!WantCost(d.Name) || !seen.Add(d.Name)) continue;
+                try
+                {
+                    costs.Add(new CostRecorder
+                    {
+                        Name = d.Name,
+                        IsTime = d.UnitType == ProfilerMarkerDataUnit.TimeNanoseconds,
+                        Recorder = ProfilerRecorder.StartNew(d.Category, d.Name, 1)
+                    });
+                }
+                catch (Exception) { }
+            }
+        }
+
+        private void SampleFrameCosts()
+        {
+            if (!costsStarted) StartFrameCosts();
+            costFrames++;
+            foreach (CostRecorder c in costs)
+                if (c.Recorder.Valid) c.Sum += c.Recorder.LastValue;
+        }
+
+        private void ResetFrameCosts()
+        {
+            costFrames = 0;
+            foreach (CostRecorder c in costs) c.Sum = 0;
+        }
+
+        private double Average(CostRecorder c) => costFrames > 0 ? c.Sum / costFrames / (c.IsTime ? 1e6 : 1.0) : 0;
+
+        /// <summary>Average cost per frame on this hole: frame time split, draw calls, and the slowest engine steps.</summary>
+        private string FrameCosts(int hole)
+        {
+            if (costs.Count == 0 || costFrames == 0) return "frame costs: not available";
+            foreach (CostRecorder c in costs)
+            {
+                double a = Average(c);
+                c.LastHole = a;
+                if (c.FirstHole < 0) c.FirstHole = a;
+            }
+            string Avg(string name, string format)
+            {
+                foreach (CostRecorder c in costs) if (c.Name == name) return Average(c).ToString(format);
+                return "-";
+            }
+            var top = new List<CostRecorder>();
+            foreach (CostRecorder c in costs) if (c.IsTime && c.Name.Contains(".")) top.Add(c);
+            top.Sort((a, b) => Average(b).CompareTo(Average(a)));
+            var parts = new List<string>();
+            for (int i = 0; i < top.Count && i < 5; i++) parts.Add(top[i].Name + " " + Average(top[i]).ToString("0.0"));
+            var ui = new List<CostRecorder>();
+            foreach (CostRecorder c in costs) if (c.Name.StartsWith(GuiMarkers.Prefix, StringComparison.Ordinal)) ui.Add(c);
+            ui.Sort((a, b) => Average(b).CompareTo(Average(a)));
+            var uiParts = new List<string>();
+            for (int i = 0; i < ui.Count && i < 6; i++) uiParts.Add(ui[i].Name.Substring(GuiMarkers.Prefix.Length) + " " + Average(ui[i]).ToString("0.00"));
+            return "interface (ms): " + string.Join(", ", uiParts) + "\n  frame (ms): main " + Avg("Main Thread", "0.0") + ", player loop " + Avg("PlayerLoop", "0.0") + ", editor " + Avg("EditorLoop", "0.0") +
+                   ", render thread " + Avg("Render Thread", "0.0") + "  |  draw calls " + Avg("Batches Count", "0") + ", set-pass " + Avg("SetPass Calls Count", "0") +
+                   ", triangles " + Avg("Triangles Count", "0") + ", GC/frame " + Avg("GC Allocated In Frame", "0") + " B  |  slowest: " + string.Join(", ", parts);
+        }
+
+        /// <summary>The engine steps whose cost grew most between the first and the last hole.</summary>
+        private string FrameCostGrowth()
+        {
+            var grown = new List<CostRecorder>();
+            foreach (CostRecorder c in costs) if (c.IsTime && c.FirstHole >= 0) grown.Add(c);
+            if (grown.Count == 0) return "Frame cost growth: not measured";
+            grown.Sort((a, b) => (b.LastHole - b.FirstHole).CompareTo(a.LastHole - a.FirstHole));
+            var parts = new List<string>();
+            for (int i = 0; i < grown.Count && i < 8; i++)
+                parts.Add(grown[i].Name + " " + grown[i].FirstHole.ToString("0.00") + " -> " + grown[i].LastHole.ToString("0.00"));
+            return "Frame cost growth, first to last hole (ms per frame): " + string.Join(", ", parts);
         }
 
         private void Finish()
@@ -532,6 +686,7 @@ namespace GolfSimZA.Testing
                 airFrames, stillFrames, slowestAirFrame * 1000f));
             if (airFrames > 0 && stillFrames > airFrames * 0.02f)
                 problems.Add("Ball flight stutters: the ball stood still in " + stillFrames + " of " + airFrames + " frames in the air");
+            report.AppendLine(FrameCostGrowth());
             report.AppendLine();
             report.AppendLine("Result: " + (Call("ResultText") as string));
             report.AppendLine("Total shots hit: " + totalShots);
