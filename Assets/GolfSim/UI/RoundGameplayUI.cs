@@ -2203,30 +2203,10 @@ namespace GolfSimZA.UI
                 GUI.color = Color.white;
             }
             GUI.Box(frame, GUIContent.none, darkPanel);
-            GUI.Label(new Rect(frame.x + 12f, frame.y + 6f, frame.width - 140f, 32f), "HOLE " + (holeIndex + 1) + "  •  " + Units.DistanceText(DistanceToPin(activePlayerIndex)) + " TO PIN  •  CLICK TO AIM", new GUIStyle(titleStyle) { fontSize = 14, wordWrap = false });
+            GUI.Label(new Rect(frame.x + 12f, frame.y + 6f, frame.width - 140f, 32f), "HOLE " + (holeIndex + 1) + "  •  CLICK OR DRAG TO AIM", new GUIStyle(titleStyle) { fontSize = 14, wordWrap = false });
             if (GUI.Button(new Rect(frame.xMax - 124f, frame.y + 6f, 114f, 32f), "✕  CLOSE", GolfSimTheme.SmallButton)) { mapExpanded = false; return; }
+            // Only the aim line and one box with its distance (click / drag on the map to move it).
             DrawMiniMapGraphic(map, true);
-            if (holeMap != null && holeMap.HasImage && ball != null)
-            {
-                MapDistances.FromMap from = (Vector2 p, out Vector3 world) => holeMap.FromMap(p, map, out world);
-                MapDistances.Draw(map, wp => holeMap.ToMap(wp, map), from, ball.position,
-                    aimPointer != null && aimPointer.Visible ? aimPointer.Point : (Vector3?)null, pinPosition, "PIN");
-            }
-            if (UsingCourse && e.type == EventType.Repaint)
-            {
-                // Legend for the boundary lines.
-                Rect legend = new Rect(map.x + 8f, map.yMax - 30f, 300f, 22f);
-                GUI.color = new Color(0f, 0f, 0f, 0.6f);
-                GUI.DrawTexture(legend, whiteTexture);
-                GUI.color = Color.white;
-                var ls = new GUIStyle(mapStyle) { fontSize = 11, alignment = TextAnchor.MiddleLeft, wordWrap = false };
-                GolfSimZA.Visual.CourseBoundaryLines.Line(new Vector2(legend.x + 8f, legend.center.y), new Vector2(legend.x + 30f, legend.center.y), 3f, GolfSimZA.Visual.CourseBoundaryLines.OutOfBoundsColor);
-                GUI.color = Color.white;
-                GUI.Label(new Rect(legend.x + 36f, legend.y, 120f, legend.height), "OUT OF BOUNDS", ls);
-                GolfSimZA.Visual.CourseBoundaryLines.Line(new Vector2(legend.x + 156f, legend.center.y), new Vector2(legend.x + 178f, legend.center.y), 3f, GolfSimZA.Visual.CourseBoundaryLines.PenaltyColor);
-                GUI.color = Color.white;
-                GUI.Label(new Rect(legend.x + 184f, legend.y, 116f, legend.height), "PENALTY AREA", ls);
-            }
         }
 
         /// <summary>
@@ -2375,6 +2355,12 @@ namespace GolfSimZA.UI
 
             GUI.BeginClip(area);
             Vector2 offset = new Vector2(area.x, area.y);
+            if (big)
+            {
+                DrawAimOnly(toMap, offset, new Rect(0f, 0f, area.width, area.height));
+                GUI.EndClip();
+                return;
+            }
             // Out of bounds (white) and penalty areas (red) on the map.
             if (UsingCourse)
                 GolfSimZA.Visual.CourseBoundaryLines.DrawOnMap(course, w => toMap(w) - offset, new Rect(0f, 0f, area.width, area.height), big ? 3f : 2f);
@@ -2406,6 +2392,47 @@ namespace GolfSimZA.UI
                 GUI.color = Color.white;
             }
             GUI.EndClip();
+        }
+
+        /// <summary>
+        /// The enlarged (aiming) map, kept clean: the flag, the ball, ONE aim line from the ball to the
+        /// aim point and ONE box with the distance to where the aim point was clicked / dragged.
+        /// </summary>
+        private void DrawAimOnly(System.Func<Vector3, Vector2> toMap, Vector2 offset, Rect clip)
+        {
+            if (Event.current.type != EventType.Repaint) return;
+            Vector2 pinMap = toMap(pinPosition) - offset;
+            GUI.DrawTexture(new Rect(pinMap.x - 1.5f, pinMap.y - 18f, 3f, 18f), whiteTexture);
+            GUI.DrawTexture(new Rect(pinMap.x + 1.5f, pinMap.y - 18f, 10f, 7f), redTexture);
+            if (ball == null) return;
+            Vector2 at = toMap(ball.position) - offset;
+            bool flying = ballFlightSimulator != null && ballFlightSimulator.IsInFlight;
+            if (!flying)
+            {
+                // The aim point (until the player is ready to hit: where the round will aim).
+                Vector3 aimWorld = aimPointer != null && aimPointer.Visible ? aimPointer.Point : AimTarget(ball.position);
+                Vector2 aim = toMap(aimWorld) - offset;
+                GolfSimZA.Visual.CourseBoundaryLines.Line(at, aim, 3f, GolfSimTheme.Gold, clip);
+                GUI.color = GolfSimTheme.Gold;
+                GUI.DrawTexture(new Rect(aim.x - 6f, aim.y - 6f, 12f, 12f), whiteTexture);
+                GUI.color = Color.white;
+                string text = Units.DistanceText(HorizontalDistance(ball.position, aimWorld));
+                var style = new GUIStyle(mapStyle) { fontSize = 16, normal = { textColor = GolfSimTheme.Gold } };
+                Vector2 size = style.CalcSize(new GUIContent(text));
+                Rect box = new Rect(aim.x - size.x * 0.5f - 8f, aim.y - size.y - 20f, size.x + 16f, size.y + 6f);
+                box.x = Mathf.Clamp(box.x, 2f, clip.width - box.width - 2f);
+                box.y = Mathf.Clamp(box.y, 2f, clip.height - box.height - 2f);
+                GUI.Box(box, GUIContent.none, darkPanel);
+                GUI.Label(box, text, style);
+                GUI.color = Color.white;
+            }
+            if (activePlayerIndex >= 0 && activePlayerIndex < playerHoled.Length && !playerHoled[activePlayerIndex])
+            {
+                GUI.DrawTexture(new Rect(at.x - 8f, at.y - 8f, 16f, 16f), darkerTexture);
+                GUI.color = PlayerColor(activePlayerIndex);
+                GUI.DrawTexture(new Rect(at.x - 7f, at.y - 7f, 14f, 14f), whiteTexture);
+                GUI.color = Color.white;
+            }
         }
 
         private void DrawDots(Vector2 a, Vector2 b, Texture2D texture)

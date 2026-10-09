@@ -108,6 +108,14 @@ namespace GolfSimZA.Testing
 
         private System.Collections.IEnumerator MapPicture()
         {
+            // Wait until the player is ready to hit (the aim pointer is shown), at most 5 seconds.
+            float until = Time.unscaledTime + 5f;
+            while (Time.unscaledTime < until)
+            {
+                AimPointer pointer = round != null ? Get<AimPointer>("aimPointer") : null;
+                if (pointer != null && pointer.Visible) break;
+                yield return null;
+            }
             yield return new WaitForEndOfFrame();
             var tex = new Texture2D(Screen.width, Screen.height, TextureFormat.RGB24, false);
             tex.ReadPixels(new Rect(0, 0, Screen.width, Screen.height), 0, 0);
