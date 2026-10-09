@@ -364,23 +364,24 @@ namespace GolfSimZA.UI
             else if (!ApplyPenalties(rest))
             {
                 playerPositions[shooter] = rest;
-                float gimmie = GimmieMeters();
                 float toPin = HorizontalDistance(rest, pinPosition);
-                if (gimmie > 0f && toPin <= gimmie)
+                string where;
+                int putts = AutoPuttFrom(rest, out where);
+                if (putts == -1)
                 {
                     AddStrokes(shooter, 1);
                     MarkHoled(shooter, "GIMME");
                 }
-                else if (ballFlightSimulator.IsOnGreen(rest) || toPin <= Mathf.Max(AppSettings.Current.autoPuttTwoMeters, AppSettings.Current.autoPuttOneMeters + 0.5f))
+                else if (putts > 0)
                 {
-                    // NO PUTTING in GolfSim ZA: a ball on the green - or just off it, inside the
-                    // 2-putt circle - is holed automatically: 1, 2 or 3 putts from its distance.
-                    int putts = AutoPutts(toPin);
-                    bool onGreen = ballFlightSimulator.IsOnGreen(rest);
-                    Debug.Log("[GolfSimZA] Auto putt: " + playerNames[shooter] + (onGreen ? " on the green " : " just off the green ") + toPin.ToString("0.0") + " m from the hole -> " + putts + " putt(s)");
+                    // NO PUTTING in GolfSim ZA: a ball on the green or the fringe - or just off the
+                    // green inside the 2-putt circle - is holed automatically: 1, 2 or 3 putts.
+                    Debug.Log("[GolfSimZA] Auto putt: " + playerNames[shooter] + " " + where + " " + toPin.ToString("0.0") + " m from the hole -> " + putts + " putt(s)");
                     AddStrokes(shooter, putts);
                     MarkHoled(shooter, "AUTO PUTT  •  " + putts + (putts == 1 ? " PUTT" : " PUTTS"));
                 }
+                else if (where == "in a greenside bunker")
+                    Debug.Log("[GolfSimZA] Greenside bunker: " + playerNames[shooter] + " " + toPin.ToString("0.0") + " m from the hole - play it out (no auto putt).");
             }
 
             shotFinished = true;
@@ -392,6 +393,30 @@ namespace GolfSimZA.UI
 
         /// <summary>Is this point on the current hole's putting green (the real green when the course shows it)?</summary>
         private bool OnGreenPoint(Vector3 p) => ballFlightSimulator != null && ballFlightSimulator.IsOnGreen(p);
+
+        /// <summary>
+        /// Where a ball came to rest, as far as automatic putting goes: -1 = gimme, 1-3 = putts, 0 = play
+        /// another shot. A ball in a bunker is never putted, it has to be played out (a greenside
+        /// bunker can be inside the 2-putt circle); a ball on the fringe / apron is putted like one on
+        /// the green. 'where' says why (for the log and the test).
+        /// </summary>
+        private int AutoPuttFrom(Vector3 rest, out string where)
+        {
+            float toPin = HorizontalDistance(rest, pinPosition);
+            GreenSurface.Lie lie = GreenSurface.LieAt(rest);
+            bool inBunker = lie == GreenSurface.Lie.Bunker;
+            bool onGreen = !inBunker && ballFlightSimulator != null && ballFlightSimulator.IsOnGreen(rest);
+            bool onFringe = !inBunker && !onGreen && lie == GreenSurface.Lie.Fringe && toPin <= FringeAutoPuttReach;
+            bool nearHole = !inBunker && toPin <= Mathf.Max(AppSettings.Current.autoPuttTwoMeters, AppSettings.Current.autoPuttOneMeters + 0.5f);
+            float gimmie = GimmieMeters();
+            if (inBunker) { where = toPin <= 40f ? "in a greenside bunker" : "in a bunker"; return 0; }
+            if (gimmie > 0f && toPin <= gimmie) { where = "gimme"; return -1; }
+            where = onGreen ? "on the green" : onFringe ? "on the fringe" : nearHole ? "just off the green" : "off the green";
+            return onGreen || onFringe || nearHole ? AutoPutts(toPin) : 0;
+        }
+
+        /// <summary>A ball on the fringe / apron this close to the hole is putted automatically (fringe of another hole's green is not).</summary>
+        private const float FringeAutoPuttReach = 45f;
 
         /// <summary>Putts for a ball this far from the hole, or 0 when the player putts it themselves.</summary>
         private static int AutoPutts(float toPin)
@@ -2082,6 +2107,13 @@ namespace GolfSimZA.UI
                         }
                         return Lie.Rough;
                 }
+            }
+            // Green, fringe or bunker from the surface (a greenside bunker is a bunker, not the green).
+            switch (GreenSurface.LieAt(p))
+            {
+                case GreenSurface.Lie.Bunker: return Lie.Bunker;
+                case GreenSurface.Lie.Fringe: return Lie.Fringe;
+                case GreenSurface.Lie.Green: return Lie.Green;
             }
             if (ballFlightSimulator != null && ballFlightSimulator.IsOnGreen(p)) return Lie.Green;
             // Imported courses: the name of the ground under the ball.

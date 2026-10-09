@@ -27,6 +27,9 @@ namespace GolfSimZA.EditorTools
         [MenuItem("GolfSimZA/Test/Auto-play 18 holes - newest OpenStreetMap course, 2 players")]
         private static void PlayNewestOsm() => PlayNewestOsm(2);
 
+        [MenuItem("GolfSimZA/Test/Auto-play 18 holes - Apostle Highland, 1 player (trees)")]
+        private static void PlayApostleSolo() => Run("Apostle", "Stroke Play", 1, null);
+
         [MenuItem("GolfSimZA/Test/Auto-play 18 holes - newest OpenStreetMap course, 1 player")]
         private static void PlayNewestOsmSolo() => PlayNewestOsm(1);
 

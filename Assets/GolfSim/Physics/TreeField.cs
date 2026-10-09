@@ -248,6 +248,25 @@ namespace GolfSimZA.Physics
                 }
         }
 
+        /// <summary>Speed the ball kept at its last tree contact (0..1) and how deep its path went into the crown (0 edge .. 1 centre).</summary>
+        public float LastKeep { get; private set; } = 1f;
+        public float LastDepth { get; private set; }
+
+        /// <summary>
+        /// How deep a straight path from 'offset' (ball minus crown centre) along 'velocity' goes into
+        /// an ellipsoid crown: 1 minus its nearest scaled distance to the centre (0 = grazes the edge,
+        /// 1 = straight through the middle).
+        /// </summary>
+        private static float PathDepth(Vector3 offset, Vector3 velocity, float radius, float halfHeight)
+        {
+            var s = new Vector3(offset.x / radius, offset.y / halfHeight, offset.z / radius);
+            var v = new Vector3(velocity.x / radius, velocity.y / halfHeight, velocity.z / radius);
+            float vv = Vector3.Dot(v, v);
+            float t = vv > 1e-8f ? Mathf.Max(0f, -Vector3.Dot(s, v) / vv) : 0f;
+            float nearest = (s + v * t).magnitude;
+            return Mathf.Clamp01(1f - nearest);
+        }
+
         private static Vector2Int CellOf(Vector3 p) => new Vector2Int(Mathf.FloorToInt(p.x / Cell), Mathf.FloorToInt(p.z / Cell));
 
         /// <summary>True when there is a tree trunk or crown within radius of the point (for planting).</summary>
@@ -294,20 +313,49 @@ namespace GolfSimZA.Physics
                             float into = Vector3.Dot(h, n);
                             if (into < 0f) h -= 2f * into * n;
                             velocity = new Vector3(h.x * 0.45f, velocity.y * 0.6f, h.z * 0.45f);
+                            LastKeep = 0.45f;
+                            LastDepth = 1f;
                             return true;
                         }
 
-                        // Crown: an ellipsoid of leaves and branches.
+                        // Crown: an ellipsoid of leaves and branches - mostly air. What the ball meets
+                        // depends on how deep its path goes into the crown (worked out once, when it
+                        // enters): clipping the outer leaves often costs almost nothing, a twig or the
+                        // leaves take some speed off, branches more, and only the heart of the tree
+                        // (thick branches by the trunk) stops it. The trunk itself is the bounce above.
                         if (hitTrees.Contains(i)) continue;
                         Vector3 d = ballPosition - t.CanopyCentre;
-                        float e = (d.x * d.x + d.z * d.z) / (t.CanopyRadius * t.CanopyRadius) + d.y * d.y / (t.CanopyHalfHeight * t.CanopyHalfHeight);
+                        float r2 = t.CanopyRadius * t.CanopyRadius, h2 = t.CanopyHalfHeight * t.CanopyHalfHeight;
+                        float e = (d.x * d.x + d.z * d.z) / r2 + d.y * d.y / h2;
                         if (e > 1f) continue;
                         hitTrees.Add(i);
-                        // Deeper hits lose more speed; the ball is knocked in a random direction.
-                        float keep = Mathf.Lerp(0.15f, 0.55f, e) * Random.Range(0.8f, 1.1f);
-                        Vector3 random = Random.insideUnitSphere * velocity.magnitude * 0.35f;
-                        velocity = velocity * keep + random * keep;
-                        if (velocity.y > 3f) velocity.y = 3f;
+                        float depth = PathDepth(d, velocity, t.CanopyRadius, t.CanopyHalfHeight); // 0 = edge, 1 = through the centre
+                        float roll = Random.value;
+                        float keep, scatter;
+                        if (depth < 0.35f)
+                        {
+                            // Outer leaves and twigs.
+                            if (roll < 0.5f) { keep = Random.Range(0.93f, 0.99f); scatter = 0.02f; }
+                            else { keep = Random.Range(0.74f, 0.9f); scatter = 0.07f; }
+                        }
+                        else if (depth < 0.7f)
+                        {
+                            // Through the branches.
+                            if (roll < 0.3f) { keep = Random.Range(0.82f, 0.93f); scatter = 0.05f; }
+                            else { keep = Random.Range(0.45f, 0.75f); scatter = 0.16f; }
+                        }
+                        else
+                        {
+                            // The heart of the tree: thick branches near the trunk.
+                            if (roll < 0.15f) { keep = Random.Range(0.6f, 0.8f); scatter = 0.12f; }
+                            else { keep = Random.Range(0.12f, 0.4f); scatter = 0.32f; }
+                        }
+                        Vector3 random = Random.insideUnitSphere * velocity.magnitude * scatter;
+                        velocity = velocity * keep + random;
+                        // A real knock stops a climbing ball rising; a brush with the leaves does not.
+                        if (keep < 0.7f && velocity.y > 3f) velocity.y = 3f;
+                        LastKeep = keep;
+                        LastDepth = depth;
                         return true;
                     }
                 }

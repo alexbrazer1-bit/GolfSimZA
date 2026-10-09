@@ -406,10 +406,48 @@ namespace GolfSimZA.Testing
             nextActionAt = Time.unscaledTime + 0.5f;
         }
 
+        private int lieCheckedHole = -1;
+        private int lieGreen, lieFringe, lieBunker, lieGreenBad, lieFringeBad, lieBunkerBad;
+
+        /// <summary>
+        /// LIE CHECK (once per hole): points around the flag on the green, the fringe and in bunkers
+        /// are put to the round's own auto-putt rule. Green and fringe must be putted, a bunker never.
+        /// </summary>
+        private void LieCheck(int hole, Vector3 pin)
+        {
+            if (lieCheckedHole == hole) return;
+            lieCheckedHole = hole;
+            MethodInfo rule = typeof(RoundGameplayUI).GetMethod("AutoPuttFrom", BindingFlags.Instance | BindingFlags.NonPublic);
+            if (rule == null) { problems.Add("LIE CHECK: AutoPuttFrom not found"); return; }
+            int green = 0, fringe = 0, bunker = 0, greenBad = 0, fringeBad = 0, bunkerBad = 0;
+            var args = new object[2];
+            for (float x = -40f; x <= 40f; x += 1.5f)
+                for (float z = -40f; z <= 40f; z += 1.5f)
+                {
+                    if (x * x + z * z > 40f * 40f) continue;
+                    Vector3 p = new Vector3(pin.x + x, pin.y, pin.z + z);
+                    p.y = GroundProbe.HeightAt(p + Vector3.up * 50f);
+                    GreenSurface.Lie lie = GreenSurface.LieAt(p);
+                    if (lie != GreenSurface.Lie.Green && lie != GreenSurface.Lie.Fringe && lie != GreenSurface.Lie.Bunker) continue;
+                    args[0] = p;
+                    int putts = (int)rule.Invoke(round, args);
+                    bool putted = putts != 0;
+                    if (lie == GreenSurface.Lie.Bunker) { bunker++; if (putted) bunkerBad++; }
+                    else if (lie == GreenSurface.Lie.Fringe) { fringe++; if (!putted) fringeBad++; }
+                    else if (Get<BallFlightSimulator>("ballFlightSimulator").IsOnGreen(p)) { green++; if (!putted) greenBad++; }
+                }
+            lieGreen += green; lieFringe += fringe; lieBunker += bunker;
+            lieGreenBad += greenBad; lieFringeBad += fringeBad; lieBunkerBad += bunkerBad;
+            if (bunkerBad > 0) problems.Add("LIE CHECK hole " + (hole + 1) + ": " + bunkerBad + " of " + bunker + " bunker spots were auto-putted");
+            if (fringeBad > 0) problems.Add("LIE CHECK hole " + (hole + 1) + ": " + fringeBad + " of " + fringe + " fringe spots were not auto-putted");
+            if (greenBad > 0) problems.Add("LIE CHECK hole " + (hole + 1) + ": " + greenBad + " of " + green + " green spots were not auto-putted");
+        }
+
         private void Hit(BallFlightSimulator flight, int active)
         {
             Transform ball = Get<Transform>("ball");
             Vector3 pin = Get<Vector3>("pinPosition");
+            LieCheck(Get<int>("holeIndex"), pin);
             Vector3 target = (Vector3)Call("AimTarget", ball.position);
             Vector3 d = target - ball.position;
             d.y = 0f;
@@ -725,6 +763,7 @@ namespace GolfSimZA.Testing
                 airFrames, stillFrames, slowestAirFrame * 1000f));
             if (airFrames > 0 && stillFrames > airFrames * 0.02f)
                 problems.Add("Ball flight stutters: the ball stood still in " + stillFrames + " of " + airFrames + " frames in the air");
+            report.AppendLine("LIE CHECK (around every flag): " + lieGreen + " green spots (" + (lieGreen - lieGreenBad) + " auto-putted), " + lieFringe + " fringe spots (" + (lieFringe - lieFringeBad) + " auto-putted), " + lieBunker + " bunker spots (" + lieBunkerBad + " auto-putted)");
             report.AppendLine(FrameCostGrowth());
             report.AppendLine();
             report.AppendLine("Result: " + (Call("ResultText") as string));

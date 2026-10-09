@@ -344,6 +344,7 @@ namespace GolfSimZA.Physics
         public static bool AnyInFlight { get; private set; }
         /// <summary>Times a ball has hit a tree (leaves or trunk) / bounced off a solid obstacle (for the automatic test).</summary>
         public static int TreeHits { get; private set; }
+        private static int treeLogs;
         public static int ObstacleHits { get; private set; }
 
         // Smooth motion: the physics runs in fixed 10 ms steps, but frames do not line up with them
@@ -449,7 +450,7 @@ namespace GolfSimZA.Physics
             // Anything solid in the way this step (a hillside, cliff, rock, building, wall, tree
             // with a collider)? Before 1.8.5 only the ground straight below the ball was checked,
             // so a ball flew through mountains and trees.
-            if (Sweep(ball.position, ball.position + move, out RaycastHit hit))
+            if (Sweep(ball.position, ball.position + move, out RaycastHit hit, true))
             {
                 if (IsWater(hit.collider))
                 {
@@ -480,7 +481,10 @@ namespace GolfSimZA.Physics
             {
                 TreeHits++;
                 horizontalScale = 1f;
-                currentSpinRpm *= 0.5f;
+                // A brush with the leaves keeps most of the spin; a branch or the trunk takes most of it.
+                currentSpinRpm *= Mathf.Lerp(0.35f, 0.95f, trees.LastKeep);
+                if (treeLogs++ < 40)
+                    Debug.Log($"[GolfSimZA] Tree: ball went {(trees.LastDepth < 0.35f ? "through the outer leaves" : trees.LastDepth < 0.7f ? "through the branches" : trees.LastDepth >= 1f && trees.LastKeep <= 0.45f ? "into the trunk" : "into the heart of the tree")}, kept {trees.LastKeep * 100f:0}% of its speed.");
             }
             maxHeight = Mathf.Max(maxHeight, ball.position.y);
             totalMeters = HorizontalDistance(ball.position, launchPosition);
@@ -513,7 +517,14 @@ namespace GolfSimZA.Physics
         private const int ObstacleMask = ~(1 << GroundProbe.IgnoreRaycastLayer);
 
         /// <summary>The nearest solid thing between two points (invisible helper colliders and the flagstick are ignored).</summary>
-        private bool Sweep(Vector3 from, Vector3 to, out RaycastHit nearest)
+        private bool Sweep(Vector3 from, Vector3 to, out RaycastHit nearest) => Sweep(from, to, out nearest, false);
+
+        /// <summary>
+        /// The nearest solid thing between two points. In the air (inFlight) a course tree's own
+        /// collider is left out: those colliders often wrap the whole crown, which made trees solid
+        /// walls. The tree field handles trees instead (leaves slow the ball, trunks knock it back).
+        /// </summary>
+        private bool Sweep(Vector3 from, Vector3 to, out RaycastHit nearest, bool inFlight)
         {
             nearest = default;
             Vector3 d = to - from;
@@ -526,6 +537,7 @@ namespace GolfSimZA.Physics
             {
                 RaycastHit h = SweepHits[i];
                 if (h.collider == null || h.distance >= best || !IsSolid(h.collider)) continue;
+                if (inFlight && IsTreeHit(h)) continue;
                 // The flagstick never knocks the ball away from the cup.
                 if (hasHole && h.normal.y < 0.5f && HorizontalDistance(h.point, holePosition) < 0.6f) continue;
                 best = h.distance;
@@ -550,6 +562,45 @@ namespace GolfSimZA.Physics
             if (solidCache.Count > 20000) solidCache.Clear();
             solidCache[c] = solid;
             return solid;
+        }
+
+        private static readonly System.Collections.Generic.Dictionary<Collider, bool> treeColliderCache = new System.Collections.Generic.Dictionary<Collider, bool>();
+
+        /// <summary>
+        /// A hit on a tree that the tree field already handles: a course tree object's collider
+        /// (a single tree, not a forest band), or a terrain tree's collider (the hit is well above
+        /// the terrain's ground there).
+        /// </summary>
+        private static bool IsTreeHit(RaycastHit h)
+        {
+            Collider c = h.collider;
+            if (TreeField.Active == null) return false;
+            if (c is TerrainCollider)
+            {
+                Terrain terrain = c.GetComponent<Terrain>();
+                if (terrain == null || terrain.terrainData == null || terrain.terrainData.treeInstanceCount == 0) return false;
+                float ground = terrain.SampleHeight(h.point) + terrain.transform.position.y;
+                return h.point.y > ground + 0.4f && h.normal.y < 0.5f;
+            }
+            if (treeColliderCache.TryGetValue(c, out bool tree)) return tree;
+            tree = false;
+            for (Transform t = c.transform; t != null && !tree; t = t.parent)
+                if (GolfSimZA.Courses.CourseSurvey.LooksLikeTree(t.name)) tree = true;
+            if (!tree)
+            {
+                LODGroup lod = c.GetComponentInParent<LODGroup>();
+                tree = lod != null && GolfSimZA.Courses.CourseSurvey.LooksLikeTree(lod.name);
+            }
+            // Only single trees (the tree field has them); a whole band of forest in one object stays solid.
+            if (tree)
+            {
+                Bounds b = c.bounds;
+                float radius = Mathf.Max(b.extents.x, b.extents.z);
+                if (radius > 14f || radius > b.size.y * 1.3f) tree = false;
+            }
+            if (treeColliderCache.Count > 20000) treeColliderCache.Clear();
+            treeColliderCache[c] = tree;
+            return tree;
         }
 
         private static int rollBlockLogs;
