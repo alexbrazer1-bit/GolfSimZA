@@ -621,7 +621,7 @@ namespace GolfSimZA.Physics
             return c.bounds.max.y - ground > 0.3f;
         }
 
-        private static bool IsWater(Collider c) => c != null && c.name.StartsWith("Map_Water", StringComparison.Ordinal);
+        private static bool IsWater(Collider c) => WaterSurface.IsWater(c);
 
         /// <summary>A steep, hard surface (cliff, rock face, wall, trunk): the ball bounces off it and drops.</summary>
         private void WallBounce(Vector3 normal)

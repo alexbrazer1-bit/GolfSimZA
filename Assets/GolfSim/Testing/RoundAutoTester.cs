@@ -285,6 +285,16 @@ namespace GolfSimZA.Testing
             if (testerWasFlying && !flying && flight != null)
             {
                 LearnRoll(flight);
+                // A ball must never come to rest ON the water (it goes in).
+                if (!flight.InWater && GroundProbe.TrySample(flight.Ball.position + Vector3.up * 0.5f, out float wy, out _) && GroundProbe.LastWasWater
+                    && Mathf.Abs(flight.Ball.position.y - wy) < 0.3f)
+                    problems.Add("Hole " + (hole + 1) + ": the ball came to rest on top of the water (" + GroundProbe.LastCollider.name + ")");
+                if (waterTestPending)
+                {
+                    waterTestPending = false;
+                    report.AppendLine("  WATER TEST: " + (flight.InWater ? "the ball went into the water" : "the ball did not reach the water (stopped " + Flat(flight.Ball.position - waterTestTarget).ToString("0") + " m from the aim point)"));
+                    if (flight.InWater) waterTestIn = true;
+                }
                 if (treeTestPending)
                 {
                     treeTestPending = false;
@@ -414,6 +424,25 @@ namespace GolfSimZA.Testing
             nextActionAt = Time.unscaledTime + 0.5f;
         }
 
+        private bool waterTestDone, waterTestPending, waterTestIn;
+        private Vector3 waterTestTarget;
+
+        /// <summary>The nearest water 70-200 m from the ball (any direction), found by probing the ground.</summary>
+        private static bool FindWaterAhead(Vector3 from, out Vector3 point)
+        {
+            point = from;
+            for (float r = 70f; r <= 200f; r += 10f)
+                for (int a = 0; a < 72; a++)
+                {
+                    float ang = a * 5f * Mathf.Deg2Rad;
+                    Vector3 p = from + new Vector3(Mathf.Sin(ang), 0f, Mathf.Cos(ang)) * r;
+                    if (!GroundProbe.TrySample(new Vector3(p.x, from.y + 200f, p.z), out float h, out _) || !GroundProbe.LastWasWater) continue;
+                    point = new Vector3(p.x, h, p.z);
+                    return true;
+                }
+            return false;
+        }
+
         private int lieCheckedHole = -1;
         private int lieGreen, lieFringe, lieBunker, lieGreenBad, lieFringeBad, lieBunkerBad;
 
@@ -495,6 +524,20 @@ namespace GolfSimZA.Testing
 
             // Like a real golfer, land the ball short so it runs out to the target (learnt per club).
             float runOut = 1f;
+
+            // Once per round (from hole 3): a shot straight at the nearest water 70-200 m away, to
+            // check the ball goes in (it used to skip over imported courses' water like glass).
+            if (!waterTestDone && Get<int>("holeIndex") >= 2 && FindWaterAhead(ball.position, out Vector3 waterPoint))
+            {
+                waterTestDone = true;
+                waterTestPending = true;
+                waterTestTarget = waterPoint;
+                target = waterPoint;
+                d = target - ball.position;
+                d.y = 0f;
+                distance = d.magnitude;
+                report.AppendLine("  WATER TEST: shot straight at water " + distance.ToString("0") + " m away (" + GroundProbe.LastCollider.name + ")");
+            }
 
             // Once per round (hole 2, first tee shot): a low shot straight at a tree, to check the
             // course's trees stop the ball (it used to fly through them).
@@ -771,6 +814,7 @@ namespace GolfSimZA.Testing
                 airFrames, stillFrames, slowestAirFrame * 1000f));
             if (airFrames > 0 && stillFrames > airFrames * 0.02f)
                 problems.Add("Ball flight stutters: the ball stood still in " + stillFrames + " of " + airFrames + " frames in the air");
+            report.AppendLine(waterTestDone ? "WATER TEST: " + (waterTestIn ? "passed - the ball went into the water" : "the shot did not reach the water (see above)") : "WATER TEST: no water within 200 m of the ball on this course");
             report.AppendLine("LIE CHECK (around every flag): " + lieGreen + " green spots (" + (lieGreen - lieGreenBad) + " auto-putted), " + lieFringe + " fringe spots (" + (lieFringe - lieFringeBad) + " auto-putted), " + lieBunker + " bunker spots (" + lieBunkerBad + " auto-putted)");
             report.AppendLine(FrameCostGrowth());
             report.AppendLine();

@@ -228,6 +228,7 @@ namespace GolfSimZA.Courses
             GolfSimZA.Physics.FlightPresentation.ApplyFog();
 
             ShaderRepair.Report report = ShaderRepair.Repair(courseScene);
+            Debug.Log("[GolfSimZA] Course water: " + GolfSimZA.Physics.WaterSurface.Prepare(courseScene));
             Debug.Log("[GolfSimZA] Course shaders: " + report);
             Debug.Log("[GolfSimZA] Course lighting: " + GolfSimZA.Visual.CourseLighting.Apply(courseScene));
 

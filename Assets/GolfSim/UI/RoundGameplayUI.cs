@@ -635,6 +635,32 @@ namespace GolfSimZA.UI
                     return true;
                 }
             }
+            // In the water but not inside a mapped penalty area (many imported courses have lakes
+            // without one): a water hazard all the same - one stroke, dropped on dry ground behind
+            // where the ball went in (on the line back towards where it was played from).
+            if (ballFlightSimulator != null && ballFlightSimulator.InWater)
+            {
+                AddStrokes(activePlayerIndex, 1);
+                Vector3 previous = playerPreviousPositions[activePlayerIndex];
+                Vector3 drop = previous;
+                Vector3 back = previous - rest;
+                back.y = 0f;
+                float length = back.magnitude;
+                if (length > 0.5f)
+                {
+                    back /= length;
+                    for (float d = 1f; d < length; d += 1f)
+                        if (IsPlayableDropSpot(rest + back * d, out Vector3 spot))
+                        {
+                            drop = IsPlayableDropSpot(rest + back * (d + 2f), out Vector3 safer) ? safer : spot;
+                            break;
+                        }
+                }
+                playerPositions[activePlayerIndex] = drop;
+                ShowBanner("WATER  •  +1 STROKE  •  DROP");
+                Debug.Log($"[GolfSimZA] Water: {playerNames[activePlayerIndex]} drops {HorizontalDistance(drop, pinPosition):0} m from the flag (+1).");
+                return true;
+            }
             return false;
         }
 

@@ -19,8 +19,8 @@ namespace GolfSimZA.Physics
         /// <summary>The collider found by the last probe (null when nothing was hit).</summary>
         public static Collider LastCollider { get; private set; }
 
-        /// <summary>Mini game maps name their water surfaces "Map_Water...": a ball that reaches one stops (splash).</summary>
-        public static bool LastWasWater => LastCollider != null && LastCollider.name.StartsWith("Map_Water", System.StringComparison.Ordinal);
+        /// <summary>The last probe found water (a lake, pond or river - see <see cref="WaterSurface"/>): a ball that reaches it goes in.</summary>
+        public static bool LastWasWater => WaterSurface.IsWater(LastCollider);
 
         public static bool TrySample(Vector3 point, out float height, out Vector3 normal)
         {
