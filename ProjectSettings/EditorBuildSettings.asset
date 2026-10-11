@@ -17,5 +17,8 @@ EditorBuildSettings:
   - enabled: 1
     path: Assets/Scenes/GolfSimZA_0_6_PlayRound.unity
     guid: 7abbd9d5223656f408663bf7fe840470
+  - enabled: 1
+    path: Assets/Scenes/Nimavelle_TargetRings.unity
+    guid: e4f284af1aef4414392c2beb80ebea2c
   m_configObjects: {}
   m_UseUCBPForAssetBundles: 0
