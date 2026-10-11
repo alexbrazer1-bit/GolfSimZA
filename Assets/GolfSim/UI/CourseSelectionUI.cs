@@ -556,6 +556,8 @@ namespace GolfSimZA.UI
 
             GUI.Label(new Rect(left.x, left.y, left.width, 40f), "MINI GAMES", GolfSimTheme.Title);
             GUI.Label(new Rect(left.x, left.y + 40f, left.width, 20f), "Fun games on the range for 1 to 8 players", GolfSimTheme.Subtitle);
+            if (GUI.Button(new Rect(left.x, left.y + 68f, left.width, 42f), "PLAY NIMAVELLE TARGET RINGS", GolfSimTheme.AccentButton))
+                StartNimavelleTargetRings();
 
             // Game cards by group.
             string[] groups = { MiniGameCatalog.Target, MiniGameCatalog.Classic, MiniGameCatalog.Fun };
@@ -566,7 +568,7 @@ namespace GolfSimZA.UI
                 total += headH;
                 foreach (MiniGameInfo info in MiniGameCatalog.All) if (info.Group == g) total += cardH + 6f;
             }
-            Rect view = new Rect(left.x, left.y + 70f, left.width, left.height - 76f);
+            Rect view = new Rect(left.x, left.y + 118f, left.width, left.height - 124f);
             float innerW = view.width - (total > view.height ? 18f : 0f);
             miniScroll = GUI.BeginScrollView(view, miniScroll, new Rect(0, 0, innerW, Mathf.Max(view.height, total)));
             float y = 0f;
@@ -591,6 +593,18 @@ namespace GolfSimZA.UI
             GUI.EndScrollView();
 
             DrawMiniDetails(right);
+        }
+
+        private void StartNimavelleTargetRings()
+        {
+            string[] names = miniPlayers.Count > 0 ? miniPlayers.ToArray() : new[] { "Player 1" };
+            int count = Mathf.Clamp(names.Length, 1, 8);
+            MiniGameSession.Start(MiniGameId.TargetRings, names, 10, false, 0);
+            PlayerPrefs.SetInt("Nimavelle.TargetRings.PlayerCount", count);
+            for (int i = 0; i < count; i++)
+                PlayerPrefs.SetString("Nimavelle.TargetRings.PlayerName." + i, PlayerRoster.Clean(names[i]));
+            PlayerPrefs.Save();
+            SceneManager.LoadScene("Nimavelle_TargetRings");
         }
 
         private void DrawMiniDetails(Rect r)

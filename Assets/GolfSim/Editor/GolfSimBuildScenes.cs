@@ -18,8 +18,9 @@ namespace GolfSimZA.Editor
         public const string Players = "Assets/Scenes/GolfSimZA_0_5_Players.unity";
         public const string PlayRound = "Assets/Scenes/GolfSimZA_0_6_PlayRound.unity";
         public const string PresentationRange = "Assets/Scenes/GolfSimZA_0_4_SimulatorPresentationRange.unity";
+        public const string TargetRings = "Assets/Scenes/Nimavelle_TargetRings.unity";
 
-        public static readonly string[] Ordered = { CourseSelection, RoundSettings, Players, PlayRound, PresentationRange };
+        public static readonly string[] Ordered = { CourseSelection, RoundSettings, Players, PlayRound, PresentationRange, TargetRings };
         public static readonly string[] Required = { CourseSelection, RoundSettings, Players, PlayRound };
 
         public static void Apply()

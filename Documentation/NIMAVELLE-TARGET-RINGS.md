@@ -37,14 +37,12 @@ A round contains 10 shots. Difficulty changes the scoring radii:
 ## Create and play the scene
 
 1. Open the GolfSimZA project in Unity 6.
-2. Let Unity import `Assets/GolfSim/MiniGames/TargetRingsCourse.cs`.
-3. Choose **Nimavelle Golf → Build Target Rings Demo Scene** from the Unity menu.
-4. Open `Assets/Scenes/Nimavelle_TargetRings.unity` if it did not open automatically.
-5. Press Play.
-6. Choose a target and difficulty in the left HUD.
-7. With a paired Garmin Approach R10, wait for **GARMIN R10 CONNECTED — LIVE SHOTS**, then hit a real ball; the game uses measured carry and horizontal launch direction to score the landing against the selected island. Align the R10 with the course's forward axis. Press Space or **HIT SHOT** for a demo shot when no live R10 is connected.
-8. Press **TAB** or the camera button to switch between aerial and playable views.
-9. Finish 10 shots and choose **NEW ROUND** to restart.
+2. To test the scene directly in the Editor, choose **Nimavelle Golf → Build Target Rings Demo Scene** and press Play.
+3. In a Windows player build, open **Mini Games → Play Nimavelle Target Rings**. The selected players and their names carry into the game. Use **BACK TO GOLF SIM MENU** to return.
+4. Choose a target and difficulty in the left HUD.
+5. With a paired Garmin Approach R10, wait for **GARMIN R10 CONNECTED — LIVE SHOTS**, then hit a real ball; the game uses measured carry and horizontal launch direction to score the landing against the selected island. Align the R10 with the course's forward axis. Press Space or **HIT SHOT** for a demo shot when no live R10 is connected.
+6. Press **TAB** or the camera button to switch between aerial and playable views.
+7. Finish 10 shots and choose **NEW ROUND** to restart.
 
 ## Implementation status and next integration steps
 

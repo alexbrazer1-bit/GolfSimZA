@@ -65,6 +65,7 @@ namespace GolfSimZA.Minigames
 
         private void Start()
         {
+            playerCount = Mathf.Clamp(PlayerPrefs.GetInt("Nimavelle.TargetRings.PlayerCount", playerCount), 1, 8);
             for (int i = 0; i < playerNames.Length; i++)
                 playerNames[i] = PlayerPrefs.GetString(PlayerNameKey(i), "Player " + (i + 1));
 
@@ -734,6 +735,8 @@ namespace GolfSimZA.Minigames
             if (GUILayout.Button(aerialView ? "PLAY VIEW  [TAB]" : "AERIAL VIEW  [TAB]", GUILayout.Height(46))) ToggleCamera();
             GUILayout.EndHorizontal();
             if (roundFinished && GUILayout.Button("NEW ROUND", GUILayout.Height(38))) StartNewRound();
+            if (GUILayout.Button("BACK TO GOLF SIM MENU", GUILayout.Height(34)))
+                GolfSimZA.UI.CourseSelectionUI.OpenHome("MiniGames");
             GUILayout.Space(6);
 
             GUILayout.Label("ROUND HUD", SectionStyle());
