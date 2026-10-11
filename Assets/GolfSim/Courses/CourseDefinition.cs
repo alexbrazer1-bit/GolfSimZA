@@ -13,6 +13,8 @@ namespace GolfSimZA.Courses
     {
         public const int CurrentFormatVersion = 1;
         public const string SourceUnityBundle = "UnityBundle";
+        /// <summary>Built by GolfSimZA from OpenStreetMap; the ground files live in Courses/&lt;sourceFolder&gt;.</summary>
+        public const string SourceOpenStreetMap = "OpenStreetMap";
 
         public int formatVersion = CurrentFormatVersion;
         public string id = "";
@@ -35,6 +37,13 @@ namespace GolfSimZA.Courses
         public HoleDefinition[] holes = new HoleDefinition[0];
         public PolygonDefinition outOfBounds = new PolygonDefinition();
         public HazardDefinition[] hazards = new HazardDefinition[0];
+
+        // OpenStreetMap courses
+        public string osmType = "";
+        public long osmId;
+        public double originLat, originLon;
+
+        public bool IsOpenStreetMap => sourceType == SourceOpenStreetMap;
 
         public int HoleCount => holes != null ? holes.Length : 0;
 

@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using GolfSimZA.Core;
+using GolfSimZA.Platform;
 using UnityEngine;
 
 namespace GolfSimZA.UI
@@ -9,6 +10,11 @@ namespace GolfSimZA.UI
     /// and swing data). With two or more monitors a picker shows when the game starts (Settings →
     /// GAME → SCREENS turns it off). The choice is saved: the game moves its window to the chosen
     /// monitor at once and opens there on the next start.
+    /// Unity can only open the second screen on a monitor that is NOT the Windows main display, so
+    /// with the second screen on the game always plays on the Windows main display. SWAP SCREENS
+    /// (and picking the other monitor) makes that monitor the Windows main display and restarts the
+    /// game. Monitors are identified through Windows by their real names - two monitors with the
+    /// same resolution can no longer be mixed up.
     /// </summary>
     public sealed class DisplaySetup : MonoBehaviour
     {
@@ -19,6 +25,13 @@ namespace GolfSimZA.UI
         private bool pickAsk;
         private GUIStyle cardStyle, cardActive;
         private static Texture2D dim;
+        private const string SkipPickerKey = "GolfSimZA.SkipScreenPickerOnce";
+        private static string startPrimaryDevice;
+        private static bool restarting;
+        private static string swapMessage;
+
+        /// <summary>Last swap error (shown in the picker / settings), or null.</summary>
+        public static string SwapMessage => swapMessage;
 
         /// <summary>Monitors Windows reports (name, size), in its order: display 1, display 2 ...</summary>
         public static IReadOnlyList<DisplayInfo> Monitors
@@ -38,16 +51,185 @@ namespace GolfSimZA.UI
         {
             get
             {
-                IReadOnlyList<DisplayInfo> list = Monitors;
+                var list = new List<DisplayInfo>(Monitors);
                 DisplayInfo main = Screen.mainWindowDisplayInfo;
+                int found = -1, count = 0;
                 for (int i = 0; i < list.Count; i++)
-                    if (Same(list[i], main)) return i;
+                    if (Same(list[i], main)) { if (found < 0) found = i; count++; }
+                // Two identical monitors: assume the Windows main display (where the game normally is).
+                if (count > 1) { int p = PrimaryMonitor; if (p >= 0 && p < list.Count && Same(list[p], main)) return p; }
+                return found >= 0 ? found : 0;
+            }
+        }
+
+        // ------------------------------------------------------------ Windows monitor mapping
+
+        private static List<WindowsDisplays.Monitor> winMonitors;
+        private static int[] winMap;
+
+        /// <summary>Reads the Windows layout and matches it to Unity's monitor list (by EDID name, then order).</summary>
+        private static bool RefreshWindows()
+        {
+            winMonitors = null;
+            winMap = null;
+            if (Application.isEditor || !WindowsDisplays.IsWindows) return false;
+            try
+            {
+                var list = new List<DisplayInfo>(Monitors);
+                List<WindowsDisplays.Monitor> win = WindowsDisplays.GetMonitors();
+                if (list.Count == 0 || win.Count == 0) return false;
+                var names = new List<string>();
+                var widths = new List<int>();
+                var heights = new List<int>();
+                foreach (DisplayInfo d in list) { names.Add(d.name); widths.Add(d.width); heights.Add(d.height); }
+                winMonitors = win;
+                winMap = WindowsDisplays.MatchUnityMonitors(names, widths, heights, win);
+                return true;
+            }
+            catch (System.Exception e)
+            {
+                Debug.LogWarning("[GolfSimZA] Could not read the Windows monitor layout: " + e.Message);
+                return false;
+            }
+        }
+
+        /// <summary>The Windows monitor behind a monitor in <see cref="Monitors"/>, or null.</summary>
+        public static WindowsDisplays.Monitor WindowsMonitor(int index)
+        {
+            if (!RefreshWindows() || index < 0 || index >= winMap.Length || winMap[index] < 0) return null;
+            return winMonitors[winMap[index]];
+        }
+
+        private static string CurrentPrimaryDevice()
+        {
+            if (Application.isEditor || !WindowsDisplays.IsWindows) return null;
+            try
+            {
+                foreach (WindowsDisplays.Monitor m in WindowsDisplays.GetMonitors()) if (m.Primary) return m.Device;
+            }
+            catch (System.Exception) { }
+            return null;
+        }
+
+        /// <summary>
+        /// Which monitor (index in <see cref="Monitors"/>) each Unity display is on. Unity display 0
+        /// is the Windows main display; the others follow in Windows' order.
+        /// </summary>
+        public static int[] UnityDisplayMonitors()
+        {
+            int n = Display.displays.Length;
+            int count = Monitors.Count;
+            int primary = PrimaryMonitor;
+            var others = new List<int>();
+            if (RefreshWindows())
+            {
+                for (int w = 0; w < winMonitors.Count; w++)
+                    for (int i = 0; i < winMap.Length; i++)
+                        if (winMap[i] == w && i != primary) others.Add(i);
+            }
+            else
+            {
+                for (int i = 0; i < count; i++) if (i != primary) others.Add(i);
+            }
+            var map = new int[n];
+            for (int u = 0; u < n; u++)
+                map[u] = u == 0 ? primary : (u - 1 < others.Count ? others[u - 1] : Mathf.Min(u, Mathf.Max(0, count - 1)));
+            return map;
+        }
+
+        /// <summary>The Windows main display (index in <see cref="Monitors"/>).</summary>
+        public static int PrimaryMonitor
+        {
+            get
+            {
+                if (RefreshWindows())
+                    for (int i = 0; i < winMap.Length; i++)
+                        if (winMap[i] >= 0 && winMonitors[winMap[i]].Primary) return i;
+                // Without the Windows layout: Unity lists the Windows main display first.
                 return 0;
             }
         }
 
+        /// <summary>True when the screens can be swapped (Windows player, two or more monitors).</summary>
+        public static bool CanSwap => !Application.isEditor && WindowsDisplays.IsWindows && Monitors.Count >= 2;
+
+        /// <summary>
+        /// Makes a monitor (index in <see cref="Monitors"/>) the Windows main display and restarts the
+        /// game, which then plays there with the second screen on another monitor. Returns null when
+        /// the restart has started, else the reason it could not.
+        /// </summary>
+        public static string MakeMainDisplayAndRestart(int index, string why)
+        {
+            if (!CanSwap) return "Swapping needs the Windows game and two monitors.";
+            WindowsDisplays.Monitor m = WindowsMonitor(index);
+            if (m == null) return "Could not identify DISPLAY " + (index + 1) + ".";
+            if (!m.Primary)
+            {
+                string err = WindowsDisplays.SetPrimary(m.Device);
+                if (err != null)
+                {
+                    swapMessage = err;
+                    Debug.LogWarning("[GolfSimZA] " + why + ": " + err);
+                    return err;
+                }
+            }
+            swapMessage = null;
+            startPrimaryDevice = m.Device;
+            Debug.Log("[GolfSimZA] " + why + ": " + m.Device + " (" + m.FriendlyName + ") is now the Windows main display - restarting the game.  windows: " + WindowsDisplays.Describe());
+            RestartGame();
+            return null;
+        }
+
+        /// <summary>
+        /// SWAP SCREENS: the game and the swing data change monitors. The monitor showing the swing
+        /// data (or the first other monitor) becomes the Windows main display and the game restarts.
+        /// </summary>
+        public static string SwapScreens()
+        {
+            int count = Monitors.Count;
+            if (count < 2) return "Only one monitor found.";
+            int primary = PrimaryMonitor;
+            int target = -1;
+            int data = GolfSimZA.Visual.SecondScreen.ActiveDisplay;
+            if (data >= 0) target = MonitorOfUnityDisplay(data);
+            if (target < 0 || target == primary)
+                for (int i = 0; i < count; i++) if (i != primary) { target = i; break; }
+            AppSettings s = AppSettings.Current;
+            s.gameDisplay = -1;
+            s.Save();
+            return MakeMainDisplayAndRestart(target, "Swap screens");
+        }
+
+        /// <summary>Starts a new copy of the game (after this one has closed) and quits this one.</summary>
+        public static void RestartGame()
+        {
+            if (restarting) return;
+            restarting = true;
+            PlayerPrefs.SetInt(SkipPickerKey, 1);
+            // Let the new start open on the Windows main display (Unity's monitor numbers can change).
+            PlayerPrefs.DeleteKey("UnitySelectMonitor");
+            PlayerPrefs.Save();
+            try
+            {
+                string exe = System.Diagnostics.Process.GetCurrentProcess().MainModule.FileName;
+                var psi = new System.Diagnostics.ProcessStartInfo("cmd.exe", "/c ping -n 5 127.0.0.1 >nul & start \"\" \"" + exe + "\"")
+                {
+                    CreateNoWindow = true,
+                    UseShellExecute = false,
+                    WindowStyle = System.Diagnostics.ProcessWindowStyle.Hidden
+                };
+                System.Diagnostics.Process.Start(psi);
+            }
+            catch (System.Exception e)
+            {
+                Debug.LogWarning("[GolfSimZA] Could not start the game again automatically: " + e.Message);
+            }
+            Application.Quit();
+        }
+
+        // workArea is relative to each monitor (0,0 for both on the simulator PC), so it cannot tell monitors apart.
         private static bool Same(DisplayInfo a, DisplayInfo b) =>
-            a.name == b.name && a.width == b.width && a.height == b.height && a.workArea.x == b.workArea.x && a.workArea.y == b.workArea.y;
+            a.name == b.name && a.width == b.width && a.height == b.height;
 
         public static string MonitorLabel(int i)
         {
@@ -71,13 +253,17 @@ namespace GolfSimZA.UI
         {
             AppSettings s = AppSettings.Current;
             int monitors = Monitors.Count;
-            Debug.Log("[GolfSimZA] Screens: " + monitors + " monitor(s), Unity displays " + Display.displays.Length + ", game window on display " + (CurrentGameMonitor + 1) + DescribeLayout());
-            if (monitors > 1 && s.askDisplayOnLaunch && !Application.isEditor)
+            startPrimaryDevice = CurrentPrimaryDevice();
+            bool skipPicker = PlayerPrefs.GetInt(SkipPickerKey, 0) == 1;
+            if (skipPicker) { PlayerPrefs.DeleteKey(SkipPickerKey); PlayerPrefs.Save(); }
+            Debug.Log("[GolfSimZA] Screens: " + monitors + " monitor(s), Unity displays " + Display.displays.Length + ", game window on display " + (CurrentGameMonitor + 1) + ", Windows main display = display " + (PrimaryMonitor + 1) + DescribeLayout());
+            if (monitors > 1 && s.askDisplayOnLaunch && !Application.isEditor && !skipPicker)
             {
                 showPicker = true;
                 pickGame = s.gameDisplay >= 0 && s.gameDisplay < monitors ? s.gameDisplay : CurrentGameMonitor;
                 pickSecond = s.secondScreen ? 1 : 0;
                 pickAsk = true;
+                PlaceForPicker(s.secondScreen ? PrimaryMonitor : pickGame);
             }
             else
             {
@@ -94,7 +280,8 @@ namespace GolfSimZA.UI
             var unity = new List<string>();
             for (int i = 0; i < Display.displays.Length; i++)
                 unity.Add(i + "=" + Display.displays[i].systemWidth + "x" + Display.displays[i].systemHeight + (Display.displays[i].active ? " active" : ""));
-            return "  |  monitors: " + string.Join("; ", parts) + "  |  unity displays: " + string.Join("; ", unity);
+            string win = Application.isEditor ? "" : "  |  windows: " + WindowsDisplays.Describe();
+            return "  |  monitors: " + string.Join("; ", parts) + "  |  unity displays: " + string.Join("; ", unity) + win;
         }
 
         /// <summary>
@@ -106,7 +293,8 @@ namespace GolfSimZA.UI
         {
             int count = Monitors.Count;
             if (count < 2) return 0;
-            if (s.secondScreen) return 0;
+            // The main display - Windows' own one, which is not always first in the monitor list.
+            if (s.secondScreen) return PrimaryMonitor;
             return s.gameDisplay >= 0 && s.gameDisplay < count ? s.gameDisplay : CurrentGameMonitor;
         }
 
@@ -135,12 +323,61 @@ namespace GolfSimZA.UI
                         FullScreenOn(target);
                         Debug.Log("[GolfSimZA] Game moved to display " + (game + 1) + DescribeLayout());
                         GolfSimZA.Visual.SecondScreen.Apply();
+                        FocusGameSoon();
                     };
                     return;
                 }
             }
             FullScreenOn(target);
             GolfSimZA.Visual.SecondScreen.Apply();
+            FocusGameSoon();
+        }
+
+        /// <summary>The picker shows full screen on the monitor the game will most likely use (not a small window).</summary>
+        private static void PlaceForPicker(int monitor)
+        {
+            if (Application.isEditor || instance == null) return;
+            instance.StartCoroutine(instance.PlacePickerRoutine(monitor));
+        }
+
+        // Unity ignores window moves in the very first frame, so wait a moment, move, wait until done, then go full screen.
+        private System.Collections.IEnumerator PlacePickerRoutine(int monitor)
+        {
+            yield return null;
+            yield return new WaitForSecondsRealtime(0.3f);
+            var list = new List<DisplayInfo>(Monitors);
+            if (list.Count == 0) yield break;
+            monitor = Mathf.Clamp(monitor, 0, list.Count - 1);
+            DisplayInfo target = list[monitor];
+            if (monitor != CurrentGameMonitor)
+            {
+                AsyncOperation move = Screen.MoveMainWindowTo(target, Vector2Int.zero);
+                float until = Time.realtimeSinceStartup + 3f;
+                while (move != null && !move.isDone && Time.realtimeSinceStartup < until) yield return null;
+            }
+            FullScreenOn(target);
+            yield return new WaitForSecondsRealtime(0.5f);
+            Debug.Log("[GolfSimZA] Screens picker on display " + (CurrentGameMonitor + 1) + " (wanted " + (monitor + 1) + "), " + Screen.fullScreenMode + " " + Screen.width + "x" + Screen.height);
+            FocusGameSoon();
+        }
+
+        /// <summary>
+        /// Brings the game window to the front a moment after it has been placed, so it covers the
+        /// Windows taskbar (needed after a restart or when started by SimLink).
+        /// </summary>
+        public static void FocusGameSoon()
+        {
+            if (instance == null || Application.isEditor || !WindowsDisplays.IsWindows) return;
+            instance.StartCoroutine(instance.FocusRoutine());
+        }
+
+        private System.Collections.IEnumerator FocusRoutine()
+        {
+            yield return new WaitForSecondsRealtime(1.5f);
+            string err = null;
+            try { err = WindowsDisplays.FocusWindow(System.IntPtr.Zero); }
+            catch (System.Exception e) { err = e.Message; }
+            if (err != null) Debug.Log("[GolfSimZA] Bring game to front: " + err);
         }
 
         /// <summary>Full screen (borderless) at the monitor's own resolution - a 1920×1080 window on a smaller monitor would hang over the edge.</summary>
@@ -149,6 +386,46 @@ namespace GolfSimZA.UI
             if (monitor.width <= 0 || monitor.height <= 0) return;
             if (Screen.fullScreenMode == FullScreenMode.FullScreenWindow && Screen.width == monitor.width && Screen.height == monitor.height) return;
             Screen.SetResolution(monitor.width, monitor.height, FullScreenMode.FullScreenWindow);
+        }
+
+        private string layoutSignature;
+        private float nextLayoutCheck;
+
+        /// <summary>
+        /// Watches the monitors: when the game's monitor or the Windows main display changes (or a
+        /// monitor is added / removed), the game and the second screen are placed again so the
+        /// club data is always on a monitor the game is not using.
+        /// </summary>
+        private void Update()
+        {
+            if (restarting || Time.unscaledTime < nextLayoutCheck) return;
+            nextLayoutCheck = Time.unscaledTime + 2f;
+            // The Windows main display was changed (Windows Settings, SimLink ...) while the second
+            // screen is open: Unity cannot move its second window, so restart to place both again.
+            string primaryNow = CurrentPrimaryDevice();
+            if (AppSettings.Current.secondScreen && startPrimaryDevice != null && primaryNow != null && primaryNow != startPrimaryDevice && Monitors.Count > 1)
+            {
+                Debug.Log("[GolfSimZA] Windows main display changed (" + startPrimaryDevice + " -> " + primaryNow + ") - restarting so the game and the swing data swap screens." + DescribeLayout());
+                startPrimaryDevice = primaryNow;
+                RestartGame();
+                return;
+            }
+            if (showPicker) return;
+            string sig = LayoutSignature();
+            if (layoutSignature == null) { layoutSignature = sig; return; }
+            if (sig == layoutSignature) return;
+            layoutSignature = sig;
+            Debug.Log("[GolfSimZA] Screens changed - placing the game and the second screen again." + DescribeLayout());
+            Apply(false);
+        }
+
+        private static string LayoutSignature()
+        {
+            var sb = new System.Text.StringBuilder();
+            IReadOnlyList<DisplayInfo> list = Monitors;
+            sb.Append(list.Count).Append('|').Append(CurrentGameMonitor).Append('|').Append(PrimaryMonitor);
+            foreach (DisplayInfo d in list) sb.Append('|').Append(d.name).Append(d.width).Append('x').Append(d.height);
+            return sb.ToString();
         }
 
         private void OnGUI()
@@ -183,11 +460,14 @@ namespace GolfSimZA.UI
             GUI.Label(new Rect(x, y, cw, 22f), "SECOND SCREEN  (Garmin R10 status and swing data on the other monitor)", GolfSimTheme.Label);
             y += 26f;
             if (GUI.Button(new Rect(x, y, cw * 0.5f - 5f, 48f), "OFF", pickSecond == 0 ? cardActive : cardStyle)) pickSecond = 0;
-            if (GUI.Button(new Rect(x + cw * 0.5f + 5f, y, cw * 0.5f - 5f, 48f), "ON  •  " + OtherLabel(pickSecond == 1 ? 0 : pickGame), pickSecond == 1 ? cardActive : cardStyle)) pickSecond = 1;
+            if (GUI.Button(new Rect(x + cw * 0.5f + 5f, y, cw * 0.5f - 5f, 48f), "ON  •  " + OtherLabel(pickGame), pickSecond == 1 ? cardActive : cardStyle)) pickSecond = 1;
             y += 54f;
-            if (pickSecond == 1 && pickGame != 0)
-                GUI.Label(new Rect(x, y, cw, 36f), "With the second screen on, the game plays on DISPLAY 1 (the Windows main display) and the swing data goes on the other screen. To swap them, make the other monitor the main display in Windows Settings → Display.",
-                    new GUIStyle(GolfSimTheme.Label) { wordWrap = true, fontSize = 11, normal = { textColor = GolfSimTheme.Gold } });
+            string note = null;
+            if (swapMessage != null) note = "Could not swap the screens: " + swapMessage;
+            else if (pickSecond == 1 && pickGame != PrimaryMonitor && CanSwap)
+                note = "START makes DISPLAY " + (pickGame + 1) + " the Windows main display and restarts the game (about 10 s) - then the game plays there and the swing data goes on the other screen.";
+            if (note != null)
+                GUI.Label(new Rect(x, y, cw, 36f), note, new GUIStyle(GolfSimTheme.Label) { wordWrap = true, fontSize = 11, normal = { textColor = GolfSimTheme.Gold } });
             y += 40f;
 
             if (GUI.Button(new Rect(x, y, cw, 36f), (pickAsk ? "☑" : "☐") + "  ASK EVERY TIME THE GAME STARTS  (change later in Settings → GAME → SCREENS)", GolfSimTheme.GhostButton)) pickAsk = !pickAsk;
@@ -199,7 +479,16 @@ namespace GolfSimZA.UI
                 s.gameDisplay = pickGame;
                 s.secondScreen = pickSecond == 1;
                 s.askDisplayOnLaunch = pickAsk;
-                s.Save();
+                if (pickSecond == 1 && pickGame != PrimaryMonitor && CanSwap)
+                {
+                    s.gameDisplay = -1;
+                    s.Save();
+                    if (MakeMainDisplayAndRestart(pickGame, "Screens picker") == null) { showPicker = false; return; }
+                }
+                else
+                {
+                    s.Save();
+                }
                 showPicker = false;
                 Apply(false);
             }
@@ -212,6 +501,16 @@ namespace GolfSimZA.UI
         {
             int other = game == 0 ? 1 : 0;
             return "DISPLAY " + (other + 1);
+        }
+
+        /// <summary>Called by Settings: swaps the screens and returns the error (null = restarting).</summary>
+        public static string SwapFromSettings() => SwapScreens();
+
+        /// <summary>Monitor (index in <see cref="Monitors"/>) a Unity display is on.</summary>
+        public static int MonitorOfUnityDisplay(int unityDisplay)
+        {
+            int[] map = UnityDisplayMonitors();
+            return unityDisplay >= 0 && unityDisplay < map.Length ? map[unityDisplay] : unityDisplay;
         }
     }
 }

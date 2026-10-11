@@ -16,6 +16,12 @@ namespace GolfSimZA.Physics
         /// <summary>Height used when nothing is found under the ball.</summary>
         public static float FallbackHeight { get; set; }
 
+        /// <summary>The collider found by the last probe (null when nothing was hit).</summary>
+        public static Collider LastCollider { get; private set; }
+
+        /// <summary>The last probe found water (a lake, pond or river - see <see cref="WaterSurface"/>): a ball that reaches it goes in.</summary>
+        public static bool LastWasWater => WaterSurface.IsWater(LastCollider);
+
         public static bool TrySample(Vector3 point, out float height, out Vector3 normal)
         {
             // First look just above the ball (so an overhanging branch or bridge above
@@ -52,11 +58,13 @@ namespace GolfSimZA.Physics
 
             if (bestIndex < 0)
             {
+                LastCollider = null;
                 height = FallbackHeight;
                 normal = Vector3.up;
                 return false;
             }
 
+            LastCollider = Hits[bestIndex].collider;
             height = Hits[bestIndex].point.y;
             normal = Hits[bestIndex].normal.y > 0.05f ? Hits[bestIndex].normal : Vector3.up;
             return true;

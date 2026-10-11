@@ -53,10 +53,12 @@ namespace GolfSimZA.Visual
             AppSettings s = AppSettings.Current;
             int count = Display.displays.Length;
             if (count < 2) return -1;
-            if (s.secondScreenDisplay >= 1 && s.secondScreenDisplay < count) return s.secondScreenDisplay;
+            // Never the monitor the game is on: the club data always goes on another monitor.
             int game = GolfSimZA.UI.DisplaySetup.CurrentGameMonitor;
+            if (s.secondScreenDisplay >= 1 && s.secondScreenDisplay < count && GolfSimZA.UI.DisplaySetup.MonitorOfUnityDisplay(s.secondScreenDisplay) != game)
+                return s.secondScreenDisplay;
             for (int i = 1; i < count; i++)
-                if (i != game) return i;
+                if (GolfSimZA.UI.DisplaySetup.MonitorOfUnityDisplay(i) != game) return i;
             return 1;
         }
 

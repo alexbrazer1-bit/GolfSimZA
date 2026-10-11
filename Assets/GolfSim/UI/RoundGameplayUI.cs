@@ -134,10 +134,11 @@ namespace GolfSimZA.UI
             puttGrid = gameObject.AddComponent<PuttGridRenderer>();
             markers = gameObject.AddComponent<CourseMarkers>();
             holeMap = gameObject.AddComponent<HoleMapCamera>();
+            zoomMap = gameObject.AddComponent<HoleMapCamera>(); // the corner map: ball to flag, zooms in near the green
             aimPointer = gameObject.AddComponent<AimPointer>();
             aimPointer.CanInteract = () => !GameMenuOverlay.IsOpen && ballFlightSimulator != null && !ballFlightSimulator.IsInFlight
                                            && !roundComplete && pendingSelection < 0 && !showScorecard
-                                           && !(presentation != null && presentation.IsFlyingOver);
+                                           && !(presentation != null && presentation.IsFlyingOver) && !mapExpanded;
             aimPointer.Moved += OnAimMoved;
             GameOptions.ScorecardRequested += ToggleScorecard;
             GameOptions.MulliganRequested += Mulligan;
@@ -161,6 +162,7 @@ namespace GolfSimZA.UI
         private void OnDestroy()
         {
             if (Current == this) Current = null;
+            GolfSimZA.Visual.CourseBoundaryLines.Clear();
             GameOptions.ScorecardRequested -= ToggleScorecard;
             GameOptions.MulliganRequested -= Mulligan;
             GameOptions.FlyoverRequested -= Flyover;
@@ -180,6 +182,8 @@ namespace GolfSimZA.UI
             GreenSurface.Reset();
             if (ballFlightSimulator != null) ballFlightSimulator.AltitudeMeters = loaded.altitudeMeters;
             if (green != null) green.gameObject.SetActive(false);
+            // White out-of-bounds lines and stakes (red penalty areas) on the course.
+            GolfSimZA.Visual.CourseBoundaryLines.Build(loaded);
             StartHole();
         }
 
@@ -253,7 +257,7 @@ namespace GolfSimZA.UI
 
             // Auto putt: 1-putt (gold) and 2-putt (white) circles around the hole.
             bool holeLive = !roundComplete && !AllHoled() && !(presentation != null && presentation.IsFlyingOver);
-            if (s.autoPutt && s.showPuttCircles && holeLive)
+            if (s.showPuttCircles && holeLive)
                 markers.ShowPuttCircles(pinPosition, s.autoPuttOneMeters, Mathf.Max(s.autoPuttTwoMeters, s.autoPuttOneMeters + 0.5f), OnGreenPoint);
             else
                 markers.HidePuttCircles();
@@ -326,7 +330,10 @@ namespace GolfSimZA.UI
             float toTarget = d.magnitude;
             float carry = GolfSimZA.Core.ActiveClub.ExpectedCarry(GolfSimZA.Core.ActiveClub.Resolve());
             float distance = carry > 1f ? Mathf.Min(carry, toTarget) : toTarget;
-            if (HorizontalDistance(from, pinPosition) <= carry) distance = HorizontalDistance(from, pinPosition);
+            float toPin = HorizontalDistance(from, pinPosition);
+            // Reaches the flag, or within 200 m of it: the aim point goes on the green (the flag),
+            // whatever the club carries - never short of the green on the fairway.
+            if (toPin <= carry || toPin <= 200f) distance = toPin;
             Vector3 dir = d.sqrMagnitude > 0.01f ? d.normalized : Vector3.forward;
             aimPointer.Set(from, from + dir * Mathf.Max(1f, distance));
             aimMoved = false;
@@ -357,31 +364,24 @@ namespace GolfSimZA.UI
             else if (!ApplyPenalties(rest))
             {
                 playerPositions[shooter] = rest;
-                float gimmie = GimmieMeters();
                 float toPin = HorizontalDistance(rest, pinPosition);
-                if (gimmie > 0f && toPin <= gimmie)
+                string where;
+                int putts = AutoPuttFrom(rest, out where);
+                if (putts == -1)
                 {
                     AddStrokes(shooter, 1);
                     MarkHoled(shooter, "GIMME");
                 }
-                else if (AppSettings.Current.autoPutt && ballFlightSimulator.IsOnGreen(rest))
+                else if (putts > 0)
                 {
-                    // AUTO PUTT: putts are counted from the distance to the hole (1-putt and 2-putt circles).
-                    int putts = AutoPutts(toPin);
-                    if (putts > 0)
-                    {
-                        Debug.Log("[GolfSimZA] Auto putt: " + playerNames[shooter] + " on the green " + toPin.ToString("0.0") + " m from the hole -> " + putts + " putt(s)");
-                        AddStrokes(shooter, putts);
-                        MarkHoled(shooter, "AUTO PUTT  •  " + putts + (putts == 1 ? " PUTT" : " PUTTS"));
-                    }
-                    else ShowBanner("OUTSIDE THE 2 PUTT CIRCLE  •  PUTT IT  •  " + Units.DistanceText(toPin, "0.0"));
+                    // NO PUTTING in GolfSim ZA: a ball on the green or the fringe - or just off the
+                    // green inside the 2-putt circle - is holed automatically: 1, 2 or 3 putts.
+                    Debug.Log("[GolfSimZA] Auto putt: " + playerNames[shooter] + " " + where + " " + toPin.ToString("0.0") + " m from the hole -> " + putts + " putt(s)");
+                    AddStrokes(shooter, putts);
+                    MarkHoled(shooter, "AUTO PUTT  •  " + putts + (putts == 1 ? " PUTT" : " PUTTS"));
                 }
-                else if (AppSettings.Current.autoPutt && toPin <= Mathf.Max(AppSettings.Current.autoPuttTwoMeters, AppSettings.Current.autoPuttOneMeters + 0.5f))
-                {
-                    // Close to the hole but off the putting surface: the circles only count on the green.
-                    Debug.Log("[GolfSimZA] Just off the green: " + playerNames[shooter] + " " + toPin.ToString("0.0") + " m from the hole -> no auto putt");
-                    ShowBanner("JUST OFF THE GREEN  •  NO AUTO PUTT  •  PLAY YOUR SHOT  •  " + Units.DistanceText(toPin, "0.0"));
-                }
+                else if (where == "in a greenside bunker")
+                    Debug.Log("[GolfSimZA] Greenside bunker: " + playerNames[shooter] + " " + toPin.ToString("0.0") + " m from the hole - play it out (no auto putt).");
             }
 
             shotFinished = true;
@@ -394,13 +394,37 @@ namespace GolfSimZA.UI
         /// <summary>Is this point on the current hole's putting green (the real green when the course shows it)?</summary>
         private bool OnGreenPoint(Vector3 p) => ballFlightSimulator != null && ballFlightSimulator.IsOnGreen(p);
 
+        /// <summary>
+        /// Where a ball came to rest, as far as automatic putting goes: -1 = gimme, 1-3 = putts, 0 = play
+        /// another shot. A ball in a bunker is never putted, it has to be played out (a greenside
+        /// bunker can be inside the 2-putt circle); a ball on the fringe / apron is putted like one on
+        /// the green. 'where' says why (for the log and the test).
+        /// </summary>
+        private int AutoPuttFrom(Vector3 rest, out string where)
+        {
+            float toPin = HorizontalDistance(rest, pinPosition);
+            GreenSurface.Lie lie = GreenSurface.LieAt(rest);
+            bool inBunker = lie == GreenSurface.Lie.Bunker;
+            bool onGreen = !inBunker && ballFlightSimulator != null && ballFlightSimulator.IsOnGreen(rest);
+            bool onFringe = !inBunker && !onGreen && lie == GreenSurface.Lie.Fringe && toPin <= FringeAutoPuttReach;
+            bool nearHole = !inBunker && toPin <= Mathf.Max(AppSettings.Current.autoPuttTwoMeters, AppSettings.Current.autoPuttOneMeters + 0.5f);
+            float gimmie = GimmieMeters();
+            if (inBunker) { where = toPin <= 40f ? "in a greenside bunker" : "in a bunker"; return 0; }
+            if (gimmie > 0f && toPin <= gimmie) { where = "gimme"; return -1; }
+            where = onGreen ? "on the green" : onFringe ? "on the fringe" : nearHole ? "just off the green" : "off the green";
+            return onGreen || onFringe || nearHole ? AutoPutts(toPin) : 0;
+        }
+
+        /// <summary>A ball on the fringe / apron this close to the hole is putted automatically (fringe of another hole's green is not).</summary>
+        private const float FringeAutoPuttReach = 45f;
+
         /// <summary>Putts for a ball this far from the hole, or 0 when the player putts it themselves.</summary>
         private static int AutoPutts(float toPin)
         {
             AppSettings a = AppSettings.Current;
             if (toPin <= a.autoPuttOneMeters) return 1;
             if (toPin <= Mathf.Max(a.autoPuttTwoMeters, a.autoPuttOneMeters + 0.5f)) return 2;
-            return a.autoPuttBeyond == 0 ? 3 : 0;
+            return 3;
         }
 
         /// <summary>After a shot: hole complete, next player, or the same player again.</summary>
@@ -563,6 +587,7 @@ namespace GolfSimZA.UI
                 AddStrokes(activePlayerIndex, 1);
                 playerPositions[activePlayerIndex] = playerPreviousPositions[activePlayerIndex];
                 ShowBanner("OUT OF BOUNDS  •  +1 STROKE");
+                Debug.Log($"[GolfSimZA] Out of bounds: {playerNames[activePlayerIndex]} replays from the last spot (+1).");
                 return true;
             }
 
@@ -571,19 +596,127 @@ namespace GolfSimZA.UI
                 foreach (HazardDefinition hazard in course.hazards)
                 {
                     if (hazard.area == null || !hazard.area.Contains(rest)) continue;
+                    Vector3 previous = playerPreviousPositions[activePlayerIndex];
                     if (hazard.freeDrop)
                     {
-                        playerPositions[activePlayerIndex] = hazard.hasDropZone ? hazard.dropZone : playerPreviousPositions[activePlayerIndex];
+                        playerPositions[activePlayerIndex] = hazard.hasDropZone ? hazard.dropZone
+                            : TryBackOnTheLineDrop(hazard, previous, rest, out Vector3 freeSpot) ? freeSpot : previous;
                         ShowBanner("FREE DROP");
                         return true;
                     }
                     AddStrokes(activePlayerIndex, 1);
-                    playerPositions[activePlayerIndex] = hazard.hasDropZone && !hazard.innerOutOfBounds ? hazard.dropZone : playerPreviousPositions[activePlayerIndex];
-                    ShowBanner(hazard.innerOutOfBounds ? "OUT OF BOUNDS  •  +1 STROKE" : "PENALTY AREA  •  +1 STROKE");
+                    if (hazard.innerOutOfBounds)
+                    {
+                        playerPositions[activePlayerIndex] = previous;
+                        ShowBanner("OUT OF BOUNDS  •  +1 STROKE");
+                        Debug.Log($"[GolfSimZA] Out of bounds (inner): {playerNames[activePlayerIndex]} replays from the last spot (+1).");
+                    }
+                    else if (hazard.hasDropZone)
+                    {
+                        playerPositions[activePlayerIndex] = hazard.dropZone;
+                        ShowBanner("PENALTY AREA  •  +1 STROKE  •  DROP ZONE");
+                        Debug.Log($"[GolfSimZA] Penalty area: {playerNames[activePlayerIndex]} plays from the drop zone (+1).");
+                    }
+                    else if (TryBackOnTheLineDrop(hazard, previous, rest, out Vector3 drop)
+                             && HorizontalDistance(drop, pinPosition) < HorizontalDistance(previous, pinPosition))
+                    {
+                        // Penalty area relief: drop behind it on the line from the flag through the
+                        // point where the ball went in (better than replaying from the last spot).
+                        playerPositions[activePlayerIndex] = drop;
+                        ShowBanner("PENALTY AREA  •  +1 STROKE  •  DROP BEHIND IT");
+                        Debug.Log($"[GolfSimZA] Penalty area: {playerNames[activePlayerIndex]} drops behind it, {HorizontalDistance(drop, pinPosition):0} m from the flag.");
+                    }
+                    else
+                    {
+                        playerPositions[activePlayerIndex] = previous;
+                        ShowBanner("PENALTY AREA  •  +1 STROKE");
+                        Debug.Log($"[GolfSimZA] Penalty area: {playerNames[activePlayerIndex]} replays from the last spot (+1).");
+                    }
                     return true;
                 }
             }
+            // In the water but not inside a mapped penalty area (many imported courses have lakes
+            // without one): a water hazard all the same - one stroke, dropped on dry ground behind
+            // where the ball went in (on the line back towards where it was played from).
+            if (ballFlightSimulator != null && ballFlightSimulator.InWater)
+            {
+                AddStrokes(activePlayerIndex, 1);
+                Vector3 previous = playerPreviousPositions[activePlayerIndex];
+                Vector3 drop = previous;
+                Vector3 back = previous - rest;
+                back.y = 0f;
+                float length = back.magnitude;
+                if (length > 0.5f)
+                {
+                    back /= length;
+                    for (float d = 1f; d < length; d += 1f)
+                        if (IsPlayableDropSpot(rest + back * d, out Vector3 spot))
+                        {
+                            drop = IsPlayableDropSpot(rest + back * (d + 2f), out Vector3 safer) ? safer : spot;
+                            break;
+                        }
+                }
+                playerPositions[activePlayerIndex] = drop;
+                ShowBanner("WATER  •  +1 STROKE  •  DROP");
+                Debug.Log($"[GolfSimZA] Water: {playerNames[activePlayerIndex]} drops {HorizontalDistance(drop, pinPosition):0} m from the flag (+1).");
+                return true;
+            }
             return false;
+        }
+
+        /// <summary>
+        /// Penalty area relief "back on the line": finds where the ball crossed into the area (on the
+        /// line from the previous spot to where it ended), then walks back away from the flag along the
+        /// line flag - entry point until the ground is dry, in bounds, outside every penalty area and
+        /// playable (not a steep bank, not on a building).
+        /// </summary>
+        private bool TryBackOnTheLineDrop(HazardDefinition hazard, Vector3 from, Vector3 rest, out Vector3 drop)
+        {
+            drop = from;
+            Vector3 path = rest - from;
+            path.y = 0f;
+            float pathLength = path.magnitude;
+            if (pathLength < 0.5f) return false;
+
+            // Entry point: the last spot on the way in that is still outside the area.
+            Vector3 entry = rest;
+            const float step = 0.5f;
+            for (float d = pathLength; d >= 0f; d -= step)
+            {
+                Vector3 q = from + path * (d / pathLength);
+                if (!hazard.area.Contains(q)) { entry = q; break; }
+                if (d - step < 0f) return false; // started inside it: nothing to measure from
+            }
+
+            Vector3 away = entry - pinPosition;
+            away.y = 0f;
+            if (away.sqrMagnitude < 0.01f) away = -path;
+            away.Normalize();
+            for (float back = 1f; back <= 120f; back += 1f)
+            {
+                Vector3 q = entry + away * back;
+                if (!IsPlayableDropSpot(q, out Vector3 spot)) continue;
+                // One more metre clear of the line so the ball does not sit on it.
+                if (IsPlayableDropSpot(q + away, out Vector3 safer)) spot = safer;
+                drop = spot;
+                return true;
+            }
+            return false;
+        }
+
+        private bool IsPlayableDropSpot(Vector3 q, out Vector3 spot)
+        {
+            spot = q;
+            if (course.outOfBounds != null && course.outOfBounds.IsValid && !course.outOfBounds.Contains(q)) return false;
+            if (course.hazards != null)
+                foreach (HazardDefinition h in course.hazards)
+                    if (h.area != null && h.area.Contains(q)) return false;
+            if (!GroundProbe.TrySample(new Vector3(q.x, q.y + 60f, q.z), out float height, out Vector3 normal)) return false;
+            if (GroundProbe.LastWasWater || normal.y < 0.86f) return false;
+            Collider c = GroundProbe.LastCollider;
+            if (c != null && !(c is TerrainCollider) && (c.name.StartsWith("Buildings_", StringComparison.Ordinal) || c.GetComponentInParent<LODGroup>() != null)) return false;
+            spot = new Vector3(q.x, height, q.z);
+            return true;
         }
 
         private void MarkHoled(int player, string message)
@@ -673,11 +806,8 @@ namespace GolfSimZA.UI
 
         private void UpdatePuttGrid()
         {
-            if (puttGrid == null || ball == null || ballFlightSimulator == null) return;
-            if (GameOptions.PuttGrid && ballFlightSimulator.IsOnGreen(ball.position))
-                puttGrid.Show(pinPosition, ball.position);
-            else
-                puttGrid.Hide();
+            // No putting in GolfSim ZA (balls on the green are putted automatically): no putt grid.
+            puttGrid?.Hide();
         }
 
         private void JumpToHole(int index)
@@ -1270,8 +1400,23 @@ namespace GolfSimZA.UI
             if (formatWarning != null) { holeText = formatWarning + "     " + holeText; formatWarning = null; }
             ShowBanner(holeText);
             bannerUntil = Time.unscaledTime + 6f;
-            // Tee shot on a par 4/5: start with the driver (first club in the bag).
-            if (CurrentPar >= 4) ActiveClub.SelectBagIndex(0);
+        }
+
+        /// <summary>
+        /// Before every shot the club for the distance is selected and shown as NEXT CLUB, from
+        /// the carry the player hits each club (MAP MY BAG): the shortest club that reaches the
+        /// target - the tee shot's landing area / aim point, otherwise the pin. On a long hole that
+        /// is the driver; 180 m with a 5 iron mapped at 178 m is the 5 iron. The player can still
+        /// pick any other club.
+        /// </summary>
+        private void SuggestNextClub(Vector3 from)
+        {
+            bool onGreen = ballFlightSimulator != null && ballFlightSimulator.IsOnGreen(from);
+            Vector3 target = AimTarget(from);
+            float toTarget = HorizontalDistance(from, target);
+            float toPin = HorizontalDistance(from, pinPosition);
+            float distance = Mathf.Min(toTarget > 1f ? toTarget : toPin, toPin);
+            ClubBar.Suggest(ClubBar.ClubForDistance(distance, onGreen), distance);
         }
 
         /// <summary>Puts the active player's ball down and aims at the next target.</summary>
@@ -1282,6 +1427,7 @@ namespace GolfSimZA.UI
             playerPreviousPositions[activePlayerIndex] = position;
             if (ballFlightSimulator != null) ballFlightSimulator.PlaceBall(position);
             else if (ball != null) ball.position = position;
+            SuggestNextClub(position);
             ResetAimPoint();
             ApplyAim(ball != null ? ball.position : position, snapCamera);
             ApplyFlagVisibility();
@@ -1291,12 +1437,22 @@ namespace GolfSimZA.UI
 
         private Vector3 AimTarget(Vector3 from)
         {
-            if (UsingCourse && playerHoleStrokes[activePlayerIndex] == 0)
+            // Within 200 m of the flag: aim at the green, never at a fairway aim point.
+            if (HorizontalDistance(from, pinPosition) <= 200f) return pinPosition;
+            if (UsingCourse)
             {
-                // From the tee, aim at the first aim point (doglegs) when there is one.
+                // Doglegs: aim at the next aim point that is still ahead of the ball (nearer the flag
+                // than the ball, and not right next to it) - from the tee, and also after a short
+                // shot, a drop or a replay that leaves the ball before the corner. Past the last
+                // aim point: the flag.
                 HoleDefinition hole = course.GetHole(holeIndex);
-                if (hole.aimPoints != null && hole.aimPoints.Length > 0)
-                    return hole.aimPoints[0];
+                if (hole != null && hole.aimPoints != null)
+                {
+                    float ballToPin = HorizontalDistance(from, pinPosition);
+                    foreach (Vector3 point in hole.aimPoints)
+                        if (HorizontalDistance(point, pinPosition) < ballToPin - 20f && HorizontalDistance(from, point) > 30f)
+                            return point;
+                }
             }
             return pinPosition;
         }
@@ -1318,6 +1474,7 @@ namespace GolfSimZA.UI
         /// <summary>A new club moves the aim target to that club's distance (until the player moves it).</summary>
         private void LateUpdate()
         {
+            UpdateMiniMapView();
             if (aimPointer == null || ball == null || ballFlightSimulator == null || ballFlightSimulator.IsInFlight) return;
             string club = GolfSimZA.Core.ActiveClub.Resolve();
             if (club == lastClubForAim) return;
@@ -1597,26 +1754,46 @@ namespace GolfSimZA.UI
             AppSettings settings = AppSettings.Current;
             bool flying = ballFlightSimulator != null && ballFlightSimulator.IsInFlight;
             bool hideUi = flying && settings.hideUiOnShot;
+            // The enlarged hole map is on top: it takes the clicks first and is drawn last.
+            if (mapExpanded && (GameMenuOverlay.IsOpen || roundComplete || showScorecard)) mapExpanded = false;
+            if (mapExpanded && Event.current.type != EventType.Repaint)
+            {
+                DrawExpandedHoleMap(margin);
+                if (Event.current.isMouse || Event.current.type == EventType.ScrollWheel) Event.current.Use();
+            }
 
             if (!hideUi)
             {
-                DrawGroundLabels();
-                DrawDistanceBanner();
-                DrawPlayerBanner(margin + 132f, margin);
-                DrawCenterTop(margin);
-                float cardBottom = DrawHoleCard(Screen.width - margin, margin);
-                float tilesBottom = settings.miniMapRight ? Screen.height - margin - MiniMapHeight - 8f : Screen.height - margin;
-                ShotDataTiles.Draw(Screen.width - margin, cardBottom + 8f, simulatorController != null ? simulatorController.LastShot : default(ShotData), tilesBottom);
-                DrawMiniMap();
+                using (GuiMarkers.Get("RoundUI.GroundLabels").Auto()) DrawGroundLabels();
+                using (GuiMarkers.Get("RoundUI.DistanceBanner").Auto()) DrawDistanceBanner();
+                using (GuiMarkers.Get("RoundUI.PlayerBanner").Auto()) DrawPlayerBanner(margin + 132f, margin);
+                using (GuiMarkers.Get("RoundUI.CenterTop").Auto()) DrawCenterTop(margin);
+                float cardBottom;
+                using (GuiMarkers.Get("RoundUI.HoleCard").Auto()) cardBottom = DrawHoleCard(Screen.width - margin, margin);
+                // The LIE panel above the mini map: full (with the description) when the data tiles
+                // still fit above it, otherwise a one-line bar.
+                bool liePanel = CurrentLie(out _) >= 0;
+                lieHeight = LiePanelHeight;
+                if (liePanel && settings.miniMapRight)
+                {
+                    float room = Screen.height - margin - MiniMapHeight - 8f - (cardBottom + 8f + ShotDataTiles.MinimumHeight);
+                    if (room < LiePanelHeight + 8f) lieHeight = LieBarHeight;
+                    if (room < LieBarHeight + 8f) lieHeight = 0f; // no room: the lie goes in the mini map's header
+                }
+                float tilesBottom = settings.miniMapRight ? Screen.height - margin - MiniMapHeight - 8f - (liePanel && lieHeight > 0f ? lieHeight + 8f : 0f) : Screen.height - margin;
+                using (GuiMarkers.Get("RoundUI.ShotDataTiles").Auto()) ShotDataTiles.Draw(Screen.width - margin, cardBottom + 8f, simulatorController != null ? simulatorController.LastShot : default(ShotData), tilesBottom);
+                using (GuiMarkers.Get("RoundUI.MiniMap").Auto()) DrawMiniMap();
+                using (GuiMarkers.Get("RoundUI.Lie").Auto()) DrawLiePanel();
                 bool clubBar = settings.clubSelectorMode == 0 || (settings.clubSelectorMode == 2 && !flying);
-                if (clubBar) ClubBar.Draw(margin, Screen.height - margin);
+                if (clubBar) using (GuiMarkers.Get("RoundUI.ClubBar").Auto()) ClubBar.Draw(margin, Screen.height - margin);
                 else ClubBar.Close();
-                DrawShotCompletionAction();
-                DrawBallReady();
+                using (GuiMarkers.Get("RoundUI.ShotCompletion").Auto()) DrawShotCompletionAction();
+                using (GuiMarkers.Get("RoundUI.BallReady").Auto()) DrawBallReady();
             }
-            DrawBanner();
+            using (GuiMarkers.Get("RoundUI.Banner").Auto()) DrawBanner();
+            if (mapExpanded && Event.current.type == EventType.Repaint) using (GuiMarkers.Get("RoundUI.ExpandedMap").Auto()) DrawExpandedHoleMap(margin);
             bool autoScorecard = scorecardUntil > 0f && Time.unscaledTime < scorecardUntil;
-            if (roundComplete || showScorecard || autoScorecard) DrawScorecard();
+            if (roundComplete || showScorecard || autoScorecard) using (GuiMarkers.Get("RoundUI.Scorecard").Auto()) DrawScorecard();
         }
 
         private void DrawLoading()
@@ -1863,6 +2040,11 @@ namespace GolfSimZA.UI
         private static float MiniMapWidth => Mathf.Clamp(Screen.width * 0.14f, 180f, 240f);
         private static float MiniMapHeight => MiniMapWidth * 1.5f + 36f;
         private HoleMapCamera holeMap;
+        private HoleMapCamera zoomMap;
+        private Vector3 zoomFramedAt = new Vector3(float.MaxValue, 0f, 0f);
+        private int zoomFramedHole = -1, zoomFramedPlayer = -1;
+        private readonly List<Vector3> shotTrail = new List<Vector3>();
+        private bool trailFlying;
 
         private List<Vector3> HolePoints()
         {
@@ -1876,6 +2058,135 @@ namespace GolfSimZA.UI
             return points;
         }
 
+        // ---------------------------------------------------------------- lie (above the mini map)
+
+        private const float LiePanelHeight = 66f;
+        private const float LieBarHeight = 26f;
+        private float lieHeight = LiePanelHeight;
+
+        private enum Lie { TeeBox, Fairway, FirstCut, Rough, Fringe, Green, Bunker, CartPath }
+
+        private static readonly string[] LieNames = { "TEE BOX", "FAIRWAY", "FIRST CUT", "ROUGH", "FRINGE (APRON)", "GREEN", "BUNKER", "CART PATH" };
+
+        private static readonly string[] LieText =
+        {
+            "The flat, designated starting area where you hit the first shot of the hole.",
+            "Short, closely mown grass between the tee and the green - the best place to play from.",
+            "A narrow strip of intermediate-length grass between the fairway and the deep rough.",
+            "Longer, unmowed grass framing the fairway. Harder to play from: the thick grass grabs the club head.",
+            "The short collar around the green, cut a little higher than the green but lower than the fairway.",
+            "The smooth, ultra-short grass around the hole, made for predictable rolls when putting.",
+            "A sand-filled hazard built into the fairway or around the green to penalise poor shots.",
+            "A path for golf carts and walking."
+        };
+
+        private static readonly Color[] LieColours =
+        {
+            new Color(0.45f, 0.80f, 0.40f), new Color(0.35f, 0.78f, 0.35f), new Color(0.55f, 0.72f, 0.30f), new Color(0.62f, 0.62f, 0.25f),
+            new Color(0.40f, 0.85f, 0.50f), new Color(0.30f, 0.90f, 0.55f), new Color(0.93f, 0.84f, 0.60f), new Color(0.70f, 0.70f, 0.70f)
+        };
+
+        private Vector3 lieCachedAt = new Vector3(float.MaxValue, 0f, 0f);
+        private int lieCached = -1, lieLoggedPlayer = -1;
+
+        /// <summary>
+        /// What the active player's ball lies on (-1 = nothing to show: in the air, holed, no course).
+        /// Built courses use their surface map (first cut = rough within 1.5 m of the fairway);
+        /// imported courses the name of the ground piece under the ball.
+        /// </summary>
+        private int CurrentLie(out Vector3 at)
+        {
+            at = ball != null ? ball.position : Vector3.zero;
+            if (ball == null || roundComplete || !UsingCourse) return -1;
+            if (ballFlightSimulator != null && ballFlightSimulator.IsInFlight) return -1;
+            if (activePlayerIndex < 0 || activePlayerIndex >= playerHoled.Length || playerHoled[activePlayerIndex]) return -1;
+            if ((at - lieCachedAt).sqrMagnitude < 0.0004f) return lieCached;
+            lieCachedAt = at;
+            int found = (int)FindLie(at);
+            if (found != lieCached || lieLoggedPlayer != activePlayerIndex)
+                Debug.Log($"[GolfSimZA] Lie: {playerNames[activePlayerIndex]} - {LieNames[found]} (hole {holeIndex + 1}, shot {playerHoleStrokes[activePlayerIndex] + 1})");
+            lieLoggedPlayer = activePlayerIndex;
+            lieCached = found;
+            return lieCached;
+        }
+
+        private Lie FindLie(Vector3 p)
+        {
+            // Off the tee: the first shot of the hole is played from the tee box.
+            if (playerHoleStrokes[activePlayerIndex] == 0) return Lie.TeeBox;
+            if (CourseSurfaceMap.Active)
+            {
+                switch (CourseSurfaceMap.At(p))
+                {
+                    case CourseSurfaceMap.Tee: return Lie.TeeBox;
+                    case CourseSurfaceMap.Fairway: return Lie.Fairway;
+                    case CourseSurfaceMap.Green: return Lie.Green;
+                    case CourseSurfaceMap.Fringe: return Lie.Fringe;
+                    case CourseSurfaceMap.Bunker: return Lie.Bunker;
+                    case CourseSurfaceMap.Path: return Lie.CartPath;
+                    case CourseSurfaceMap.Rough:
+                    case CourseSurfaceMap.Native:
+                        for (int i = 0; i < 8; i++)
+                        {
+                            float a = i * Mathf.PI / 4f;
+                            if (CourseSurfaceMap.At(p + new Vector3(Mathf.Cos(a), 0f, Mathf.Sin(a)) * 1.5f) == CourseSurfaceMap.Fairway) return Lie.FirstCut;
+                        }
+                        return Lie.Rough;
+                }
+            }
+            // Green, fringe or bunker from the surface (a greenside bunker is a bunker, not the green).
+            switch (GreenSurface.LieAt(p))
+            {
+                case GreenSurface.Lie.Bunker: return Lie.Bunker;
+                case GreenSurface.Lie.Fringe: return Lie.Fringe;
+                case GreenSurface.Lie.Green: return Lie.Green;
+            }
+            if (ballFlightSimulator != null && ballFlightSimulator.IsOnGreen(p)) return Lie.Green;
+            // Imported courses: the name of the ground under the ball.
+            if (GroundProbe.TrySample(p, out _, out _) && GroundProbe.LastCollider != null)
+            {
+                string n = GroundProbe.LastCollider.name.ToLowerInvariant();
+                if (n.Contains("fringe") || n.Contains("collar") || n.Contains("apron")) return Lie.Fringe;
+                if (n.Contains("green")) return Lie.Green;
+                if (n.Contains("bunker") || n.Contains("sand") || n.Contains("trap")) return Lie.Bunker;
+                if (n.Contains("tee")) return Lie.TeeBox;
+                if (n.Contains("firstcut") || n.Contains("first cut") || n.Contains("first_cut") || n.Contains("semi") || n.Contains("intermediate")) return Lie.FirstCut;
+                if (n.Contains("fairway")) return Lie.Fairway;
+                if (n.Contains("path") || n.Contains("cart") || n.Contains("road")) return Lie.CartPath;
+            }
+            return Lie.Rough;
+        }
+
+        /// <summary>LIE panel above the mini map: the surface the ball lies on and what it means.</summary>
+        private void DrawLiePanel()
+        {
+            int lie = CurrentLie(out _);
+            if (lie < 0) return;
+            float margin = Mathf.Clamp(Screen.width * 0.015f, 10f, 24f);
+            float width = MiniMapWidth;
+            bool right = AppSettings.Current.miniMapRight;
+            float x = right ? Screen.width - width - margin : margin;
+            float mapTop = Screen.height - MiniMapHeight - margin - (right ? 0f : ClubBar.Height + 10f);
+            float h = right ? lieHeight : LiePanelHeight;
+            if (h <= 0f) return; // shown in the mini map's header instead
+            var r = new Rect(x, mapTop - h - 8f, width, h);
+            GUI.Box(r, GUIContent.none, darkPanel);
+            GUI.color = LieColours[lie];
+            GUI.DrawTexture(new Rect(r.x, r.y, 5f, r.height), whiteTexture);
+            GUI.color = Color.white;
+            if (h < LiePanelHeight)
+            {
+                // One-line bar (small screens): LIE  FAIRWAY
+                GUI.Label(new Rect(r.x + 12f, r.y, 30f, r.height), "LIE", new GUIStyle(mapStyle) { alignment = TextAnchor.MiddleLeft, fontSize = 9 });
+                GUI.Label(new Rect(r.x + 40f, r.y, width - 46f, r.height), LieNames[lie], new GUIStyle(titleStyle) { normal = { textColor = LieColours[lie] } });
+                return;
+            }
+            GUI.Label(new Rect(r.x + 12f, r.y + 4f, width - 18f, 14f), "LIE", new GUIStyle(mapStyle) { alignment = TextAnchor.MiddleLeft, fontSize = 9 });
+            GUI.Label(new Rect(r.x + 12f, r.y + 16f, width - 18f, 18f), LieNames[lie], new GUIStyle(titleStyle) { normal = { textColor = LieColours[lie] } });
+            GUI.Label(new Rect(r.x + 12f, r.y + 34f, width - 18f, r.height - 36f), LieText[lie],
+                new GUIStyle(smallStyle) { wordWrap = true, fontSize = 9, alignment = TextAnchor.UpperLeft });
+        }
+
         private void DrawMiniMap()
         {
             float margin = Mathf.Clamp(Screen.width * 0.015f, 10f, 24f);
@@ -1887,13 +2198,134 @@ namespace GolfSimZA.UI
             float y = Screen.height - height - margin - (right ? 0f : ClubBar.Height + 10f);
 
             GUI.Box(new Rect(x, y, width, height), GUIContent.none, darkPanel);
-            GUI.Label(new Rect(x + 10f, y + 6f, width - 20f, 18f), "HOLE " + (holeIndex + 1), titleStyle);
+            int lie = right && lieHeight <= 0f ? CurrentLie(out _) : -1;
+            if (lie >= 0)
+            {
+                GUI.Label(new Rect(x + 10f, y + 6f, width - 20f, 18f), "HOLE " + (holeIndex + 1), titleStyle);
+                GUI.Label(new Rect(x + 72f, y + 6f, width - 82f, 18f), LieNames[lie], new GUIStyle(mapStyle) { alignment = TextAnchor.MiddleLeft, fontSize = 10, normal = { textColor = LieColours[lie] } });
+            }
+            else GUI.Label(new Rect(x + 10f, y + 6f, width - 20f, 18f), "HOLE " + (holeIndex + 1), titleStyle);
             GUI.Label(new Rect(x + 10f, y + 6f, width - 20f, 18f), Units.DistanceText(DistanceToPin(activePlayerIndex)) + " TO PIN", new GUIStyle(mapStyle) { alignment = TextAnchor.MiddleRight, fontSize = 11 });
-            DrawMiniMapGraphic(new Rect(x + 6f, y + 28f, width - 12f, height - 34f));
+            DrawCornerMap(new Rect(x + 6f, y + 28f, width - 12f, height - 34f));
+            if (!mapExpanded) GUI.Label(new Rect(x + 10f, y + height - 22f, width - 20f, 16f), "⤢ CLICK TO ENLARGE", new GUIStyle(mapStyle) { alignment = TextAnchor.MiddleRight, fontSize = 10 });
+        }
+
+        /// <summary>The hole map is shown enlarged (about 3×) in the middle of the screen.</summary>
+        private bool mapExpanded;
+
+        /// <summary>Enlarged hole map with distances: click / drag on it to aim; ✕ CLOSE or a click outside closes it.</summary>
+        private void DrawExpandedHoleMap(float margin)
+        {
+            float h = Mathf.Min((MiniMapWidth * 1.5f) * 3f, Screen.height - 2f * margin - 70f);
+            float w = h / 1.5f;
+            Rect map = new Rect((Screen.width - w) * 0.5f, margin + 54f, w, h);
+            Rect frame = new Rect(map.x - 8f, map.y - 46f, map.width + 16f, map.height + 54f);
+            Event e = Event.current;
+            if (e.type == EventType.MouseDown && !frame.Contains(e.mousePosition)) { mapExpanded = false; return; }
+            if (e.type == EventType.Repaint)
+            {
+                GUI.color = new Color(0f, 0f, 0f, 0.55f);
+                GUI.DrawTexture(new Rect(0, 0, Screen.width, Screen.height), whiteTexture);
+                GUI.color = Color.white;
+            }
+            GUI.Box(frame, GUIContent.none, darkPanel);
+            GUI.Label(new Rect(frame.x + 12f, frame.y + 6f, frame.width - 140f, 32f), "HOLE " + (holeIndex + 1) + "  •  CLICK OR DRAG TO AIM", new GUIStyle(titleStyle) { fontSize = 14, wordWrap = false });
+            if (GUI.Button(new Rect(frame.xMax - 124f, frame.y + 6f, 114f, 32f), "✕  CLOSE", GolfSimTheme.SmallButton)) { mapExpanded = false; return; }
+            // Only the aim line and one box with its distance (click / drag on the map to move it).
+            DrawMiniMapGraphic(map, true);
+        }
+
+        /// <summary>
+        /// Corner map: the current shot's trail and re-framing of the ball-to-flag view (only when the
+        /// ball has come to rest somewhere new, the player changes or a new hole starts).
+        /// </summary>
+        private void UpdateMiniMapView()
+        {
+            if (ball == null || ballFlightSimulator == null) return;
+            bool flying = ballFlightSimulator.IsInFlight;
+            if (flying)
+            {
+                if (!trailFlying) { shotTrail.Clear(); shotTrail.Add(ball.position); }
+                if ((ball.position - shotTrail[shotTrail.Count - 1]).sqrMagnitude > 0.25f) shotTrail.Add(ball.position);
+                trailFlying = true;
+                return;
+            }
+            if (trailFlying) { shotTrail.Add(ball.position); trailFlying = false; }
+            if (zoomMap == null || !UsingCourse || roundComplete) return;
+            if (zoomFramedHole != holeIndex) shotTrail.Clear();
+            if (zoomFramedHole == holeIndex && zoomFramedPlayer == activePlayerIndex && (ball.position - zoomFramedAt).sqrMagnitude < 1f) return;
+            zoomFramedAt = ball.position;
+            zoomFramedHole = holeIndex;
+            zoomFramedPlayer = activePlayerIndex;
+            // The view from the ball to the flag (at least 90 m long: near the green it shows the green and its surrounds).
+            zoomMap.RenderView(ball.position, pinPosition, AimTarget(ball.position), 90f);
+        }
+
+        /// <summary>
+        /// The corner map, kept simple: the ball, ONE aim line, the shot being played, the flag and
+        /// one distance box. Zoomed from the ball to the flag. A click enlarges it (the full hole).
+        /// </summary>
+        private void DrawCornerMap(Rect area)
+        {
+            if (zoomMap == null || !zoomMap.HasImage) { DrawMiniMapGraphic(area, false); return; }
+            GUI.DrawTexture(area, zoomMap.Texture, ScaleMode.StretchToFill);
+            Event e = Event.current;
+            if (!mapExpanded && e.type == EventType.MouseDown && e.button == 0 && area.Contains(e.mousePosition) && !GameMenuOverlay.IsOpen && !showScorecard)
+            {
+                mapExpanded = true;
+                e.Use();
+            }
+            if (e.type != EventType.Repaint) return;
+            Rect clip = new Rect(0f, 0f, area.width, area.height);
+            Vector2 offset = new Vector2(area.x, area.y);
+            Vector2 M(Vector3 w) => zoomMap.ToMap(w, area) - offset;
+            GUI.BeginClip(area);
+
+            // The shot being played (its flight so far, or the last shot until the next one).
+            for (int i = 1; i < shotTrail.Count; i++)
+                GolfSimZA.Visual.CourseBoundaryLines.Line(M(shotTrail[i - 1]), M(shotTrail[i]), 2f, new Color(1f, 1f, 1f, 0.95f), clip);
+
+            bool flying = ballFlightSimulator != null && ballFlightSimulator.IsInFlight;
+            Vector2 at = ball != null ? M(ball.position) : Vector2.zero;
+            if (!flying && ball != null)
+            {
+                // ONE aim line from the ball to the aim point.
+                Vector3 aimWorld = aimPointer != null && aimPointer.Visible ? aimPointer.Point : AimTarget(ball.position);
+                Vector2 aim = M(aimWorld);
+                GolfSimZA.Visual.CourseBoundaryLines.Line(at, aim, 2f, GolfSimTheme.Gold, clip);
+                GUI.color = GolfSimTheme.Gold;
+                GUI.DrawTexture(new Rect(aim.x - 4f, aim.y - 4f, 8f, 8f), whiteTexture);
+                GUI.color = Color.white;
+
+                // ONE distance box, at the aim point.
+                string text = Units.DistanceText(HorizontalDistance(ball.position, aimWorld));
+                var style = new GUIStyle(mapStyle) { fontSize = 11, normal = { textColor = GolfSimTheme.Gold } };
+                Vector2 size = style.CalcSize(new GUIContent(text));
+                Rect box = new Rect(aim.x - size.x * 0.5f - 6f, aim.y - size.y - 14f, size.x + 12f, size.y + 4f);
+                box.x = Mathf.Clamp(box.x, 2f, area.width - box.width - 2f);
+                box.y = Mathf.Clamp(box.y, 2f, area.height - box.height - 2f);
+                GUI.Box(box, GUIContent.none, darkPanel);
+                GUI.Label(box, text, style);
+            }
+
+            // Flag.
+            Vector2 pinMap = M(pinPosition);
+            GUI.DrawTexture(new Rect(pinMap.x - 1f, pinMap.y - 12f, 2f, 12f), whiteTexture);
+            GUI.DrawTexture(new Rect(pinMap.x + 1f, pinMap.y - 12f, 7f, 5f), redTexture);
+
+            // The ball (the active player's colour).
+            if (ball != null && activePlayerIndex >= 0 && activePlayerIndex < playerHoled.Length && !playerHoled[activePlayerIndex])
+            {
+                GUI.DrawTexture(new Rect(at.x - 6f, at.y - 6f, 12f, 12f), darkerTexture);
+                GUI.color = PlayerColor(activePlayerIndex);
+                GUI.DrawTexture(new Rect(at.x - 5f, at.y - 5f, 10f, 10f), whiteTexture);
+                GUI.color = Color.white;
+            }
+            GUI.EndClip();
         }
 
         /// <summary>Top-down picture of the hole (tee bottom, pin top) with the route, pin and every player's ball.</summary>
-        private void DrawMiniMapGraphic(Rect area)
+        private void DrawMiniMapGraphic(Rect area, bool big)
         {
             List<Vector3> points = HolePoints();
             System.Func<Vector3, Vector2> toMap;
@@ -1927,11 +2359,19 @@ namespace GolfSimZA.UI
                 };
             }
 
-            // Click / drag on the hole map to put the aim target there.
+            // The corner map: a click enlarges it. The enlarged map: click / drag on it to put the aim target there.
             Event e = Event.current;
-            if ((e.type == EventType.MouseDown || e.type == EventType.MouseDrag) && e.button == 0 && area.Contains(e.mousePosition)
+            if (!big)
+            {
+                if (!mapExpanded && e.type == EventType.MouseDown && e.button == 0 && area.Contains(e.mousePosition) && !GameMenuOverlay.IsOpen && !showScorecard)
+                {
+                    mapExpanded = true;
+                    e.Use();
+                }
+            }
+            else if ((e.type == EventType.MouseDown || e.type == EventType.MouseDrag) && e.button == 0 && area.Contains(e.mousePosition)
                 && aimPointer != null && aimPointer.Visible && ball != null && holeMap != null && holeMap.HasImage
-                && aimPointer.CanInteract != null && aimPointer.CanInteract()
+                && ballFlightSimulator != null && !ballFlightSimulator.IsInFlight && !roundComplete && pendingSelection < 0
                 && holeMap.FromMap(e.mousePosition, area, out Vector3 mapPoint))
             {
                 aimPointer.Set(ball.position, mapPoint);
@@ -1941,6 +2381,15 @@ namespace GolfSimZA.UI
 
             GUI.BeginClip(area);
             Vector2 offset = new Vector2(area.x, area.y);
+            if (big)
+            {
+                DrawAimOnly(toMap, offset, new Rect(0f, 0f, area.width, area.height));
+                GUI.EndClip();
+                return;
+            }
+            // Out of bounds (white) and penalty areas (red) on the map.
+            if (UsingCourse)
+                GolfSimZA.Visual.CourseBoundaryLines.DrawOnMap(course, w => toMap(w) - offset, new Rect(0f, 0f, area.width, area.height), big ? 3f : 2f);
             for (int i = 1; i < points.Count; i++)
                 DrawDots(toMap(points[i - 1]) - offset, toMap(points[i]) - offset, whiteTexture);
 
@@ -1969,6 +2418,47 @@ namespace GolfSimZA.UI
                 GUI.color = Color.white;
             }
             GUI.EndClip();
+        }
+
+        /// <summary>
+        /// The enlarged (aiming) map, kept clean: the flag, the ball, ONE aim line from the ball to the
+        /// aim point and ONE box with the distance to where the aim point was clicked / dragged.
+        /// </summary>
+        private void DrawAimOnly(System.Func<Vector3, Vector2> toMap, Vector2 offset, Rect clip)
+        {
+            if (Event.current.type != EventType.Repaint) return;
+            Vector2 pinMap = toMap(pinPosition) - offset;
+            GUI.DrawTexture(new Rect(pinMap.x - 1.5f, pinMap.y - 18f, 3f, 18f), whiteTexture);
+            GUI.DrawTexture(new Rect(pinMap.x + 1.5f, pinMap.y - 18f, 10f, 7f), redTexture);
+            if (ball == null) return;
+            Vector2 at = toMap(ball.position) - offset;
+            bool flying = ballFlightSimulator != null && ballFlightSimulator.IsInFlight;
+            if (!flying)
+            {
+                // The aim point (until the player is ready to hit: where the round will aim).
+                Vector3 aimWorld = aimPointer != null && aimPointer.Visible ? aimPointer.Point : AimTarget(ball.position);
+                Vector2 aim = toMap(aimWorld) - offset;
+                GolfSimZA.Visual.CourseBoundaryLines.Line(at, aim, 3f, GolfSimTheme.Gold, clip);
+                GUI.color = GolfSimTheme.Gold;
+                GUI.DrawTexture(new Rect(aim.x - 6f, aim.y - 6f, 12f, 12f), whiteTexture);
+                GUI.color = Color.white;
+                string text = Units.DistanceText(HorizontalDistance(ball.position, aimWorld));
+                var style = new GUIStyle(mapStyle) { fontSize = 16, normal = { textColor = GolfSimTheme.Gold } };
+                Vector2 size = style.CalcSize(new GUIContent(text));
+                Rect box = new Rect(aim.x - size.x * 0.5f - 8f, aim.y - size.y - 20f, size.x + 16f, size.y + 6f);
+                box.x = Mathf.Clamp(box.x, 2f, clip.width - box.width - 2f);
+                box.y = Mathf.Clamp(box.y, 2f, clip.height - box.height - 2f);
+                GUI.Box(box, GUIContent.none, darkPanel);
+                GUI.Label(box, text, style);
+                GUI.color = Color.white;
+            }
+            if (activePlayerIndex >= 0 && activePlayerIndex < playerHoled.Length && !playerHoled[activePlayerIndex])
+            {
+                GUI.DrawTexture(new Rect(at.x - 8f, at.y - 8f, 16f, 16f), darkerTexture);
+                GUI.color = PlayerColor(activePlayerIndex);
+                GUI.DrawTexture(new Rect(at.x - 7f, at.y - 7f, 14f, 14f), whiteTexture);
+                GUI.color = Color.white;
+            }
         }
 
         private void DrawDots(Vector2 a, Vector2 b, Texture2D texture)

@@ -8,12 +8,13 @@ namespace GolfSimZA.Core
     /// The club the golfer is currently hitting. The Garmin R10 cannot identify the
     /// club, so every real shot is stamped with this value (like other simulators,
     /// the player chooses the club on screen). Resolution order:
-    /// 1. Map My Bag session club, 2. club picked in the distance advisor,
-    /// 3. club picked on the club bar / number keys, 4. Driver.
+    /// 1. Map My Bag session club, 2. club picked on the club bar / number keys or suggested
+    /// for the distance (NEXT CLUB), 3. Driver.
     /// </summary>
     public static class ActiveClub
     {
-        public const string AdvisorClubKey = "GolfSimZA.RoundClubName";
+        /// <summary>Saved by the old CLUB RECOMMENDATION panel (removed); cleared so it can never override the club.</summary>
+        private const string LegacyAdvisorClubKey = "GolfSimZA.RoundClubName";
         private const string MapModeKey = "GolfSimZA.MapMode";
         private const string MapPlayerKey = "GolfSimZA.MapPlayer";
         private const string MapClubKey = "GolfSimZA.MapClubIndex";
@@ -24,8 +25,8 @@ namespace GolfSimZA.Core
         private static float cachedMapTime = -10f;
 
         /// <summary>Legacy 8-slot club bar used by the HUDs and keyboard test mode.</summary>
-        public static readonly string[] SlotNames = { "Driver", "3 Wood", "5 Iron", "7 Iron", "9 Iron", "Pitching Wedge", "Sand Wedge", "Putter" };
-        public static readonly string[] SlotShortNames = { "Driver", "3W", "5i", "7i", "9i", "PW", "SW", "Putter" };
+        public static readonly string[] SlotNames = { "Driver", "3 Wood", "5 Iron", "7 Iron", "9 Iron", "Pitching Wedge", "Sand Wedge", "Lob Wedge" };
+        public static readonly string[] SlotShortNames = { "Driver", "3W", "5i", "7i", "9i", "PW", "SW", "LW" };
 
         public static event Action<string> Changed;
 
@@ -34,8 +35,6 @@ namespace GolfSimZA.Core
         {
             if (string.IsNullOrWhiteSpace(clubName)) return;
             selectedName = clubName.Trim();
-            // An explicit club-bar choice replaces an older advisor recommendation.
-            PlayerPrefs.DeleteKey(AdvisorClubKey);
             Changed?.Invoke(selectedName);
         }
 
@@ -43,6 +42,14 @@ namespace GolfSimZA.Core
         {
             int index = Mathf.Clamp(slot - 1, 0, SlotNames.Length - 1);
             Select(SlotNames[index]);
+        }
+
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
+        private static void ClearLegacyAdvisorClub()
+        {
+            if (!PlayerPrefs.HasKey(LegacyAdvisorClubKey)) return;
+            PlayerPrefs.DeleteKey(LegacyAdvisorClubKey);
+            PlayerPrefs.Save();
         }
 
         public static string Resolve()
@@ -62,9 +69,6 @@ namespace GolfSimZA.Core
                 }
                 if (!string.IsNullOrWhiteSpace(cachedMapName)) return cachedMapName;
             }
-
-            string advisor = PlayerPrefs.GetString(AdvisorClubKey, "");
-            if (!string.IsNullOrWhiteSpace(advisor)) return advisor;
 
             return string.IsNullOrWhiteSpace(selectedName) ? "Driver" : selectedName;
         }
@@ -119,14 +123,12 @@ namespace GolfSimZA.Core
                         cachedBag.Add(new BagClub { Name = profile.ClubNames[i], Short = ShortName(profile.ClubNames[i]), Loft = profile.Lofts[i] });
                     }
                     cachedBag.Sort((a, b) => a.Loft.CompareTo(b.Loft));
-                    // A putter is always available so every hole can be finished.
-                    int putterIndex = profile.FindClubIndex("Putter");
-                    cachedBag.Add(new BagClub { Name = "Putter", Short = "PT", Loft = putterIndex >= 0 ? profile.Lofts[putterIndex] : 3f });
-                    if (cachedBag.Count == 1)
+                    // No putter: there is no putting in GolfSim ZA (balls on the green are putted automatically).
+                    if (cachedBag.Count == 0)
                     {
                         // Empty bag: offer the standard clubs so the player can still hit.
-                        for (int i = 0; i < SlotNames.Length - 1; i++)
-                            cachedBag.Insert(cachedBag.Count - 1, new BagClub { Name = SlotNames[i], Short = SlotShortNames[i], Loft = 10f + i * 6f });
+                        for (int i = 0; i < SlotNames.Length; i++)
+                            cachedBag.Add(new BagClub { Name = SlotNames[i], Short = SlotShortNames[i], Loft = 10f + i * 6f });
                     }
                     cachedBagPlayer = who;
                     cachedBagTime = Time.unscaledTime;
@@ -207,12 +209,59 @@ namespace GolfSimZA.Core
         /// </summary>
         public static float ExpectedCarry(string clubName)
         {
+            return CarryInfo(clubName, out _);
+        }
+
+        /// <summary>True when the current player has mapped this club in MAP MY BAG.</summary>
+        public static bool HasMappedCarry(string clubName)
+        {
+            CarryInfo(clubName, out bool mapped);
+            return mapped;
+        }
+
+        private static readonly System.Collections.Generic.Dictionary<string, float> carryCache = new System.Collections.Generic.Dictionary<string, float>();
+        private static readonly System.Collections.Generic.Dictionary<string, bool> mappedCache = new System.Collections.Generic.Dictionary<string, bool>();
+        private static string carryCachePlayer;
+        private static float carryCacheTime = -10f;
+
+        /// <summary>
+        /// Carry of a club for the current player (MAP MY BAG value when mapped, otherwise an
+        /// estimate from the loft). The HUD asks every frame, so the bag is re-read at most once a second.
+        /// </summary>
+        private static float CarryInfo(string clubName, out bool mapped)
+        {
+            mapped = false;
             if (string.IsNullOrWhiteSpace(clubName) || IsPutter(clubName)) return 0f;
-            GolfBagProfile profile = GolfBagProfile.Load(Player);
+            string who = Player;
+            if (who != carryCachePlayer || Time.unscaledTime - carryCacheTime > 1f || Time.unscaledTime < carryCacheTime)
+            {
+                carryCache.Clear();
+                mappedCache.Clear();
+                carryCachePlayer = who;
+                carryCacheTime = Time.unscaledTime;
+            }
+            string key = clubName.Trim().ToLowerInvariant();
+            if (carryCache.TryGetValue(key, out float cached))
+            {
+                mapped = mappedCache[key];
+                return cached;
+            }
+            GolfBagProfile profile = GolfBagProfile.Load(who);
             int index = profile.FindClubIndex(clubName);
-            if (index >= 0 && profile.CarryMeters[index] > 1f) return profile.CarryMeters[index];
-            float loft = index >= 0 ? profile.Lofts[index] : LoftOf(clubName);
-            return Mathf.Clamp(215f - (loft - 10f) * 3.1f, 35f, 230f);
+            float carry;
+            if (index >= 0 && profile.CarryMeters[index] > 1f)
+            {
+                carry = profile.CarryMeters[index];
+                mapped = true;
+            }
+            else
+            {
+                float loft = index >= 0 ? profile.Lofts[index] : LoftOf(clubName);
+                carry = Mathf.Clamp(215f - (loft - 10f) * 3.1f, 35f, 230f);
+            }
+            carryCache[key] = carry;
+            mappedCache[key] = mapped;
+            return carry;
         }
 
         public static bool IsPutter(string clubName)

@@ -38,6 +38,8 @@ namespace GolfSimZA.Courses
             foreach (GameObject root in scene.GetRootGameObjects())
                 foreach (Terrain t in root.GetComponentsInChildren<Terrain>(true))
                 {
+                    // GolfSimZA's own built ground (OpenStreetMap courses) keeps its own settings.
+                    if (CourseSurfaceMap.IsGroundCollider(t.GetComponent<TerrainCollider>())) continue;
                     t.drawTreesAndFoliage = true;
                     t.drawInstanced = true;
                     // Course trees made for GSPro's tree add-on have no working far-away (billboard)
@@ -83,7 +85,8 @@ namespace GolfSimZA.Courses
 
             // 2. GolfSim ZA trees.
             int mode = AppSettings.Current.addTrees;
-            bool plant = mode == 2 || (mode == 1 && stats.VisibleTrees < FewTrees);
+            // OpenStreetMap courses plant their own trees (mapped trees, belts between the holes, reeds).
+            bool plant = !(course != null && course.IsOpenStreetMap) && (mode == 2 || (mode == 1 && stats.VisibleTrees < FewTrees));
             TreeField field = host.GetComponent<TreeField>();
             if (field == null) field = host.AddComponent<TreeField>();
             field.Clear();
@@ -92,6 +95,9 @@ namespace GolfSimZA.Courses
                 int planted = PlantCourse(field, course, AppSettings.Current.treeDensity, stats.Terrains > 0);
                 result += $", {planted} GolfSim ZA trees planted";
             }
+            // The course's own trees stop the ball too (most have no collider of their own).
+            int solid = CourseObstacles.AddCourseTrees(scene, field);
+            result += $", {solid} course trees solid for the ball";
             field.Commit();
 
             // 3. Rough grass (GSPro's own grass add-on does not run outside GSPro).
@@ -303,6 +309,12 @@ namespace GolfSimZA.Courses
 
         private static bool Allowed(Vector3 p, List<List<Vector3>> lines, List<Vector3> greens, List<Vector3> tees, CourseDefinition course)
         {
+            // Built courses: trees only in the rough and the natural ground (never on paths, sand, fairways).
+            if (CourseSurfaceMap.Active)
+            {
+                int id = CourseSurfaceMap.At(p);
+                if (id != CourseSurfaceMap.Unknown && id != CourseSurfaceMap.Rough && id != CourseSurfaceMap.Native) return false;
+            }
             foreach (List<Vector3> line in lines)
                 for (int i = 1; i < line.Count; i++)
                     if (DistanceToSegment(p, line[i - 1], line[i]) < ClearCorridor) return false;

@@ -7,21 +7,33 @@ namespace GolfSimZA.UI
     public static class ShotDataTiles
     {
         private static GUIStyle tile, value, label, toggle;
-        public const float TileWidth = 118f;
-        public const float TileHeight = 56f;
+        /// <summary>Tile size grows with the screen (large, easy-to-read numbers on a big display).</summary>
+        public static float TileWidth => Mathf.Clamp(Screen.width * 0.085f, 140f, 210f);
+        public static float TileHeight => Mathf.Round(TileWidth * 0.56f);
 
         private static void Ensure()
         {
             GolfSimTheme.Ensure();
             if (tile != null) return;
             tile = new GUIStyle(GUI.skin.box) { border = new RectOffset(8, 8, 8, 8), normal = { background = GolfSimTheme.Rounded(new Color(0.03f, 0.07f, 0.09f, 0.86f), 8) } };
-            value = new GUIStyle(GUI.skin.label) { fontSize = 22, fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleCenter, normal = { textColor = Color.white } };
-            label = new GUIStyle(GUI.skin.label) { fontSize = 10, fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleCenter, normal = { textColor = GolfSimTheme.Muted } };
+            value = new GUIStyle(GUI.skin.label) { fontSize = 30, fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleCenter, normal = { textColor = Color.white } };
+            label = new GUIStyle(GUI.skin.label) { fontSize = 12, fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleCenter, normal = { textColor = GolfSimTheme.Muted } };
             toggle = new GUIStyle(GolfSimTheme.SmallButton) { fixedHeight = 34, fontSize = 13 };
         }
 
         /// <summary>Draws the toggle button and (when shown) the tiles, anchored at the top-right corner.</summary>
         /// <param name="maxBottom">Lowest screen y the tiles may use (tiles shrink to fit); 0 = screen bottom.</param>
+        /// <summary>Smallest height the tiles need below 'top' (button plus rows at the smallest tile size).</summary>
+        public static float MinimumHeight
+        {
+            get
+            {
+                if (!GameOptions.ShowDataTiles) return 34f;
+                int rows = (Selected.Count + 1) / 2;
+                return 40f + rows * 48f;
+            }
+        }
+
         public static void Draw(float right, float top, ShotData shot, float maxBottom = 0f)
         {
             Ensure();
@@ -36,9 +48,11 @@ namespace GolfSimZA.UI
             int rows = (count + 1) / 2;
             if (maxBottom <= 0f) maxBottom = Screen.height;
             float available = maxBottom - (top + 40f);
-            float tileH = Mathf.Clamp(available / rows - 4f, 38f, TileHeight);
+            float tileH = Mathf.Clamp(available / rows - 4f, 44f, TileHeight);
             float tileW = TileWidth;
-            value.fontSize = tileH >= 50f ? 22 : 17;
+            // Numbers as big as the tile allows; captions a little bigger on large tiles.
+            value.fontSize = Mathf.Clamp(Mathf.RoundToInt(tileH * 0.46f), 18, 44);
+            label.fontSize = tileH >= 70f ? 14 : tileH >= 54f ? 12 : 10;
             float x0 = right - tileW * 2f - 4f;
             float y = top + 40f;
             for (int i = 0; i < count; i++)
@@ -135,8 +149,9 @@ namespace GolfSimZA.UI
         private static void DrawTile(Rect r, string text, string caption)
         {
             GUI.Box(r, GUIContent.none, tile);
-            GUI.Label(new Rect(r.x, r.y + 2f, r.width, r.height - 16f), text, value);
-            GUI.Label(new Rect(r.x, r.yMax - 16f, r.width, 14f), caption, label);
+            float capH = label.fontSize + 6f;
+            GUI.Label(new Rect(r.x, r.y + 2f, r.width, r.height - capH), text, value);
+            GUI.Label(new Rect(r.x, r.yMax - capH - 1f, r.width, capH), caption, label);
         }
 
         /// <summary>"2.6 R" style value with a direction letter (no letter at zero).</summary>

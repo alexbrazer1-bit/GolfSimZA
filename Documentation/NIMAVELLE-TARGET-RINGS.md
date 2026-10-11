@@ -37,20 +37,21 @@ A round contains 10 shots. Difficulty changes the scoring radii:
 ## Create and play the scene
 
 1. Open the GolfSimZA project in Unity 6.
-2. Let Unity import `Assets/GolfSim/Minigames/TargetRingsCourse.cs`.
+2. Let Unity import `Assets/GolfSim/MiniGames/TargetRingsCourse.cs`.
 3. Choose **Nimavelle Golf → Build Target Rings Demo Scene** from the Unity menu.
 4. Open `Assets/Scenes/Nimavelle_TargetRings.unity` if it did not open automatically.
 5. Press Play.
-6. Choose a target, difficulty, shot power and aim setting in the left HUD.
-7. Press **HIT SHOT** or the Space key. Press **TAB** or the camera button to switch between aerial and playable views.
-8. Finish 10 shots and choose **NEW ROUND** to restart.
+6. Choose a target and difficulty in the left HUD.
+7. With a paired Garmin Approach R10, wait for **GARMIN R10 CONNECTED — LIVE SHOTS**, then hit a real ball; the game uses measured carry and horizontal launch direction to score the landing against the selected island. Align the R10 with the course's forward axis. Press Space or **HIT SHOT** for a demo shot when no live R10 is connected.
+8. Press **TAB** or the camera button to switch between aerial and playable views.
+9. Finish 10 shots and choose **NEW ROUND** to restart.
 
 ## Implementation status and next integration steps
 
 - The course geometry, target islands, ring meshes, environment dressing, lighting, camera views and HUD are generated procedurally.
-- Shot input currently uses a clearly labelled simplified demo-shot model. It is not a replacement for the project's real ball-flight physics.
-- The player-count control is currently a UI setting; per-player turn order and scoreboards are a next step.
-- The next integration task is to route launch-monitor `ShotData` through the existing GolfSimZA shot/physics pipeline, use actual carry and lateral dispersion to resolve the landing point, and then add turn order, per-player totals, wind, target movement and polished environment assets.
+- Live Garmin Approach R10 shots use the project's direct-Bluetooth bridge and receiver. Target Rings scores the measured carry and horizontal launch direction against the selected island; the practice shot still uses the clearly labelled demo-shot model.
+- Multi-player turn order, editable player names and per-player best scores are supported.
+- The mini-game uses measured landing data to score targets; it does not simulate a full physical ball flight inside the mini-game. Procedural placeholder mountains, trees and islands make the scene self-contained; replace these with original, optimized art assets before calling the visuals production-ready.
 - Procedural placeholder mountains, trees and islands make the first scene self-contained. Replace these with original, optimized art assets before calling the visuals production-ready.
 
 No TrackMan assets, course data or proprietary code are used.

@@ -4,27 +4,45 @@ using UnityEngine;
 namespace GolfSimZA.Physics
 {
     /// <summary>
-    /// Is a point on the putting green itself? Looks at the surface under the point: a course
-    /// object named / textured "Green" (not the fringe, collar, apron or a greenside bunker), or
-    /// terrain whose main ground texture there is a green texture.
+    /// What is under a point near the green? Looks at the surface under the point: a course object
+    /// named / textured "Green", "Fringe" (collar, apron) or "Bunker" (sand, trap), terrain whose
+    /// main ground texture there is one of those, or the surface map of a course GolfSimZA built.
+    /// <see cref="At"/> answers only "green or not" (used by the ball physics).
     /// </summary>
     public static class GreenSurface
     {
         public enum Kind { Unknown, Green, NotGreen }
 
+        /// <summary>The lie as far as putting is concerned.</summary>
+        public enum Lie { Unknown, Green, Fringe, Bunker, Other }
+
         private static readonly RaycastHit[] Hits = new RaycastHit[8];
-        private static readonly Dictionary<Collider, Kind> ColliderKinds = new Dictionary<Collider, Kind>();
-        private static readonly Dictionary<TerrainData, bool[]> TerrainGreenLayers = new Dictionary<TerrainData, bool[]>();
+        private static readonly Dictionary<Collider, Lie> ColliderKinds = new Dictionary<Collider, Lie>();
+        private static readonly Dictionary<TerrainData, Lie[]> TerrainLayerLies = new Dictionary<TerrainData, Lie[]>();
 
         /// <summary>Forget cached surfaces (a new course was loaded).</summary>
         public static void Reset()
         {
             ColliderKinds.Clear();
-            TerrainGreenLayers.Clear();
+            TerrainLayerLies.Clear();
         }
 
         public static Kind At(Vector3 p)
         {
+            Lie lie = LieAt(p);
+            return lie == Lie.Unknown ? Kind.Unknown : lie == Lie.Green ? Kind.Green : Kind.NotGreen;
+        }
+
+        /// <summary>Green, fringe, bunker or something else under the point.</summary>
+        public static Lie LieAt(Vector3 p)
+        {
+            // Courses GolfSimZA builds itself (OpenStreetMap) carry their own surface map.
+            if (CourseSurfaceMap.Active)
+            {
+                int id = CourseSurfaceMap.At(p);
+                if (id != CourseSurfaceMap.Unknown)
+                    return id == CourseSurfaceMap.Green ? Lie.Green : id == CourseSurfaceMap.Fringe ? Lie.Fringe : id == CourseSurfaceMap.Bunker ? Lie.Bunker : Lie.Other;
+            }
             int count = UnityEngine.Physics.RaycastNonAlloc(new Vector3(p.x, p.y + 30f, p.z), Vector3.down, Hits, 200f, ~(1 << GroundProbe.IgnoreRaycastLayer), QueryTriggerInteraction.Ignore);
             int best = -1;
             float bestDistance = float.MaxValue;
@@ -34,23 +52,32 @@ namespace GolfSimZA.Physics
                 bestDistance = Hits[i].distance;
                 best = i;
             }
-            if (best < 0) return Kind.Unknown;
+            if (best < 0) return Lie.Unknown;
             RaycastHit hit = Hits[best];
 
             if (hit.collider is TerrainCollider)
             {
                 Terrain terrain = hit.collider.GetComponent<Terrain>();
-                return terrain != null && TerrainIsGreen(terrain, hit.point) ? Kind.Green : Kind.NotGreen;
+                return terrain != null ? TerrainLie(terrain, hit.point) : Lie.Other;
             }
 
-            if (!ColliderKinds.TryGetValue(hit.collider, out Kind kind))
+            if (!ColliderKinds.TryGetValue(hit.collider, out Lie kind))
             {
                 Renderer r = hit.collider.GetComponent<Renderer>();
                 string name = hit.collider.gameObject.name + " " + (r != null && r.sharedMaterial != null ? r.sharedMaterial.name : "");
-                kind = NameIsGreen(name) ? Kind.Green : Kind.NotGreen;
+                kind = NameLie(name);
                 ColliderKinds[hit.collider] = kind;
             }
             return kind;
+        }
+
+        /// <summary>A surface by its object / material / texture name.</summary>
+        public static Lie NameLie(string raw)
+        {
+            string n = (raw ?? "").ToLowerInvariant();
+            if (n.Contains("bunker") || n.Contains("sand") || n.Contains("trap")) return Lie.Bunker;
+            if (n.Contains("fringe") || n.Contains("collar") || n.Contains("apron")) return Lie.Fringe;
+            return NameIsGreen(n) ? Lie.Green : Lie.Other;
         }
 
         /// <summary>Flagsticks, cups, the ball and trees are not the surface.</summary>
@@ -69,30 +96,39 @@ namespace GolfSimZA.Physics
             return true;
         }
 
-        private static bool TerrainIsGreen(Terrain terrain, Vector3 point)
+        /// <summary>The terrain's main ground texture at the point: green, fringe, bunker sand or other.</summary>
+        private static Lie TerrainLie(Terrain terrain, Vector3 point)
         {
             TerrainData data = terrain.terrainData;
-            if (data == null || data.terrainLayers == null || data.terrainLayers.Length == 0) return false;
-            if (!TerrainGreenLayers.TryGetValue(data, out bool[] green))
+            if (data == null || data.terrainLayers == null || data.terrainLayers.Length == 0) return Lie.Other;
+            if (!TerrainLayerLies.TryGetValue(data, out Lie[] lies))
             {
-                green = new bool[data.terrainLayers.Length];
-                for (int i = 0; i < green.Length; i++)
+                lies = new Lie[data.terrainLayers.Length];
+                for (int i = 0; i < lies.Length; i++)
                 {
                     TerrainLayer l = data.terrainLayers[i];
-                    green[i] = l != null && NameIsGreen(l.name + " " + (l.diffuseTexture != null ? l.diffuseTexture.name : ""));
+                    lies[i] = l == null ? Lie.Other : NameLie(l.name + " " + (l.diffuseTexture != null ? l.diffuseTexture.name : ""));
                 }
-                TerrainGreenLayers[data] = green;
+                TerrainLayerLies[data] = lies;
             }
             bool any = false;
-            foreach (bool g in green) any |= g;
-            if (!any) return false;
+            foreach (Lie l in lies) any |= l != Lie.Other;
+            if (!any) return Lie.Other;
             Vector3 local = point - terrain.transform.position;
             int x = Mathf.Clamp(Mathf.FloorToInt(local.x / data.size.x * data.alphamapWidth), 0, data.alphamapWidth - 1);
             int z = Mathf.Clamp(Mathf.FloorToInt(local.z / data.size.z * data.alphamapHeight), 0, data.alphamapHeight - 1);
             float[,,] w = data.GetAlphamaps(x, z, 1, 1);
-            float greenWeight = 0f;
-            for (int l = 0; l < w.GetLength(2) && l < green.Length; l++) if (green[l]) greenWeight += w[0, 0, l];
-            return greenWeight >= 0.5f;
+            float green = 0f, fringe = 0f, bunker = 0f;
+            for (int l = 0; l < w.GetLength(2) && l < lies.Length; l++)
+            {
+                if (lies[l] == Lie.Green) green += w[0, 0, l];
+                else if (lies[l] == Lie.Fringe) fringe += w[0, 0, l];
+                else if (lies[l] == Lie.Bunker) bunker += w[0, 0, l];
+            }
+            if (bunker >= 0.5f) return Lie.Bunker;
+            if (green >= 0.5f) return Lie.Green;
+            if (fringe >= 0.5f || fringe + green >= 0.5f) return Lie.Fringe;
+            return Lie.Other;
         }
     }
 }

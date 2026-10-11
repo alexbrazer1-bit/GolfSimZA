@@ -86,6 +86,8 @@ namespace GolfSimZA.Core
         public float greenStimp = 10f;
         /// <summary>0 soft, 1 normal, 2 firm fairways.</summary>
         public int fairwayFirmness = 1;
+        /// <summary>Side slopes move the shot: ball above the feet goes left (right-handed), below the feet goes right.</summary>
+        public bool lieSlope = true;
 
         // ---------------- SOUNDS (0..1)
         public float volumeGolf = 0.8f;

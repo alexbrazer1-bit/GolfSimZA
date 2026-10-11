@@ -204,8 +204,31 @@ namespace GolfSimZA.UI
                     int view = Mathf.Clamp(s.secondScreenView, 0, 2);
                     if (Choice(ref y, x, w, "SECOND SCREEN PAGE", new[] { "NUMBERS", "VISUAL", "BOTH (SWITCH EVERY 10 s)" }, ref view)) s.secondScreenView = view;
                 }
-                if (s.secondScreen && game != 0)
-                    Hint(ref y, x, w, "With the second screen on, the game plays on DISPLAY 1 (the Windows main display). To swap them, make the other monitor the main display in Windows Settings → Display.");
+                if (s.secondScreen && DisplaySetup.CanSwap)
+                {
+                    int primary = DisplaySetup.PrimaryMonitor;
+                    if (game != primary)
+                    {
+                        Hint(ref y, x, w, "The game plays on DISPLAY " + (primary + 1) + " (the Windows main display) while the second screen is on. MOVE THE GAME makes DISPLAY " + (game + 1) + " the Windows main display and restarts the game (about 10 s) - the swing data then goes on the other monitor.");
+                        if (GUI.Button(new Rect(x, y, Mathf.Min(w, 460f), 40f), "MOVE THE GAME TO DISPLAY " + (game + 1) + "  (RESTARTS)", GolfSimTheme.AccentButton))
+                        {
+                            s.Save();
+                            swapError = DisplaySetup.MakeMainDisplayAndRestart(game, "Settings: move the game");
+                        }
+                        y += 52f;
+                    }
+                    else
+                    {
+                        Hint(ref y, x, w, "SWAP SCREENS puts the game on the other monitor and the swing data on this one. The other monitor becomes the Windows main display and the game restarts (about 10 s).");
+                        if (GUI.Button(new Rect(x, y, Mathf.Min(w, 460f), 40f), "SWAP SCREENS  (GAME <-> SWING DATA)", GolfSimTheme.AccentButton))
+                        {
+                            s.Save();
+                            swapError = DisplaySetup.SwapScreens();
+                        }
+                        y += 52f;
+                    }
+                    if (swapError != null) Hint(ref y, x, w, "Could not swap the screens: " + swapError);
+                }
                 Switch(ref y, x, w, "ASK WHICH SCREEN TO USE WHEN THE GAME STARTS", ref s.askDisplayOnLaunch);
                 if (screensChanged && Event.current.type == EventType.Repaint)
                 {
@@ -228,16 +251,12 @@ namespace GolfSimZA.UI
             float nextHole = s.autoNextHoleSeconds;
             if (Slider(ref y, x, w, "AUTO NEXT HOLE AFTER", ref nextHole, 1f, 15f, nextHole.ToString("0") + " s", 1f)) s.autoNextHoleSeconds = nextHole;
 
-            Switch(ref y, x, w, "AUTO PUTT  (a ball that stops on the green is holed automatically)", ref s.autoPutt);
-            if (s.autoPutt)
-            {
-                float one = s.autoPuttOneMeters, two = s.autoPuttTwoMeters;
-                if (Slider(ref y, x, w, "ONE PUTT INSIDE", ref one, 0.5f, 10f, Units.DistanceText(one, "0.0"), 0.5f)) s.autoPuttOneMeters = one;
-                if (Slider(ref y, x, w, "TWO PUTTS INSIDE", ref two, 1f, 30f, Units.DistanceText(two, "0.0"), 0.5f)) s.autoPuttTwoMeters = Mathf.Max(two, s.autoPuttOneMeters + 0.5f);
-                int beyond = s.autoPuttBeyond;
-                if (Choice(ref y, x, w, "OUTSIDE THE 2 PUTT CIRCLE", new[] { "3 PUTTS", "PUTT IT MYSELF" }, ref beyond)) s.autoPuttBeyond = beyond;
-                Switch(ref y, x, w, "SHOW THE 1 PUTT (gold) AND 2 PUTT (white) CIRCLES ON THE GREEN", ref s.showPuttCircles);
-            }
+            // There is no putting in GolfSim ZA: every ball that stops on (or just off) the green is putted automatically.
+            Hint(ref y, x, w, "PUTTING IS AUTOMATIC: a ball that stops on or just off the green is holed with 1, 2 or 3 putts from its distance to the hole.");
+            float one = s.autoPuttOneMeters, two = s.autoPuttTwoMeters;
+            if (Slider(ref y, x, w, "ONE PUTT INSIDE", ref one, 0.5f, 10f, Units.DistanceText(one, "0.0"), 0.5f)) s.autoPuttOneMeters = one;
+            if (Slider(ref y, x, w, "TWO PUTTS INSIDE  (further out: 3 putts)", ref two, 1f, 30f, Units.DistanceText(two, "0.0"), 0.5f)) s.autoPuttTwoMeters = Mathf.Max(two, s.autoPuttOneMeters + 0.5f);
+            Switch(ref y, x, w, "SHOW THE 1 PUTT (gold) AND 2 PUTT (white) CIRCLES ON THE GREEN", ref s.showPuttCircles);
             return y;
         }
 
@@ -262,6 +281,8 @@ namespace GolfSimZA.UI
             int firm = s.fairwayFirmness;
             if (Choice(ref y, x, w, "FAIRWAY FIRMNESS", new[] { "SOFT", "NORMAL", "FIRM" }, ref firm)) s.fairwayFirmness = firm;
             Hint(ref y, x, w, "Firm fairways bounce and roll further; soft fairways stop the ball sooner.");
+            Switch(ref y, x, w, "SLOPED LIES  (ball above / below your feet moves the shot)", ref s.lieSlope);
+            Hint(ref y, x, w, "Ball above your feet: the shot goes left for a right-handed golfer (right for a left-hander); below your feet the other way. More slope and more loft move it more; the driver hardly, a wedge a lot. Nothing is shown on screen: read the lie and aim for it yourself, like on a real course.");
             Hint(ref y, x, w, "Gimme distance and mulligans are chosen per round in Round Settings.");
             return y;
         }
@@ -507,6 +528,8 @@ namespace GolfSimZA.UI
             GUI.Label(new Rect(x, y, w, 20f), title, sectionTitle);
             y += 26f;
         }
+
+        private string swapError;
 
         private void Hint(ref float y, float x, float w, string text)
         {

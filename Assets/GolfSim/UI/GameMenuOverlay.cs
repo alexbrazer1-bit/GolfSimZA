@@ -78,6 +78,11 @@ namespace GolfSimZA.UI
 
         private void OnGUI()
         {
+            using (GuiMarkers.Get("GameMenu.OnGUI").Auto()) DrawGui();
+        }
+
+        private void DrawGui()
+        {
             if (!OnPlayScreen) return;
             Ensure();
             GUI.depth = -3000;
@@ -157,8 +162,6 @@ namespace GolfSimZA.UI
             if (Cell(body, ref i, cw, ch, gap, "LIGHTING\n" + GameOptions.Lighting.ToString().ToUpperInvariant(), tile)) GameOptions.CycleLighting();
             if (Cell(body, ref i, cw, ch, gap, "MULLIGAN\n(take shot back)", round ? tile : tileOff) && round) { GameOptions.RequestMulligan(); SetOpen(false); }
             if (Cell(body, ref i, cw, ch, gap, "FLYOVER", round ? tile : tileOff) && round) { SetOpen(false); GameOptions.RequestFlyover(); }
-            if (Cell(body, ref i, cw, ch, gap, "PUTT GRID", !round ? tileOff : GameOptions.PuttGrid ? tileOn : tile) && round) GameOptions.TogglePuttGrid();
-            if (Cell(body, ref i, cw, ch, gap, "PUTT MODE\n(select putter)", tile)) { ActiveClub.Select("Putter"); SetOpen(false); }
             if (Cell(body, ref i, cw, ch, gap, "SHOW FLAG", GameOptions.ShowFlag ? tileOn : tile)) GameOptions.ToggleFlag();
             if (Cell(body, ref i, cw, ch, gap, "SHORTCUTS", tile)) page = Page.Shortcuts;
             if (Cell(body, ref i, cw, ch, gap, "SCORECARD", round ? tile : tileOff) && round) { GameOptions.RequestScorecard(); SetOpen(false); }
@@ -167,7 +170,7 @@ namespace GolfSimZA.UI
             if (round) { if (Cell(body, ref i, cw, ch, gap, "PLAYERS", tile)) OpenSettings(true); }
             else if (Cell(body, ref i, cw, ch, gap, "PLAYERS & BAGS", InMiniGame ? tileOff : tile) && !InMiniGame) Load(PlayersScene);
             AppSettings st = AppSettings.Current;
-            if (Cell(body, ref i, cw, ch, gap, "AUTO PUTT\n" + (st.autoPutt ? "ON  •  " + Units.Distance(st.autoPuttOneMeters).ToString("0.#") + " / " + Units.Distance(st.autoPuttTwoMeters).ToString("0.#") + " " + Units.DistanceUnit : "OFF"), round ? (st.autoPutt ? tileOn : tile) : tileOff) && round) page = Page.AutoPutt;
+            if (Cell(body, ref i, cw, ch, gap, "PUTTING  (AUTO)\n" + Units.Distance(st.autoPuttOneMeters).ToString("0.#") + " / " + Units.Distance(st.autoPuttTwoMeters).ToString("0.#") + " " + Units.DistanceUnit, round ? tileOn : tileOff) && round) page = Page.AutoPutt;
             RoundGameplayUI roundUi = RoundGameplayUI.Current;
             bool canAdd = round && roundUi != null && roundUi.CanAddPlayers;
             if (Cell(body, ref i, cw, ch, gap, "ADD PLAYER\n(join this round)", canAdd ? tile : tileOff) && canAdd) { OpenAddPlayer(); }
@@ -222,9 +225,8 @@ namespace GolfSimZA.UI
             AppSettings s = AppSettings.Current;
             bool changed = false;
             float y = body.y;
-            if (GUI.Button(new Rect(body.x, y, body.width, 44f), s.autoPutt ? "AUTO PUTT  •  ON" : "AUTO PUTT  •  OFF", s.autoPutt ? GolfSimTheme.AccentButton : GolfSimTheme.Button)) { s.autoPutt = !s.autoPutt; changed = true; }
+            GUI.Box(new Rect(body.x, y, body.width, 44f), "PUTTING IS AUTOMATIC", GolfSimTheme.AccentButton);
             y += 56f;
-            GUI.enabled = s.autoPutt;
             GUI.Label(new Rect(body.x, y, body.width, 20f), "1 PUTT CIRCLE (gold)", new GUIStyle(GolfSimTheme.Label) { normal = { textColor = GolfSimTheme.Gold } });
             y += 24f;
             if (Stepper(new Rect(body.x, y, body.width, 42f), Units.DistanceText(s.autoPuttOneMeters, "0.0"), out int d1))
@@ -242,13 +244,9 @@ namespace GolfSimZA.UI
                 changed = true;
             }
             y += 54f;
-            GUI.Label(new Rect(body.x, y, body.width, 20f), "OUTSIDE THE 2 PUTT CIRCLE", GolfSimTheme.Label);
-            y += 24f;
-            if (GUI.Button(new Rect(body.x, y, body.width * 0.49f, 40f), "3 PUTTS", s.autoPuttBeyond == 0 ? GolfSimTheme.TabActive : GolfSimTheme.Button)) { s.autoPuttBeyond = 0; changed = true; }
-            if (GUI.Button(new Rect(body.x + body.width * 0.51f, y, body.width * 0.49f, 40f), "PUTT IT MYSELF", s.autoPuttBeyond == 1 ? GolfSimTheme.TabActive : GolfSimTheme.Button)) { s.autoPuttBeyond = 1; changed = true; }
-            y += 52f;
+            GUI.Label(new Rect(body.x, y, body.width, 20f), "OUTSIDE THE 2 PUTT CIRCLE:  3 PUTTS", GolfSimTheme.Label);
+            y += 36f;
             if (GUI.Button(new Rect(body.x, y, body.width, 40f), s.showPuttCircles ? "CIRCLES ON THE GREEN: SHOWN" : "CIRCLES ON THE GREEN: HIDDEN", s.showPuttCircles ? GolfSimTheme.TabActive : GolfSimTheme.Button)) { s.showPuttCircles = !s.showPuttCircles; changed = true; }
-            GUI.enabled = true;
             if (changed) s.Save();
             if (GUI.Button(new Rect(body.x, body.yMax - 44f, body.width, 44f), "BACK", GolfSimTheme.Button)) page = Page.Grid;
         }

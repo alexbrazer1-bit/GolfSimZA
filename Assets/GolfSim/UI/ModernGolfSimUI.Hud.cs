@@ -207,8 +207,9 @@ namespace GolfSimZA.UI
             // Club selector (drawn last so its club list opens over the tiles) and the target distance.
             if (clubBar) ClubBar.Draw(m, Screen.height - m);
             else ClubBar.Close();
-            Rect pillRect = new Rect(m + (clubBar ? 180f : 0f), Screen.height - m - 44f, 170f, 40f);
-            GUI.Box(pillRect, "TARGET  " + Units.DistanceText(TargetOrAimDistance()), new GUIStyle(tmChip) { fontSize = 18 });
+            Rect pillRect = new Rect(m + (clubBar ? ClubBar.ClubTileWidth + 4f + 70f + 6f : 0f), Screen.height - m - 44f, 170f, 40f);
+            // (Hidden while the club grid is open: the grid sits right of the club tiles.)
+            if (!ClubBar.IsOpen) GUI.Box(pillRect, "TARGET  " + Units.DistanceText(TargetOrAimDistance()), new GUIStyle(tmChip) { fontSize = 18 });
 
             if (settings.showBallReady && !flying && status == "READY")
             {
@@ -273,7 +274,10 @@ namespace GolfSimZA.UI
             GUI.Label(new Rect(r.x + 44f, r.y, r.width - 52f, r.height), calm ? "NO WIND" : Wind.SpeedText() + "   " + Wind.Describe(forward), new GUIStyle(small) { fontSize = 13, fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleLeft, normal = { textColor = Color.white } });
         }
 
-        private const float RangeTileW = 94f, RangeTileH = 50f, RangeTileGap = 5f;
+        /// <summary>Range data tiles grow with the screen so the numbers are easy to read.</summary>
+        private static float RangeTileW => Mathf.Round(Mathf.Clamp(Screen.width * 0.072f, 118f, 170f));
+        private static float RangeTileH => Mathf.Round(RangeTileW * 0.6f);
+        private const float RangeTileGap = 5f;
         private static float RangeTilesWidth => RangeTileW * 3f + RangeTileGap * 2f;
 
         /// <summary>
@@ -293,8 +297,9 @@ namespace GolfSimZA.UI
                 if (def == null) continue;
                 Rect r = new Rect(x + (i % 3) * (RangeTileW + RangeTileGap), y + (i / 3) * (RangeTileH + RangeTileGap), RangeTileW, RangeTileH);
                 Box(r, tmPanel);
-                GUI.Label(new Rect(r.x, r.y + 3f, r.width, 14f), def.Caption(), new GUIStyle(tmTileCaption) { fontSize = 10 });
-                GUI.Label(new Rect(r.x, r.y + 14f, r.width, r.height - 14f), def.Value(shot), new GUIStyle(tmTileValue) { fontSize = 20 });
+                int capSize = RangeTileH >= 90f ? 14 : RangeTileH >= 76f ? 13 : 12;
+                GUI.Label(new Rect(r.x, r.y + 4f, r.width, capSize + 4f), def.Caption(), new GUIStyle(tmTileCaption) { fontSize = capSize });
+                GUI.Label(new Rect(r.x, r.y + capSize + 6f, r.width, r.height - capSize - 8f), def.Value(shot), new GUIStyle(tmTileValue) { fontSize = Mathf.RoundToInt(RangeTileH * 0.42f) });
             }
             float toggleY = (count > 0 ? y : bottom) - 34f;
             if (GUI.Button(new Rect(x, toggleY, RangeTilesWidth, 30f), GameOptions.ShowDataTiles ? "HIDE DATA  ▼" : "SHOW DATA  ▲", GolfSimTheme.SmallButton))
@@ -485,6 +490,7 @@ namespace GolfSimZA.UI
             {
                 aimPointer.Set(range.TeePosition, point);
                 aimMoved = true;
+                SuggestClubForAim();
                 ApplyRangeAim(false);
                 e.Use();
             }
@@ -599,6 +605,22 @@ namespace GolfSimZA.UI
             }
             GUI.color = Color.white;
             GUI.EndClip();
+
+            // Enlarged: distance rings, aim / target distances and the distance under the mouse.
+            if (big)
+            {
+                Vector3? target = range.TargetPosition;
+                string targetName = "TARGET";
+                if (miniGame != null && miniGame.Game != null)
+                {
+                    target = miniGame.Game.MapTarget;
+                    targetName = miniGame.Game.MapTargetName;
+                }
+                Rect a2 = area;
+                MapDistances.FromMap from = (Vector2 p, out Vector3 w) => rangeMap.FromMap(p, a2, out w);
+                MapDistances.Draw(area, w => rangeMap.ToMap(w, a2), from, range.TeePosition,
+                    aimPointer != null && aimPointer.Visible ? aimPointer.Point : (Vector3?)null, target, targetName, false);
+            }
         }
     }
 }

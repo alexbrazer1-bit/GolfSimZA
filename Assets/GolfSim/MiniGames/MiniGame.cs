@@ -86,14 +86,25 @@ namespace GolfSimZA.MiniGames
         /// <summary>A good point to aim at for the player up (used by the automatic mini game test).</summary>
         public virtual Vector3 AimHint(MiniPlayer p) => Focus;
 
+        /// <summary>Main target shown with its distance on the enlarged map (null = none).</summary>
+        public virtual Vector3? MapTarget => null;
+        public virtual string MapTargetName => "TARGET";
+
         /// <summary>The game brings its own map (the driving range is hidden while it is played).</summary>
         public virtual bool HasOwnMap => false;
+        /// <summary>The game's own world (built in Build), or null.</summary>
+        protected GameMap Map;
         /// <summary>Trees for the game's own map (default: none).</summary>
         public virtual void PlantTrees(GolfSimZA.Physics.TreeField field)
         {
+            if (Map != null) { Map.Plant(field); return; }
             field.Clear();
             field.Commit();
         }
+        /// <summary>Where the 3D grass may grow on the game's own map.</summary>
+        public virtual bool GrassAt(Vector3 p) => Map == null || Map.Grass(p);
+        /// <summary>Every player hits the same number of shots (false: the game ends by its own rules).</summary>
+        public virtual bool FixedShots => true;
 
         /// <summary>How far down the range the map shows.</summary>
         public virtual float MapLength => 250f;
@@ -130,6 +141,8 @@ namespace GolfSimZA.MiniGames
         public override bool LowerIsBetter => true;
         public override string ScoreCaption => "CLOSEST";
         public override float MapLength => pin.z + 50f;
+        public override Vector3? MapTarget => pin;
+        public override string MapTargetName => "PIN";
         public override Vector3 AimHint(MiniPlayer p) => pin;
 
         public override void Build()
@@ -142,6 +155,9 @@ namespace GolfSimZA.MiniGames
                 case 3: lo = 150f; hi = 200f; break;
             }
             pin = new Vector3(Random.Range(-8f, 8f), 0f, Random.Range(lo, hi));
+            // Own map: an island green in a lake.
+            Map = new IslandGreenMap(pin, Mathf.Max(16f, Range.GreenWidth * 0.5f + 5f));
+            Map.Build(Root, Random.Range(1, 9999));
             Range.SetTarget(pin);
             Range.SetTargetVisible(true);
             // Distance rings round the pin: 3, 6 and 10 m.
@@ -150,8 +166,15 @@ namespace GolfSimZA.MiniGames
             MiniGameWorld.Ring(Root, pin, 9.85f, 10.15f, new Color(1f, 1f, 1f, 0.30f), 0.07f);
         }
 
+        public override bool HasOwnMap => true;
+
         public override ShotOutcome Score(MiniPlayer p, Vector3 landing, Vector3 rest, ShotData shot)
         {
+            if (Runner.BallInWater)
+            {
+                p.Log.Add("WET");
+                return new ShotOutcome("SPLASH!  IN THE WATER  •  NO DISTANCE", 0f, false);
+            }
             bool holed = Runner.BallHoled;
             float d = holed ? 0f : Flat(rest, pin);
             bool best = float.IsNaN(p.Best) || d < p.Best;
@@ -180,8 +203,12 @@ namespace GolfSimZA.MiniGames
         public override float MapLength => 390f;
         public override Vector3 AimHint(MiniPlayer p) => new Vector3(0f, 0f, 240f);
 
+        public override bool HasOwnMap => true;
+
         public override void Build()
         {
+            Map = new StadiumMap();
+            Map.Build(Root, Random.Range(1, 9999));
             Range.SetTarget(new Vector3(0f, 0f, 300f));
             Range.SetTargetVisible(false);
             Color line = new Color(1f, 1f, 1f, 0.75f);
@@ -220,6 +247,7 @@ namespace GolfSimZA.MiniGames
 
     public sealed class TargetRingsGame : MiniGame
     {
+        public override bool HasOwnMap => true;
         private static readonly float[] Radii = { 2.5f, 5.5f, 9f, 13f };
         private static readonly int[] Points = { 100, 50, 25, 10 };
         private static readonly Color[] RingColours =
@@ -238,6 +266,9 @@ namespace GolfSimZA.MiniGames
             targets[0] = new Vector3(Random.Range(-16f, -6f), 0f, Random.Range(75f, 95f));
             targets[1] = new Vector3(Random.Range(6f, 16f), 0f, Random.Range(125f, 145f));
             targets[2] = new Vector3(Random.Range(-10f, 4f), 0f, Random.Range(175f, 200f));
+            // Own map: the targets float on rafts in a lake.
+            Map = new TargetLakeMap(targets);
+            Map.Build(Root, Random.Range(1, 9999));
             Range.SetTarget(targets[1]);
             Range.SetTargetVisible(false);
             foreach (Vector3 t in targets)
@@ -259,7 +290,7 @@ namespace GolfSimZA.MiniGames
             float bestD = float.MaxValue;
             for (int i = 0; i < targets.Length; i++)
             {
-                float d = Flat(landing, targets[i]);
+                float d = Flat(rest, targets[i]);
                 if (d < bestD) { bestD = d; best = i; }
             }
             int ring = -1;
@@ -267,12 +298,12 @@ namespace GolfSimZA.MiniGames
             if (ring < 0)
             {
                 p.Log.Add("0");
-                return new ShotOutcome("MISSED  •  " + Dist(bestD) + " FROM THE " + TargetNames[best] + " TARGET", 0f, false);
+                return new ShotOutcome((Runner.BallInWater ? "SPLASH  •  " : "MISSED  •  ") + Dist(bestD) + " FROM THE " + TargetNames[best] + " TARGET", 0f, false);
             }
             float pts = Points[ring] * multiplier[best];
             p.Score += pts;
-            // The ball mark stays in the player's colour where it landed.
-            MiniGameWorld.Shape(PrimitiveType.Sphere, Root, new Vector3(landing.x, MiniGameWorld.Ground(landing) + 0.3f, landing.z), Vector3.one * 0.6f, p.Color, "BallMark", 0.6f);
+            // The ball mark stays in the player's colour where the ball stopped.
+            MiniGameWorld.Shape(PrimitiveType.Sphere, Root, new Vector3(rest.x, MiniGameWorld.Ground(rest) + 0.3f, rest.z), Vector3.one * 0.6f, p.Color, "BallMark", 0.6f);
             p.Log.Add(pts.ToString("0"));
             string[] ringNames = { "BULLSEYE!", "RED RING", "WHITE RING", "BLUE RING" };
             return new ShotOutcome("+" + pts.ToString("0") + "  •  " + ringNames[ring] + "  •  " + TargetNames[best] + " TARGET" + (multiplier[best] > 1f ? " x" + multiplier[best].ToString("0.#") : ""), pts, true);
@@ -304,7 +335,10 @@ namespace GolfSimZA.MiniGames
         private bool Solo => Players.Count == 1;
         public override Vector3 AimHint(MiniPlayer p) => new Vector3(0f, CanyonEdgeMap.TopY(edge - zone * 0.5f, edge), edge - zone * 0.5f);
         public override bool HasOwnMap => true;
+        public override bool FixedShots => false;
         public override float MapLength => edge + 70f;
+        public override Vector3? MapTarget => new Vector3(0f, CanyonEdgeMap.TopY(edge, edge), edge);
+        public override string MapTargetName => "EDGE";
         private int mapSeed;
 
         public override void Build()
@@ -431,9 +465,9 @@ namespace GolfSimZA.MiniGames
     // =====================================================================================
 
     /// <summary>
-    /// Nine numbered flags, each in a circle. Land inside a circle to take the flag: the circle fills
-    /// with your colour and your ball mark stays where it landed. Another player takes it from you
-    /// only by landing inside AND closer to the flag than your ball.
+    /// Nine numbered flags, each in a circle. Stop the ball inside a circle to take the flag: the circle fills
+    /// with your colour and your ball mark stays where it stopped. Another player takes it from you
+    /// only by finishing inside AND closer to the flag than your ball.
     /// </summary>
     public sealed class CaptureFlagsGame : MiniGame
     {
@@ -447,11 +481,12 @@ namespace GolfSimZA.MiniGames
             public float Best = float.MaxValue;
             public Vector3 Mark;
             public Renderer Cloth;
-            public GameObject Ring, Fill, MarkObject;
+            public GameObject Ring, Fill, MarkObject, Line;
         }
 
         private readonly List<FlagSpot> flags = new List<FlagSpot>();
         public override string ScoreCaption => "FLAGS";
+        public override bool HasOwnMap => true;
 
         public override void Clear() => flags.Clear();
 
@@ -476,9 +511,15 @@ namespace GolfSimZA.MiniGames
             {
                 var f = new FlagSpot { Number = n++, Pos = new Vector3(s.x + Random.Range(-3f, 3f), 0f, s.y + Random.Range(-6f, 6f)) };
                 f.Radius = 7f + f.Pos.z * 0.02f;
+                flags.Add(f);
+            }
+            // Own map: highland hills, every flag on its own flat green.
+            Map = new HighlandMap(flags.ConvertAll(f => f.Pos), flags.ConvertAll(f => f.Radius));
+            Map.Build(Root, Random.Range(1, 9999));
+            foreach (FlagSpot f in flags)
+            {
                 MiniGameWorld.Flag(Root, f.Pos, Color.white, out f.Cloth);
                 Paint(f, Color.white);
-                flags.Add(f);
             }
         }
 
@@ -489,7 +530,10 @@ namespace GolfSimZA.MiniGames
             if (f.Fill != null) Object.Destroy(f.Fill);
             bool taken = f.Owner >= 0;
             f.Fill = MiniGameWorld.Disc(Root, f.Pos, f.Radius - 0.35f, taken ? new Color(owner.r, owner.g, owner.b, 0.78f) : new Color(1f, 1f, 1f, 0.12f), 0.06f, "FlagFill");
+            // A taken flag is highlighted: thick rim in the holder's colour inside a white edge.
             f.Ring = MiniGameWorld.Ring(Root, f.Pos, f.Radius - 0.35f, f.Radius, new Color(1f, 1f, 1f, 0.95f), 0.075f, "FlagRing");
+            if (taken)
+                MiniGameWorld.Ring(Root, f.Pos, f.Radius - 1.1f, f.Radius - 0.35f, new Color(owner.r, owner.g, owner.b, 1f), 0.08f, "FlagRingOwner").transform.SetParent(f.Ring.transform, true);
         }
 
         public override ShotOutcome Score(MiniPlayer p, Vector3 landing, Vector3 rest, ShotData shot)
@@ -499,7 +543,7 @@ namespace GolfSimZA.MiniGames
             float bestD = float.MaxValue;
             foreach (FlagSpot f in flags)
             {
-                float d = Flat(landing, f.Pos);
+                float d = Flat(rest, f.Pos);
                 if (d < bestD) { bestD = d; hit = f; }
             }
             p.MissTotal += bestD;
@@ -513,7 +557,7 @@ namespace GolfSimZA.MiniGames
                 if (bestD < hit.Best)
                 {
                     hit.Best = bestD;
-                    SetMark(hit, landing, p.Color);
+                    SetMark(hit, rest, p.Color);
                     p.Log.Add("=");
                     return new ShotOutcome("FLAG " + hit.Number + " MADE SAFER  •  " + Dist(bestD) + " FROM IT", 0f, true);
                 }
@@ -541,7 +585,7 @@ namespace GolfSimZA.MiniGames
             p.Score = p.Flags;
             MiniGameWorld.Recolour(hit.Cloth, p.Color);
             Paint(hit, p.Color);
-            SetMark(hit, landing, p.Color);
+            SetMark(hit, rest, p.Color);
             MiniGameWorld.Sparkle(Root, hit.Pos, p.Color);
             GolfSimAudio.PlayCatch();
             Runner.MapChanged();
@@ -549,10 +593,14 @@ namespace GolfSimZA.MiniGames
             return new ShotOutcome(text + "  •  " + Dist(bestD) + " FROM IT  •  " + p.Flags + (p.Flags == 1 ? " FLAG" : " FLAGS"), 1f, true);
         }
 
-        /// <summary>The holder's ball mark: a dot in their colour where the ball landed.</summary>
+        /// <summary>The holder's ball mark: a dot in their colour where the ball stopped.</summary>
         private void SetMark(FlagSpot f, Vector3 landing, Color c)
         {
             if (f.MarkObject != null) Object.Destroy(f.MarkObject);
+            if (f.Line != null) Object.Destroy(f.Line);
+            // The holder's distance: a line in their colour from the ball to the flag.
+            if (Flat(landing, f.Pos) > 0.6f)
+                f.Line = MiniGameWorld.GroundLine(Root, landing, f.Pos, 0.25f, new Color(c.r, c.g, c.b, 0.95f), "ClosestLine");
             f.Mark = landing;
             f.MarkObject = MiniGameWorld.Shape(PrimitiveType.Sphere, Root, new Vector3(landing.x, MiniGameWorld.Ground(landing) + 0.35f, landing.z), Vector3.one * 0.7f, c, "BallMark", 0.6f);
             MiniGameWorld.Ring(f.MarkObject.transform.parent, landing, 0.55f, 0.85f, Color.white, 0.09f, "BallMarkRing").transform.SetParent(f.MarkObject.transform, true);
@@ -573,8 +621,19 @@ namespace GolfSimZA.MiniGames
                 if (f.Owner >= 0)
                 {
                     Vector2 b = to(f.Mark);
+                    Color oc = Players[f.Owner].Color;
+                    GolfSimZA.Visual.CourseBoundaryLines.Line(b, m, 2f, Color.white);
                     GUI.color = Color.white;
                     GUI.DrawTexture(new Rect(b.x - 3f, b.y - 3f, 6f, 6f), dot);
+                    // Holder's closest distance next to the circle.
+                    var st = new GUIStyle(GUI.skin.label) { fontSize = 11, fontStyle = FontStyle.Bold, normal = { textColor = Color.white } };
+                    string t = Dist(f.Best);
+                    Vector2 size = st.CalcSize(new GUIContent(t));
+                    Rect box = new Rect(m.x + r + 2f, m.y - size.y * 0.5f, size.x + 8f, size.y);
+                    GUI.color = new Color(oc.r * 0.6f, oc.g * 0.6f, oc.b * 0.6f, 0.9f);
+                    GUI.DrawTexture(box, Texture2D.whiteTexture);
+                    GUI.color = Color.white;
+                    GUI.Label(new Rect(box.x + 4f, box.y, size.x, size.y), t, st);
                 }
             }
             GUI.color = Color.white;
@@ -589,11 +648,19 @@ namespace GolfSimZA.MiniGames
 
         public override void DrawLabels(Camera cam)
         {
+            // Taken flags first (their tags win when tags would overlap): number, holder and how
+            // close the holder's ball is - the distance the next player has to beat.
             foreach (FlagSpot f in flags)
             {
-                Color c = f.Owner >= 0 ? Players[f.Owner].Color : Color.white;
+                if (f.Owner < 0) continue;
+                MiniPlayer holder = Players[f.Owner];
+                Runner.WorldLabel(cam, f.Pos + Vector3.up * 6.8f, f.Number + "  " + holder.Name.ToUpperInvariant() + "  " + Dist(f.Best), holder.Color, 15, f.Pos + Vector3.up * 5.2f);
+            }
+            foreach (FlagSpot f in flags)
+            {
+                if (f.Owner >= 0) continue;
                 // Number tag on top of the pole, distance tag beside it (like a yardage board).
-                Runner.WorldLabel(cam, f.Pos + Vector3.up * 6.8f, f.Number.ToString(), c, 14, f.Pos + Vector3.up * 5.2f);
+                Runner.WorldLabel(cam, f.Pos + Vector3.up * 6.8f, f.Number.ToString(), Color.white, 14, f.Pos + Vector3.up * 5.2f);
                 Runner.WorldLabel(cam, f.Pos + new Vector3(f.Radius * 0.55f, 1.2f, 0f), Units.Distance(f.Pos.magnitude).ToString("0") + " " + Units.DistanceUnit, Color.white, 12);
             }
         }

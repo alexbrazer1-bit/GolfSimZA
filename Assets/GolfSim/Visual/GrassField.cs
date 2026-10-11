@@ -139,7 +139,9 @@ namespace GolfSimZA.Visual
             var watch = Stopwatch.StartNew();
             foreach (Vector2Int key in wanted)
             {
-                if (watch.Elapsed.TotalMilliseconds > 3.0) break;
+                // While a ball flies the camera chases it: build grass in small slices so the
+                // flight stays smooth (the rest is filled in once the ball stops).
+                if (watch.Elapsed.TotalMilliseconds > (GolfSimZA.Physics.BallFlightSimulator.AnyInFlight ? 0.8 : 3.0)) break;
                 int lod = FlatDistance(key, camPos) < NearLod ? 0 : 1;
                 if (chunks.TryGetValue(key, out ChunkData old) && old.Mesh != null) Destroy(old.Mesh);
                 chunks[key] = new ChunkData { Mesh = Build(key, density * (lod == 0 ? 1f : 0.45f), lod), Lod = lod };
@@ -263,6 +265,16 @@ namespace GolfSimZA.Visual
             groundColour = new Color(0f, 0f, 0f, 0f);
             heightScale = 1f;
             Collider col = hit.collider;
+            if (GolfSimZA.Physics.CourseSurfaceMap.IsGroundCollider(col))
+            {
+                // Built (OpenStreetMap) course: grass only in the rough and the natural ground around it.
+                Count("built course ground");
+                int id = GolfSimZA.Physics.CourseSurfaceMap.At(hit.point);
+                if (id != GolfSimZA.Physics.CourseSurfaceMap.Rough && id != GolfSimZA.Physics.CourseSurfaceMap.Native) return false;
+                groundColour = id == GolfSimZA.Physics.CourseSurfaceMap.Native ? new Color(0.46f, 0.47f, 0.27f, 1f) : new Color(0.29f, 0.42f, 0.17f, 1f);
+                heightScale = id == GolfSimZA.Physics.CourseSurfaceMap.Native ? 1.35f : 1f;
+                return true;
+            }
             if (col is TerrainCollider tc)
             {
                 Count("terrain:" + col.name);

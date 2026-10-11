@@ -9,6 +9,9 @@ using GolfSimZA.Courses;
 using GolfSimZA.LaunchMonitors;
 using GolfSimZA.Physics;
 using GolfSimZA.UI;
+using Unity.Profiling;
+using Unity.Profiling.LowLevel;
+using Unity.Profiling.LowLevel.Unsafe;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 
@@ -48,7 +51,7 @@ namespace GolfSimZA.Testing
         private float waitSince;
         private bool waitingForAuto;
         private int autoAdvances;
-        private bool guestTried, guestAdded, guestExistedBefore;
+        private bool guestTried, guestAdded, guestExistedBefore, soloRound;
         private int guestHole = -1, guestIndex = -1;
         private string savedPlayers;
         private int[] savedTeams;
@@ -101,6 +104,44 @@ namespace GolfSimZA.Testing
             report.AppendLine("ADD PLAYER check done (guest joined on hole " + (guestHole + 1) + ")");
         }
         private int shotsThisHole, lastHole = -1, totalShots;
+        private bool mapPictureTaken;
+
+        private System.Collections.IEnumerator MapPicture()
+        {
+            // Wait until the player is ready to hit (the aim pointer is shown), at most 5 seconds.
+            float until = Time.unscaledTime + 5f;
+            while (Time.unscaledTime < until)
+            {
+                AimPointer pointer = round != null ? Get<AimPointer>("aimPointer") : null;
+                if (pointer != null && pointer.Visible) break;
+                yield return null;
+            }
+            yield return new WaitForEndOfFrame();
+            var tex = new Texture2D(Screen.width, Screen.height, TextureFormat.RGB24, false);
+            tex.ReadPixels(new Rect(0, 0, Screen.width, Screen.height), 0, 0);
+            tex.Apply();
+            string logs = Path.Combine(Directory.GetParent(Application.dataPath).FullName, "Logs");
+            Directory.CreateDirectory(logs);
+            File.WriteAllBytes(Path.Combine(logs, "round-map.png"), tex.EncodeToPNG());
+            Destroy(tex);
+            report.AppendLine("  picture: Logs/round-map.png (enlarged hole map)");
+            yield return new WaitForSecondsRealtime(1.5f);
+            if (round != null) typeof(RoundGameplayUI).GetField("mapExpanded", F).SetValue(round, false);
+        }
+        private int cornerPictureShot = -1;
+
+        private System.Collections.IEnumerator CornerPicture(int hole, int shot)
+        {
+            yield return new WaitForEndOfFrame();
+            int w = Mathf.RoundToInt(Screen.width * 0.3f), h = Mathf.RoundToInt(Screen.height * 0.62f);
+            var tex = new Texture2D(w, h, TextureFormat.RGB24, false);
+            tex.ReadPixels(new Rect(Screen.width - w, 0, w, h), 0, 0);
+            tex.Apply();
+            string dir = Path.Combine(Directory.GetParent(Application.dataPath).FullName, "Logs", "corner-maps");
+            Directory.CreateDirectory(dir);
+            File.WriteAllBytes(Path.Combine(dir, "h" + hole.ToString("00") + "-s" + shot + ".png"), tex.EncodeToPNG());
+            Destroy(tex);
+        }
         private float stateSince;
         private string lastState = "";
         private float holeStartTime;
@@ -127,6 +168,7 @@ namespace GolfSimZA.Testing
         {
             Application.logMessageReceived += OnLog;
             savedPlayers = CourseSession.PlayerNames;
+            soloRound = !string.IsNullOrEmpty(savedPlayers) && savedPlayers.Split('|').Length == 1;
             savedTeams = CourseSession.Teams;
             guestExistedBefore = GolfSimZA.Players.PlayerRoster.Current.Find(GuestName) != null;
             AppSettings s = AppSettings.Current;
@@ -143,11 +185,14 @@ namespace GolfSimZA.Testing
         private void OnDestroy()
         {
             Application.logMessageReceived -= OnLog;
+            foreach (CostRecorder c in costs) c.Recorder.Dispose();
+            costs.Clear();
             Time.timeScale = 1f;
         }
 
         private void OnLog(string message, string stack, LogType type)
         {
+            logLines++;
             if (type == LogType.Error || type == LogType.Exception || type == LogType.Assert)
             {
                 string line = type + ": " + message + (string.IsNullOrEmpty(stack) ? "" : "  @ " + stack.Split('\n')[0]);
@@ -172,6 +217,31 @@ namespace GolfSimZA.Testing
             throw new MissingMethodException(name);
         }
 
+        // Ball flight smoothness: the ball must move on screen every frame while it is in the air.
+        private int airFrames, stillFrames;
+        private float slowestAirFrame;
+        private Vector3 lastAirPos;
+        private bool wasAir;
+
+        private void LateUpdate()
+        {
+            if (finished || round == null) return;
+            BallFlightSimulator f = Get<BallFlightSimulator>("ballFlightSimulator");
+            if (f == null || f.Ball == null) return;
+            if (f.IsAirborne)
+            {
+                if (wasAir)
+                {
+                    airFrames++;
+                    if ((f.Ball.position - lastAirPos).sqrMagnitude < 1e-8f) stillFrames++;
+                    slowestAirFrame = Mathf.Max(slowestAirFrame, Time.unscaledDeltaTime);
+                }
+                lastAirPos = f.Ball.position;
+                wasAir = true;
+            }
+            else wasAir = false;
+        }
+
         private void Update()
         {
             if (finished)
@@ -186,6 +256,7 @@ namespace GolfSimZA.Testing
 
             frames++;
             frameTime += Time.unscaledDeltaTime;
+            SampleFrameCosts();
 
             if (Get<bool>("waitingForCourse")) return;
             string error = Get<string>("courseError");
@@ -201,6 +272,7 @@ namespace GolfSimZA.Testing
                 holeStartTime = Time.unscaledTime;
                 frames = 0;
                 frameTime = 0f;
+                ResetFrameCosts();
             }
 
             if (Get<bool>("roundComplete"))
@@ -210,6 +282,29 @@ namespace GolfSimZA.Testing
             }
 
             bool flying = flight != null && flight.IsInFlight;
+            if (testerWasFlying && !flying && flight != null)
+            {
+                LearnRoll(flight);
+                // A ball must never come to rest ON the water (it goes in).
+                if (!flight.InWater && GroundProbe.TrySample(flight.Ball.position + Vector3.up * 0.5f, out float wy, out _) && GroundProbe.LastWasWater
+                    && Mathf.Abs(flight.Ball.position.y - wy) < 0.3f)
+                    problems.Add("Hole " + (hole + 1) + ": the ball came to rest on top of the water (" + GroundProbe.LastCollider.name + ")");
+                if (waterTestPending)
+                {
+                    waterTestPending = false;
+                    report.AppendLine("  WATER TEST: " + (flight.InWater ? "the ball went into the water" : "the ball did not reach the water (stopped " + Flat(flight.Ball.position - waterTestTarget).ToString("0") + " m from the aim point)"));
+                    if (flight.InWater) waterTestIn = true;
+                }
+                if (treeTestPending)
+                {
+                    treeTestPending = false;
+                    int hits = BallFlightSimulator.TreeHits + BallFlightSimulator.ObstacleHits - treeTestHitsBefore;
+                    float carry = flight.CarryMeters;
+                    report.AppendLine("  TREE TEST: the ball hit " + hits + " tree / obstacle part(s), carried " + carry.ToString("0") + " m and stopped " + Flat(flight.Ball.position - treeTestFrom).ToString("0") + " m out (tree at " + treeTestDistance.ToString("0") + " m)");
+                    if (hits == 0) problems.Add("TREE TEST: the ball flew through the tree " + treeTestDistance.ToString("0") + " m away without touching it");
+                }
+            }
+            testerWasFlying = flying;
             bool flyover = presentation != null && presentation.IsFlyingOver;
             int pending = Get<int>("pendingSelection");
             bool waitingNext = Get<bool>("waitingForNextPlayer");
@@ -225,6 +320,25 @@ namespace GolfSimZA.Testing
                 stateSince = Time.unscaledTime;
                 if (flying) return;
                 PickUp(active); // get going again
+                return;
+            }
+
+            // Once: a picture of the enlarged hole map with its distances (as if the corner map was clicked).
+            if (totalShots == 1 && !flying && !mapPictureTaken)
+            {
+                mapPictureTaken = true;
+                typeof(RoundGameplayUI).GetField("mapExpanded", F).SetValue(round, true);
+                StartCoroutine(MapPicture());
+                nextActionAt = Time.unscaledTime + 3f;
+                return;
+            }
+
+            // Before every shot: a picture of the corner map as the player sees it (Logs/corner-maps).
+            if (!flying && cornerPictureShot != totalShots && Time.unscaledTime >= nextActionAt && !(Get<bool>("wasInFlight") || Get<bool>("awaitingFinish") || flyover))
+            {
+                cornerPictureShot = totalShots;
+                StartCoroutine(CornerPicture(hole + 1, shotsThisHole + 1));
+                nextActionAt = Time.unscaledTime + 0.5f;
                 return;
             }
 
@@ -276,7 +390,8 @@ namespace GolfSimZA.Testing
             }
 
             // ADD PLAYER mid round: a guest joins at the start of the round's third hole.
-            if (!guestTried && hole == Get<int>("holeIndex") && hole >= FirstHoleOfRound() + 2 && holeStartsNow())
+            // (Not in a one-player test round: that stays one player.)
+            if (!guestTried && !soloRound && hole == Get<int>("holeIndex") && hole >= FirstHoleOfRound() + 2 && holeStartsNow())
                 AddGuest(hole);
 
             bool[] holed = Get<bool[]>("playerHoled");
@@ -309,10 +424,67 @@ namespace GolfSimZA.Testing
             nextActionAt = Time.unscaledTime + 0.5f;
         }
 
+        private bool waterTestDone, waterTestPending, waterTestIn;
+        private Vector3 waterTestTarget;
+
+        /// <summary>The nearest water 70-200 m from the ball (any direction), found by probing the ground.</summary>
+        private static bool FindWaterAhead(Vector3 from, out Vector3 point)
+        {
+            point = from;
+            for (float r = 70f; r <= 200f; r += 10f)
+                for (int a = 0; a < 72; a++)
+                {
+                    float ang = a * 5f * Mathf.Deg2Rad;
+                    Vector3 p = from + new Vector3(Mathf.Sin(ang), 0f, Mathf.Cos(ang)) * r;
+                    if (!GroundProbe.TrySample(new Vector3(p.x, from.y + 200f, p.z), out float h, out _) || !GroundProbe.LastWasWater) continue;
+                    point = new Vector3(p.x, h, p.z);
+                    return true;
+                }
+            return false;
+        }
+
+        private int lieCheckedHole = -1;
+        private int lieGreen, lieFringe, lieBunker, lieGreenBad, lieFringeBad, lieBunkerBad;
+
+        /// <summary>
+        /// LIE CHECK (once per hole): points around the flag on the green, the fringe and in bunkers
+        /// are put to the round's own auto-putt rule. Green and fringe must be putted, a bunker never.
+        /// </summary>
+        private void LieCheck(int hole, Vector3 pin)
+        {
+            if (lieCheckedHole == hole) return;
+            lieCheckedHole = hole;
+            MethodInfo rule = typeof(RoundGameplayUI).GetMethod("AutoPuttFrom", BindingFlags.Instance | BindingFlags.NonPublic);
+            if (rule == null) { problems.Add("LIE CHECK: AutoPuttFrom not found"); return; }
+            int green = 0, fringe = 0, bunker = 0, greenBad = 0, fringeBad = 0, bunkerBad = 0;
+            var args = new object[2];
+            for (float x = -40f; x <= 40f; x += 1.5f)
+                for (float z = -40f; z <= 40f; z += 1.5f)
+                {
+                    if (x * x + z * z > 40f * 40f) continue;
+                    Vector3 p = new Vector3(pin.x + x, pin.y, pin.z + z);
+                    p.y = GroundProbe.HeightAt(p + Vector3.up * 50f);
+                    GreenSurface.Lie lie = GreenSurface.LieAt(p);
+                    if (lie != GreenSurface.Lie.Green && lie != GreenSurface.Lie.Fringe && lie != GreenSurface.Lie.Bunker) continue;
+                    args[0] = p;
+                    int putts = (int)rule.Invoke(round, args);
+                    bool putted = putts != 0;
+                    if (lie == GreenSurface.Lie.Bunker) { bunker++; if (putted) bunkerBad++; }
+                    else if (lie == GreenSurface.Lie.Fringe) { fringe++; if (!putted) fringeBad++; }
+                    else if (Get<BallFlightSimulator>("ballFlightSimulator").IsOnGreen(p)) { green++; if (!putted) greenBad++; }
+                }
+            lieGreen += green; lieFringe += fringe; lieBunker += bunker;
+            lieGreenBad += greenBad; lieFringeBad += fringeBad; lieBunkerBad += bunkerBad;
+            if (bunkerBad > 0) problems.Add("LIE CHECK hole " + (hole + 1) + ": " + bunkerBad + " of " + bunker + " bunker spots were auto-putted");
+            if (fringeBad > 0) problems.Add("LIE CHECK hole " + (hole + 1) + ": " + fringeBad + " of " + fringe + " fringe spots were not auto-putted");
+            if (greenBad > 0) problems.Add("LIE CHECK hole " + (hole + 1) + ": " + greenBad + " of " + green + " green spots were not auto-putted");
+        }
+
         private void Hit(BallFlightSimulator flight, int active)
         {
             Transform ball = Get<Transform>("ball");
             Vector3 pin = Get<Vector3>("pinPosition");
+            LieCheck(Get<int>("holeIndex"), pin);
             Vector3 target = (Vector3)Call("AimTarget", ball.position);
             Vector3 d = target - ball.position;
             d.y = 0f;
@@ -320,14 +492,85 @@ namespace GolfSimZA.Testing
             float distance = d.magnitude;
             if (toPin < distance) { target = pin; distance = toPin; }
 
-            bool onGreen = flight.IsOnGreen(ball.position);
+            // Uphill / downhill: a real golfer plays a shot up a slope longer ("plays like" about
+            // 1 m per metre of rise; a short chip up a bank needs to carry onto the top, so more).
+            float rise = target.y - ball.position.y;
+            distance = Mathf.Max(1f, distance + rise * (rise > 0f && distance < 40f ? 2f : 1f));
+            // A shot that hardly moved the ball (stuck below a bank, in heavy rough): hit it harder.
+            // (Not after a penalty: a ball back on the same spot after water / out of bounds is a replay, not stuck.)
+            int strokesNow = Get<int[]>("playerHoleStrokes")[active];
+            bool samePlayerSameHole = lastHitHole == Get<int>("holeIndex") && lastHitPlayer == active;
+            if (samePlayerSameHole && strokesNow - lastHitStrokes == 1 && Flat(ball.position - lastHitFrom) < 3f) stuckHits++;
+            else stuckHits = 0;
+            if (stuckHits > 0) distance *= Mathf.Pow(1.5f, Mathf.Min(stuckHits, 4));
+            // Replaying from the same spot after a penalty again (a tree in the way, the ball drops
+            // into the water): like a real golfer, play out sideways - 25 / 50 degrees left or right.
+            if (samePlayerSameHole && strokesNow - lastHitStrokes >= 2 && Flat(ball.position - lastHitFrom) < 3f) replays++;
+            else replays = 0;
+            if (replays >= 1)
+            {
+                float turn = (replays % 2 == 1 ? 1f : -1f) * (replays <= 2 ? 25f : 50f);
+                Vector3 dir = Quaternion.Euler(0f, turn, 0f) * (target - ball.position);
+                dir.y = 0f;
+                float escape = Mathf.Min(distance, 90f);
+                target = ball.position + dir.normalized * escape;
+                target.y = GroundProbe.HeightAt(target);
+                distance = escape;
+            }
+            lastHitFrom = ball.position;
+            lastHitHole = Get<int>("holeIndex");
+            lastHitPlayer = active;
+            lastHitStrokes = strokesNow;
+
+            // Like a real golfer, land the ball short so it runs out to the target (learnt per club).
+            float runOut = 1f;
+
+            // Once per round (from hole 3): a shot straight at the nearest water 70-200 m away, to
+            // check the ball goes in (it used to skip over imported courses' water like glass).
+            if (!waterTestDone && Get<int>("holeIndex") >= 2 && FindWaterAhead(ball.position, out Vector3 waterPoint))
+            {
+                waterTestDone = true;
+                waterTestPending = true;
+                waterTestTarget = waterPoint;
+                target = waterPoint;
+                d = target - ball.position;
+                d.y = 0f;
+                distance = d.magnitude;
+                report.AppendLine("  WATER TEST: shot straight at water " + distance.ToString("0") + " m away (" + GroundProbe.LastCollider.name + ")");
+            }
+
+            // Once per round (hole 2, first tee shot): a low shot straight at a tree, to check the
+            // course's trees stop the ball (it used to fly through them).
+            if (!treeTestDone && Get<int>("holeIndex") == 1 && shotsThisHole == 0 && TreeField.Active != null
+                && TreeField.Active.FindTreeAhead(ball.position, target - ball.position, 50f, 170f, 35f, out Vector3 treeBase, out float crownY))
+            {
+                treeTestDone = true;
+                treeTestFrom = ball.position;
+                treeTestDistance = Flat(treeBase - ball.position);
+                treeTestHitsBefore = BallFlightSimulator.TreeHits + BallFlightSimulator.ObstacleHits;
+                treeTestPending = true;
+                string tClub = "7 Iron";
+                ActiveClub.Select(tClub);
+                AimPointer ta = Get<AimPointer>("aimPointer");
+                if (ta != null) { ta.Set(ball.position, treeBase); Call("OnAimMoved", ta.Point); }
+                ShotData low = TestShotProvider.BuildShot(tClub, ActiveClub.LoftOf(tClub));
+                // Flat enough to be at crown height when it reaches the tree, long enough to carry well past it.
+                float crownRise = Mathf.Max(2f, crownY - ball.position.y);
+                low.LaunchAngleDeg = Mathf.Clamp(Mathf.Atan2(crownRise * 1.6f, treeTestDistance) * Mathf.Rad2Deg, 3f, 14f);
+                low.BackSpinRpm = 3500f;
+                low.LaunchDirectionDeg = 0f;
+                low.SpinAxisDeg = 0f;
+                lastClub = null;
+                shotsThisHole++;
+                totalShots++;
+                report.AppendLine("  TREE TEST: low 7 iron straight at a tree " + treeTestDistance.ToString("0") + " m away (crown " + (crownY - ball.position.y).ToString("0") + " m up)");
+                shots.Inject(low);
+                return;
+            }
             string club;
             float factor = 1f;
-            if (onGreen || toPin < 12f)
-            {
-                club = "Putter";
-            }
-            else
+            // No putting in GolfSim ZA: on the green the ball is putted automatically, so every
+            // shot here is a full or a chip shot.
             {
                 // Shortest club that reaches, else the longest; wedges are hit softer for short shots.
                 club = null;
@@ -338,10 +581,13 @@ namespace GolfSimZA.Testing
                     if (ActiveClub.IsPutter(c.Name)) continue;
                     float carry = ActiveClub.ExpectedCarry(c.Name);
                     if (carry > longest) { longest = carry; longestClub = c.Name; }
-                    if (carry >= distance * 0.95f && carry < bestCarry) { bestCarry = carry; club = c.Name; }
+                    float roll = 1f + (rollRatio.TryGetValue(c.Name, out float rr) ? rr : 0.04f);
+                    if (carry * roll >= distance * 0.95f && carry < bestCarry) { bestCarry = carry; club = c.Name; }
                 }
                 if (club == null) club = longestClub;
                 float expected = ActiveClub.ExpectedCarry(club);
+                runOut = 1f + (rollRatio.TryGetValue(club, out float clubRoll) ? clubRoll : 0.04f);
+                distance /= runOut;
                 if (distance < expected) factor = Mathf.Clamp(Mathf.Pow(distance / expected, 0.75f), 0.25f, 1f);
             }
             ActiveClub.Select(club);
@@ -354,20 +600,32 @@ namespace GolfSimZA.Testing
             }
 
             ShotData shot = TestShotProvider.BuildShot(club, ActiveClub.LoftOf(club));
-            if (ActiveClub.IsPutter(club))
-            {
-                // Roughly the speed that rolls the ball to the hole on a normal green.
-                shot.BallSpeedMps = Mathf.Clamp(Mathf.Sqrt(2f * 0.65f * Mathf.Max(0.3f, toPin)) * 1.05f, 0.6f, 12f);
-                shot.LaunchDirectionDeg = UnityEngine.Random.Range(-1f, 1f);
-            }
-            else
-            {
-                shot.BallSpeedMps *= factor;
-                shot.ClubSpeedMps *= factor;
-            }
+            shot.BallSpeedMps *= factor;
+            shot.ClubSpeedMps *= factor;
             shotsThisHole++;
             totalShots++;
+            lastClub = club;
             shots.Inject(shot);
+        }
+
+        // Run-out learnt per club (total / carry - 1) from this test's own shots.
+        private readonly Dictionary<string, float> rollRatio = new Dictionary<string, float>();
+        private Vector3 lastHitFrom = new Vector3(float.MaxValue, 0f, 0f);
+        private int lastHitHole = -1, lastHitPlayer = -1, lastHitStrokes, stuckHits, replays;
+        private bool treeTestDone, treeTestPending;
+        private Vector3 treeTestFrom;
+        private float treeTestDistance;
+        private int treeTestHitsBefore;
+        private string lastClub;
+        private bool testerWasFlying;
+
+        /// <summary>Called when a shot finishes: remembers how far that club ran out after landing.</summary>
+        private void LearnRoll(BallFlightSimulator flight)
+        {
+            if (lastClub == null || ActiveClub.IsPutter(lastClub) || flight.CarryMeters < 5f || flight.InWater) return;
+            float ratio = Mathf.Clamp(flight.TotalMeters / flight.CarryMeters - 1f, 0f, 0.4f);
+            rollRatio[lastClub] = Mathf.Lerp(rollRatio.TryGetValue(lastClub, out float old) ? old : 0.04f, ratio, 0.5f);
+            lastClub = null;
         }
 
         private void PickUp(int p)
@@ -416,6 +674,134 @@ namespace GolfSimZA.Testing
             try { File.WriteAllText(Path.Combine(Application.persistentDataPath, "autoplay-trace.txt"), trace.ToString()); } catch (Exception) { }
             report.AppendLine(string.Format("Hole {0,2}  par {1}  |  {2}  |  {3} shots  |  {4:0}s  |  {5:0} fps{6}",
                 hole + 1, par, string.Join(", ", parts), shotsThisHole, seconds, fps, string.IsNullOrEmpty(status) ? "" : "  |  " + status));
+            report.AppendLine("  " + ResourceCounts());
+            report.AppendLine("  " + FrameCosts(hole));
+        }
+
+        /// <summary>Counts of scene objects and loaded resources: a number that grows every hole shows a leak (the frame rate falling during a round).</summary>
+        private static string ResourceCounts()
+        {
+            int objects = UnityEngine.Object.FindObjectsByType<Transform>(FindObjectsInactive.Include, FindObjectsSortMode.None).Length;
+            int renderers = UnityEngine.Object.FindObjectsByType<Renderer>(FindObjectsInactive.Exclude, FindObjectsSortMode.None).Length;
+            int lines = UnityEngine.Object.FindObjectsByType<LineRenderer>(FindObjectsInactive.Exclude, FindObjectsSortMode.None).Length;
+            int materials = Resources.FindObjectsOfTypeAll<Material>().Length;
+            int textures = Resources.FindObjectsOfTypeAll<Texture>().Length;
+            int meshes = Resources.FindObjectsOfTypeAll<Mesh>().Length;
+            long managed = GC.GetTotalMemory(false) / (1024 * 1024);
+            long unity = UnityEngine.Profiling.Profiler.GetTotalAllocatedMemoryLong() / (1024 * 1024);
+            return string.Format("resources: {0} objects, {1} renderers, {2} lines, {3} materials, {4} textures, {5} meshes, {6} MB managed, {7} MB allocated, {8} log lines",
+                objects, renderers, lines, materials, textures, meshes, managed, unity, logLines);
+        }
+
+        private static int logLines;
+
+        // ---------------- Frame cost per hole (why the frame rate falls during a round)
+
+        private sealed class CostRecorder
+        {
+            public string Name;
+            public bool IsTime;
+            public ProfilerRecorder Recorder;
+            public double Sum;
+            public double FirstHole = -1;
+            public double LastHole;
+        }
+
+        private readonly List<CostRecorder> costs = new List<CostRecorder>();
+        private int costFrames;
+        private bool costsStarted;
+
+        private static bool WantCost(string n) =>
+            n == "Main Thread" || n == "PlayerLoop" || n == "EditorLoop" || n == "Render Thread" ||
+            n == "Batches Count" || n == "SetPass Calls Count" || n == "Triangles Count" || n == "Shadow Casters Count" ||
+            n == "GC Allocated In Frame" || n == "Physics.Simulate" || n == "Camera.Render" || n == "Gfx.WaitForPresentOnGfxThread" ||
+            n == "Gfx.WaitForGfxCommandsFromMainThread" || n == "GUI.Repaint" || n == "GUIUtility.ProcessEvent" ||
+            n.StartsWith("Update.", StringComparison.Ordinal) || n.StartsWith("PreLateUpdate.", StringComparison.Ordinal) ||
+            n.StartsWith("PostLateUpdate.", StringComparison.Ordinal) || n.StartsWith("FixedUpdate.", StringComparison.Ordinal) ||
+            n.StartsWith("PreUpdate.", StringComparison.Ordinal) || n.StartsWith("EarlyUpdate.", StringComparison.Ordinal) ||
+            n.StartsWith(GuiMarkers.Prefix, StringComparison.Ordinal);
+
+        private void StartFrameCosts()
+        {
+            costsStarted = true;
+            var handles = new List<ProfilerRecorderHandle>();
+            foreach (string n in GuiMarkers.Names) GuiMarkers.Get(n); // make sure the interface sections exist before listing
+            ProfilerRecorderHandle.GetAvailable(handles);
+            var seen = new HashSet<string>();
+            foreach (ProfilerRecorderHandle h in handles)
+            {
+                ProfilerRecorderDescription d = ProfilerRecorderHandle.GetDescription(h);
+                if (!WantCost(d.Name) || !seen.Add(d.Name)) continue;
+                try
+                {
+                    costs.Add(new CostRecorder
+                    {
+                        Name = d.Name,
+                        IsTime = d.UnitType == ProfilerMarkerDataUnit.TimeNanoseconds,
+                        Recorder = ProfilerRecorder.StartNew(d.Category, d.Name, 1)
+                    });
+                }
+                catch (Exception) { }
+            }
+        }
+
+        private void SampleFrameCosts()
+        {
+            if (!costsStarted) StartFrameCosts();
+            costFrames++;
+            foreach (CostRecorder c in costs)
+                if (c.Recorder.Valid) c.Sum += c.Recorder.LastValue;
+        }
+
+        private void ResetFrameCosts()
+        {
+            costFrames = 0;
+            foreach (CostRecorder c in costs) c.Sum = 0;
+        }
+
+        private double Average(CostRecorder c) => costFrames > 0 ? c.Sum / costFrames / (c.IsTime ? 1e6 : 1.0) : 0;
+
+        /// <summary>Average cost per frame on this hole: frame time split, draw calls, and the slowest engine steps.</summary>
+        private string FrameCosts(int hole)
+        {
+            if (costs.Count == 0 || costFrames == 0) return "frame costs: not available";
+            foreach (CostRecorder c in costs)
+            {
+                double a = Average(c);
+                c.LastHole = a;
+                if (c.FirstHole < 0) c.FirstHole = a;
+            }
+            string Avg(string name, string format)
+            {
+                foreach (CostRecorder c in costs) if (c.Name == name) return Average(c).ToString(format);
+                return "-";
+            }
+            var top = new List<CostRecorder>();
+            foreach (CostRecorder c in costs) if (c.IsTime && c.Name.Contains(".")) top.Add(c);
+            top.Sort((a, b) => Average(b).CompareTo(Average(a)));
+            var parts = new List<string>();
+            for (int i = 0; i < top.Count && i < 5; i++) parts.Add(top[i].Name + " " + Average(top[i]).ToString("0.0"));
+            var ui = new List<CostRecorder>();
+            foreach (CostRecorder c in costs) if (c.Name.StartsWith(GuiMarkers.Prefix, StringComparison.Ordinal)) ui.Add(c);
+            ui.Sort((a, b) => Average(b).CompareTo(Average(a)));
+            var uiParts = new List<string>();
+            for (int i = 0; i < ui.Count && i < 6; i++) uiParts.Add(ui[i].Name.Substring(GuiMarkers.Prefix.Length) + " " + Average(ui[i]).ToString("0.00"));
+            return "interface (ms): " + string.Join(", ", uiParts) + "\n  frame (ms): main " + Avg("Main Thread", "0.0") + ", player loop " + Avg("PlayerLoop", "0.0") + ", editor " + Avg("EditorLoop", "0.0") +
+                   ", render thread " + Avg("Render Thread", "0.0") + "  |  draw calls " + Avg("Batches Count", "0") + ", set-pass " + Avg("SetPass Calls Count", "0") +
+                   ", triangles " + Avg("Triangles Count", "0") + ", GC/frame " + Avg("GC Allocated In Frame", "0") + " B  |  slowest: " + string.Join(", ", parts);
+        }
+
+        /// <summary>The engine steps whose cost grew most between the first and the last hole.</summary>
+        private string FrameCostGrowth()
+        {
+            var grown = new List<CostRecorder>();
+            foreach (CostRecorder c in costs) if (c.IsTime && c.FirstHole >= 0) grown.Add(c);
+            if (grown.Count == 0) return "Frame cost growth: not measured";
+            grown.Sort((a, b) => (b.LastHole - b.FirstHole).CompareTo(a.LastHole - a.FirstHole));
+            var parts = new List<string>();
+            for (int i = 0; i < grown.Count && i < 8; i++)
+                parts.Add(grown[i].Name + " " + grown[i].FirstHole.ToString("0.00") + " -> " + grown[i].LastHole.ToString("0.00"));
+            return "Frame cost growth, first to last hole (ms per frame): " + string.Join(", ", parts);
         }
 
         private void Finish()
@@ -423,6 +809,14 @@ namespace GolfSimZA.Testing
             finished = true;
             CheckGuest();
             report.AppendLine("Auto next player moves: " + autoAdvances);
+            report.AppendLine("Ball hit trees " + BallFlightSimulator.TreeHits + " time(s) and bounced off hills / objects " + BallFlightSimulator.ObstacleHits + " time(s) this session");
+            report.AppendLine(string.Format("Ball flight smoothness: {0} frames in the air, {1} without the ball moving, slowest frame {2:0.0} ms",
+                airFrames, stillFrames, slowestAirFrame * 1000f));
+            if (airFrames > 0 && stillFrames > airFrames * 0.02f)
+                problems.Add("Ball flight stutters: the ball stood still in " + stillFrames + " of " + airFrames + " frames in the air");
+            report.AppendLine(waterTestDone ? "WATER TEST: " + (waterTestIn ? "passed - the ball went into the water" : "the shot did not reach the water (see above)") : "WATER TEST: no water within 200 m of the ball on this course");
+            report.AppendLine("LIE CHECK (around every flag): " + lieGreen + " green spots (" + (lieGreen - lieGreenBad) + " auto-putted), " + lieFringe + " fringe spots (" + (lieFringe - lieFringeBad) + " auto-putted), " + lieBunker + " bunker spots (" + lieBunkerBad + " auto-putted)");
+            report.AppendLine(FrameCostGrowth());
             report.AppendLine();
             report.AppendLine("Result: " + (Call("ResultText") as string));
             report.AppendLine("Total shots hit: " + totalShots);

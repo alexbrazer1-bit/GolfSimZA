@@ -197,7 +197,9 @@ namespace GolfSimZA.Physics
             RenderSettings.fogEndDistance = Mathf.Max(RenderSettings.fogStartDistance + 200f, Mathf.Min(1600f, draw * 0.9f));
         }
 
-        private void Update()
+        // LateUpdate: the camera moves after the ball has moved this frame (in Update), so it follows
+        // the ball smoothly instead of a frame behind.
+        private void LateUpdate()
         {
             if (flyover != null) return;
             if (!followDuringFlight || flight == null || ball == null || followCamera == null)

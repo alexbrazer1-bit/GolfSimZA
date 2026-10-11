@@ -41,6 +41,11 @@ namespace GolfSimZA.UI
 
         private void OnGUI()
         {
+            using (GuiMarkers.Get("SimulatorHUD.OnGUI").Auto()) DrawGui();
+        }
+
+        private void DrawGui()
+        {
             EnsureStyles();
 
             if (simulatorController == null)
@@ -74,7 +79,7 @@ namespace GolfSimZA.UI
 
             GUILayout.Space(6);
             GUILayout.Label("CLUBS", sectionStyle);
-            GUILayout.Label("1 Driver   2 3W   3 5i   4 7i   5 9i   6 PW   7 SW   8 Putter", smallStyle);
+            GUILayout.Label("1 Driver   2 3W   3 5i   4 7i   5 9i   6 PW   7 SW   8 LW", smallStyle);
             GUILayout.Label("Press SPACE to hit the selected club.", smallStyle);
 
             GUILayout.Space(6);

@@ -17,6 +17,7 @@ namespace GolfSimZA.Courses
 
         private AssetBundle bundle;
         private Scene courseScene;
+        private GolfSimZA.Courses.Osm.OsmCourseScene builtCourse;
 
         public CourseDefinition Course { get; private set; }
         public bool IsLoading { get; private set; }
@@ -43,7 +44,15 @@ namespace GolfSimZA.Courses
 
             if (!CourseLibrary.IsAvailable(course))
             {
-                Fail($"Course file not found:\n{course.bundleFile}\nCopy the course folder back to that location or import it again.");
+                Fail(course.IsOpenStreetMap
+                    ? "The course's ground files are missing. Build it again under IMPORT COURSES → OPENSTREETMAP."
+                    : $"Course file not found:\n{course.bundleFile}\nCopy the course folder back to that location or import it again.");
+                yield break;
+            }
+
+            if (course.IsOpenStreetMap)
+            {
+                yield return LoadBuiltCourse(course);
                 yield break;
             }
 
@@ -137,6 +146,65 @@ namespace GolfSimZA.Courses
             Loaded?.Invoke(course);
         }
 
+        /// <summary>A course GolfSimZA built from OpenStreetMap: the 3D course is made from its saved files.</summary>
+        private IEnumerator LoadBuiltCourse(CourseDefinition course)
+        {
+            Course = course;
+            IsLoading = true;
+            StatusText = "Building the course...";
+            builtCourse = new GolfSimZA.Courses.Osm.OsmCourseScene();
+            yield return builtCourse.Build(course, (status, progress) => { StatusText = status; Progress = progress * 0.95f; });
+            if (builtCourse.Error != null)
+            {
+                Fail(builtCourse.Error);
+                yield break;
+            }
+            courseScene = builtCourse.Scene;
+
+            StatusText = "Preparing course...";
+            Progress = 0.96f;
+            yield return null;
+            Camera ourCamera = Camera.main;
+            foreach (GameObject root in gameObject.scene.GetRootGameObjects())
+                foreach (string demo in DemoObjects)
+                    if (root.name == demo) root.SetActive(false);
+            if (ourCamera != null)
+            {
+                ourCamera.farClipPlane = Mathf.Clamp(GolfSimZA.Core.AppSettings.Current.drawDistanceMeters, 500f, 15000f);
+                ourCamera.nearClipPlane = Mathf.Min(ourCamera.nearClipPlane, 0.1f);
+                if (RenderSettings.skybox != null) ourCamera.clearFlags = CameraClearFlags.Skybox;
+            }
+            GolfSimZA.Physics.FlightPresentation.ApplyFog();
+            Debug.Log("[GolfSimZA] Course lighting: " + GolfSimZA.Visual.CourseLighting.Apply(courseScene));
+            // The built ground is lit by the sun and sky like the range: less sky fill than imported courses need.
+            RenderSettings.ambientIntensity = 0.85f;
+            // The course water shades by depth (clear at the bank, darker further in): it reads the camera depth.
+            if (ourCamera != null) ourCamera.depthTextureMode |= DepthTextureMode.Depth;
+            try
+            {
+                Debug.Log("[GolfSimZA] Course look: " + CourseScenery.ImproveCourse(courseScene, Course, gameObject, ourCamera));
+                GolfSimZA.Physics.TreeField field = GetComponent<GolfSimZA.Physics.TreeField>();
+                if (field != null)
+                {
+                    int mapped = builtCourse.PlantTrees(field);
+                    field.Commit();
+                    Debug.Log("[GolfSimZA] " + mapped + " OpenStreetMap trees planted");
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning("[GolfSimZA] Course look could not be applied: " + ex);
+            }
+            UnityEngine.Physics.SyncTransforms();
+
+            IsLoading = false;
+            IsLoaded = true;
+            Progress = 1f;
+            StatusText = "";
+            Debug.Log($"[GolfSimZA] Course '{course.name}' built from OpenStreetMap: {builtCourse.Summary}");
+            Loaded?.Invoke(course);
+        }
+
         private void PrepareCourseScene()
         {
             Camera ourCamera = Camera.main;
@@ -160,7 +228,9 @@ namespace GolfSimZA.Courses
             GolfSimZA.Physics.FlightPresentation.ApplyFog();
 
             ShaderRepair.Report report = ShaderRepair.Repair(courseScene);
+            Debug.Log("[GolfSimZA] Course water: " + GolfSimZA.Physics.WaterSurface.Prepare(courseScene));
             Debug.Log("[GolfSimZA] Course shaders: " + report);
+            Debug.Log("[GolfSimZA] Course lighting: " + GolfSimZA.Visual.CourseLighting.Apply(courseScene));
 
             foreach (GameObject root in ourScene.GetRootGameObjects())
             {
@@ -203,6 +273,8 @@ namespace GolfSimZA.Courses
 
         private void OnDestroy()
         {
+            builtCourse?.Dispose();
+            builtCourse = null;
             // The course scene is unloaded with the round; release the course file too.
             if (bundle != null)
             {
