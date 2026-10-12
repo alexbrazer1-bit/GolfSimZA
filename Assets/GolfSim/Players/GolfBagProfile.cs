@@ -87,7 +87,9 @@ namespace GolfSimZA.Players
                 profile.CarryMeters[18] = 0f;
                 profile.TotalMeters[18] = 0f;
 
-                profile.Save(playerName);
+                // Not a change by the golfer: written without marking the bag as changed (so it never
+                // replaces a mapped bag from the other PC - see SharedPlayerData).
+                profile.WriteValues(key);
                 PlayerPrefs.SetInt(key + ".SetupVersion", DefaultBagSetupVersion);
                 PlayerPrefs.Save();
             }
@@ -95,9 +97,28 @@ namespace GolfSimZA.Players
             return profile;
         }
 
+        /// <summary>
+        /// Saves the bag. When something really changed it is marked as changed now and shared with the
+        /// other PC (players-and-bags.json, see SharedPlayerData); saving an unchanged bag does nothing,
+        /// so just opening and closing a bag never overrides a newer one from the other PC.
+        /// </summary>
         public void Save(string playerName)
         {
             string key = Prefix(playerName);
+            if (SameAs(Load(playerName)))
+                return;
+            WriteValues(key);
+            if (!SharedPlayerData.Applying)
+            {
+                SharedPlayerData.WriteTicks(key + ".ModifiedUtc", DateTime.UtcNow.Ticks);
+                PlayerPrefs.SetString(key + ".ModifiedOn", Environment.MachineName);
+            }
+            PlayerPrefs.Save();
+            SharedPlayerData.MarkChanged();
+        }
+
+        private void WriteValues(string key)
+        {
             for (int i = 0; i < ClubCount; i++)
             {
                 PlayerPrefs.SetString(key + ".Name." + i, ClubNames[i] ?? DefaultClubNames[i]);
@@ -106,8 +127,77 @@ namespace GolfSimZA.Players
                 PlayerPrefs.SetFloat(key + ".Total." + i, Mathf.Max(0f, TotalMeters[i]));
                 PlayerPrefs.SetInt(key + ".InBag." + i, InBag[i] ? 1 : 0);
             }
-            PlayerPrefs.Save();
         }
+
+        // ------------------------------------------------------------------ shared between PCs
+
+        /// <summary>Number of clubs with a mapped distance.</summary>
+        public int MappedClubs()
+        {
+            int n = 0;
+            for (int i = 0; i < ClubCount; i++) if (CarryMeters[i] > 0f || TotalMeters[i] > 0f) n++;
+            return n;
+        }
+
+        internal SharedBag ToShared(string playerName)
+        {
+            string key = Prefix(playerName);
+            return new SharedBag
+            {
+                player = PlayerRoster.Clean(playerName),
+                modifiedUtc = SharedPlayerData.ReadTicks(key + ".ModifiedUtc"),
+                modifiedOn = PlayerPrefs.GetString(key + ".ModifiedOn", ""),
+                setupVersion = PlayerPrefs.GetInt(key + ".SetupVersion", 0),
+                mappedClubs = MappedClubs(),
+                names = (string[])ClubNames.Clone(),
+                lofts = (float[])Lofts.Clone(),
+                carry = (float[])CarryMeters.Clone(),
+                total = (float[])TotalMeters.Clone(),
+                inBag = (bool[])InBag.Clone()
+            };
+        }
+
+        internal static GolfBagProfile FromShared(SharedBag bag)
+        {
+            var profile = new GolfBagProfile();
+            for (int i = 0; i < ClubCount; i++)
+            {
+                profile.ClubNames[i] = string.IsNullOrEmpty(bag.names[i]) ? DefaultClubNames[i] : bag.names[i];
+                profile.Lofts[i] = bag.lofts[i];
+                profile.CarryMeters[i] = Mathf.Max(0f, bag.carry[i]);
+                profile.TotalMeters[i] = Mathf.Max(0f, bag.total[i]);
+                profile.InBag[i] = bag.inBag[i];
+            }
+            return profile;
+        }
+
+        internal bool SameAs(SharedBag bag) => bag != null && bag.names != null && bag.names.Length == ClubCount && SameAs(FromShared(bag));
+
+        private bool SameAs(GolfBagProfile other)
+        {
+            for (int i = 0; i < ClubCount; i++)
+            {
+                if (!string.Equals(ClubNames[i] ?? DefaultClubNames[i], other.ClubNames[i] ?? DefaultClubNames[i], StringComparison.Ordinal)) return false;
+                if (!Mathf.Approximately(Lofts[i], other.Lofts[i])) return false;
+                if (!Mathf.Approximately(Mathf.Max(0f, CarryMeters[i]), Mathf.Max(0f, other.CarryMeters[i]))) return false;
+                if (!Mathf.Approximately(Mathf.Max(0f, TotalMeters[i]), Mathf.Max(0f, other.TotalMeters[i]))) return false;
+                if (InBag[i] != other.InBag[i]) return false;
+            }
+            return true;
+        }
+
+        /// <summary>Stores a bag that came from the other PC, keeping its change time.</summary>
+        internal void Store(string playerName, long modifiedUtc, int setupVersion)
+        {
+            string key = Prefix(playerName);
+            WriteValues(key);
+            SharedPlayerData.WriteTicks(key + ".ModifiedUtc", modifiedUtc);
+            // Shared bags are always in the current club layout (every PC runs the setup before sharing).
+            PlayerPrefs.SetInt(key + ".SetupVersion", Mathf.Max(setupVersion, DefaultBagSetupVersion));
+        }
+
+        internal static void StoreModified(string playerName, long modifiedUtc) =>
+            SharedPlayerData.WriteTicks(Prefix(playerName) + ".ModifiedUtc", modifiedUtc);
 
         public int FindClubIndex(string clubName)
         {

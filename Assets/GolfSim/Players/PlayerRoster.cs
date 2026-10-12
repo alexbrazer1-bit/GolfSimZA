@@ -112,13 +112,37 @@ namespace GolfSimZA.Players
             try
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(FilePath));
-                File.WriteAllText(FilePath, JsonUtility.ToJson(this, true));
+                string json = JsonUtility.ToJson(this, true);
+                string before = File.Exists(FilePath) ? File.ReadAllText(FilePath) : null;
+                File.WriteAllText(FilePath, json);
+                if (json != before && !SharedPlayerData.Applying)
+                {
+                    // A real change on this PC: newest player list wins on the other PC too.
+                    SharedPlayerData.WriteTicks(SharedPlayerData.RosterModifiedKey, DateTime.UtcNow.Ticks);
+                    PlayerPrefs.Save();
+                    SharedPlayerData.MarkChanged();
+                }
             }
             catch (Exception ex)
             {
                 Debug.LogError("[GolfSimZA] Could not save players: " + ex.Message);
             }
             ApplyToSession();
+        }
+
+        /// <summary>Takes over the player list from the shared file (another PC changed it).</summary>
+        internal static void ReplaceFromShared(List<PlayerProfile> shared)
+        {
+            if (shared == null || shared.Count == 0) return;
+            PlayerRoster roster = Current;
+            roster.players = new List<PlayerProfile>();
+            foreach (PlayerProfile p in shared)
+            {
+                PlayerProfile copy = JsonUtility.FromJson<PlayerProfile>(JsonUtility.ToJson(p));
+                if (copy.tee == null) copy.tee = "";
+                roster.players.Add(copy);
+            }
+            roster.Save();
         }
 
         public List<PlayerProfile> Selected

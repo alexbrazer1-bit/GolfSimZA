@@ -150,6 +150,8 @@ namespace GolfSimZA.UI
                 bool canAdd = !inBag && bagCount < GolfBagProfile.MaxBagClubs;
                 if (GUI.Button(new Rect(area.width - 350f, y + 2f, 120f, 36f), inBag ? "✓ IN BAG" : (canAdd ? "ADD TO BAG" : "BAG FULL"), inBag ? activeButtonStyle : buttonStyle))
                 {
+                    // Fresh copy first: the other PC may have changed this bag since the screen opened.
+                    profile = GolfBagProfile.Load(SelectedPlayerName());
                     if (inBag)
                     {
                         profile.InBag[i] = false;

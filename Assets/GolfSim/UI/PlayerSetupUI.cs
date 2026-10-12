@@ -20,12 +20,33 @@ namespace GolfSimZA.UI
         private GolfBagProfile bagProfile;
 
 
-        private void Start()
+        private void OnEnable() => SharedPlayerData.Changed += OnSharedChanged;
+        private void OnDisable() => SharedPlayerData.Changed -= OnSharedChanged;
+
+        /// <summary>The other PC changed players or bags: show them (without saving the old bag over them).</summary>
+        private void OnSharedChanged()
         {
-            // MAP MY BAG: every player in the roster can map their own bag.
+            string open = editingBag && selectedPlayerIndex >= 0 && selectedPlayerIndex < players.Count ? players[selectedPlayerIndex] : null;
+            RefreshPlayers();
+            bagSummaries.Clear();
+            if (open == null) return;
+            int index = players.FindIndex(p => string.Equals(p, open, System.StringComparison.OrdinalIgnoreCase));
+            if (index < 0) { editingBag = false; selectedPlayerIndex = -1; bagProfile = null; return; }
+            selectedPlayerIndex = index;
+            bagProfile = GolfBagProfile.Load(players[index].Trim());
+        }
+
+        private void RefreshPlayers()
+        {
             players.Clear();
             foreach (PlayerProfile p in PlayerRoster.Current.players) players.Add(p.name);
             if (players.Count == 0) players.Add("Player 1");
+        }
+
+        private void Start()
+        {
+            // MAP MY BAG: every player in the roster can map their own bag.
+            RefreshPlayers();
 
             PlayerPrefs.DeleteKey("GolfSimZA.BagReturnHome");
             // Opened for a player (home / players page) or coming back from mapping a club.

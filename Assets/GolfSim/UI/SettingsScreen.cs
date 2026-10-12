@@ -369,6 +369,7 @@ namespace GolfSimZA.UI
             var fresh = new AppSettings
             {
                 updateFolder = old.updateFolder,
+                sharedDataFolder = old.sharedDataFolder,
                 checkForUpdatesOnStart = old.checkForUpdatesOnStart,
                 lastCourseImportFolder = old.lastCourseImportFolder,
                 favouriteCourses = old.favouriteCourses,

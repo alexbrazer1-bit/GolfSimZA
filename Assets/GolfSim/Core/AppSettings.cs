@@ -23,6 +23,10 @@ namespace GolfSimZA.Core
         public const string DefaultUpdateFolder = @"C:\Shared\GolfSimZA-Updates";
 
         public string updateFolder = DefaultUpdateFolder;
+        /// <summary>Shared network folder that keeps players and mapped bags the same on both PCs.</summary>
+        public const string DefaultSharedDataFolder = @"\\Desktop-Nofear\Shared\GolfSimZA-Data";
+        /// <summary>Folder with players-and-bags.json ("" = <see cref="DefaultSharedDataFolder"/>).</summary>
+        public string sharedDataFolder = DefaultSharedDataFolder;
         public bool checkForUpdatesOnStart = true;
         public string lastCourseImportFolder = "";
         /// <summary>Altitude of the home simulator / driving range in metres (thinner air = longer carry).</summary>

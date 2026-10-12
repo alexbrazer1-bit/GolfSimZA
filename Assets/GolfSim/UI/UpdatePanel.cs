@@ -11,6 +11,7 @@ namespace GolfSimZA.UI
     public sealed class UpdatePanel
     {
         private string folderField;
+        private string sharedFolderField;
         private string altitudeField;
         private Task<UpdateCheckResult> checkTask;
         private Task<string> prepareTask;
@@ -30,6 +31,7 @@ namespace GolfSimZA.UI
         {
             IsOpen = true;
             folderField = AppSettings.Current.updateFolder;
+            sharedFolderField = GolfSimZA.Players.SharedPlayerData.Folder;
             altitudeField = AppSettings.Current.homeAltitudeMeters.ToString("0", CultureInfo.InvariantCulture);
             if (checkTask == null && result == null) StartCheck();
         }
@@ -103,6 +105,25 @@ namespace GolfSimZA.UI
                 StartCheck();
             }
             GUILayout.EndHorizontal();
+
+            // ---- shared players & bags
+            GUILayout.Space(6);
+            GUILayout.Label("SHARED PLAYERS & BAGS FOLDER", GolfSimTheme.Label);
+            GUILayout.Label(@"Players and mapped bags are kept the same on every PC that uses this folder (the same network path on the main PC and the simulator PC).", GolfSimTheme.Subtitle);
+            GUILayout.BeginHorizontal();
+            sharedFolderField = GUILayout.TextField(sharedFolderField ?? "", GolfSimTheme.TextField);
+            if (GUILayout.Button("SAVE", GolfSimTheme.Button, GUILayout.Width(100)))
+            {
+                string folder = (sharedFolderField ?? "").Trim().Trim('"');
+                AppSettings.Current.sharedDataFolder = string.IsNullOrEmpty(folder) ? AppSettings.DefaultSharedDataFolder : folder;
+                sharedFolderField = AppSettings.Current.sharedDataFolder;
+                AppSettings.Current.Save();
+                GolfSimZA.Players.SharedPlayerData.SyncNow();
+            }
+            if (GUILayout.Button("SYNC NOW", GolfSimTheme.Button, GUILayout.Width(140))) GolfSimZA.Players.SharedPlayerData.SyncNow();
+            GUILayout.EndHorizontal();
+            GUILayout.Label(GolfSimZA.Players.SharedPlayerData.Status, GolfSimZA.Players.SharedPlayerData.StatusIsError ? GolfSimTheme.Bad_ : GolfSimTheme.Good_);
+            GUILayout.Space(6);
 
             bool autoCheck = GUILayout.Toggle(AppSettings.Current.checkForUpdatesOnStart, "  Check for updates when GolfSimZA starts", GolfSimTheme.Body);
             if (autoCheck != AppSettings.Current.checkForUpdatesOnStart)

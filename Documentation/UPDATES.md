@@ -59,3 +59,14 @@ Updates and reinstalls replace only the program folder. These are kept:
 * The installer must be inside the update folder and must be an `.exe`.
 * The SHA-256 checksum in `latest.json` must match the copied installer, otherwise nothing is installed.
 * The installer runs per user and closes GolfSimZA and the R10 bridge before replacing files.
+
+## Players and bags on both PCs
+
+Players and their mapped golf bags are shared between the main PC and the simulator PC through
+`players-and-bags.json` in **`\\Desktop-Nofear\Shared\GolfSimZA-Data`** (Settings → UPDATES → SHARED PLAYERS & BAGS
+FOLDER; SYNC NOW forces a sync, the line underneath shows the last result).
+
+* Each PC keeps its own copy too, so the game plays the same when the shared folder cannot be reached and catches up later.
+* Checked when the game starts, every 30 seconds (never during a shot) and straight after a bag or the player list changes.
+* Newest change wins, per bag and for the player list. The first time a PC joins, a bag that was mapped on one PC is
+  never replaced by an unmapped default bag from the other (the one with more mapped clubs is kept).
