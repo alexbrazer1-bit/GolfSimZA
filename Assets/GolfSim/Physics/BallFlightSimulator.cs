@@ -60,6 +60,12 @@ namespace GolfSimZA.Physics
         [SerializeField] private float minBounceSpeed = 0.6f;
         [SerializeField] private float slopeRollFactor = 0.71f;
         [SerializeField] private float maximumRollTime = 25f;
+        [Tooltip("Grass holds a ball that has nearly stopped better than it slows a moving one: a slow ball stays put on a slope up to this many times the rolling resistance (full shots, not putts).")]
+        [SerializeField] private float grassHoldFactor = 1.25f;
+        [Tooltip("When a full shot trickles slowly along a hillside, its roll is played this many times faster so the game moves on.")]
+        [SerializeField] private float hillsideRollTimeScale = 8f;
+        [Tooltip("A full shot's roll never takes longer than this on screen (seconds); after that the stop is worked out at once.")]
+        [SerializeField] private float maximumRollSeconds = 5f;
 
         [Header("Spin / roll tuning")]
         [SerializeField] private float rollSpinDecayPerSecond = 0.65f;
@@ -86,6 +92,10 @@ namespace GolfSimZA.Physics
         private float totalMeters;
         private float flightTime;
         private float rollTime;
+        /// <summary>Real (screen) seconds the current shot has been rolling.</summary>
+        private float rollScreenTime;
+        /// <summary>The ground the ball rolls on pulls it along about as hard as the grass slows it (a hillside).</summary>
+        private bool rollingOnHillside;
         private float stepAccumulator;
         private bool landedOnce;
         private ShotData activeShot;
@@ -312,6 +322,8 @@ namespace GolfSimZA.Physics
             InWater = false;
             stepAccumulator = 0f;
             rollTime = 0f;
+            rollScreenTime = 0f;
+            rollingOnHillside = false;
             flightTime = 0f;
             landedOnce = false;
             carryMeters = 0f;
@@ -410,7 +422,23 @@ namespace GolfSimZA.Physics
             if (interpolating) ball.position = simCurrent;
             else simPrevious = simCurrent = ball.position;
 
-            stepAccumulator += Mathf.Min(Time.deltaTime, 0.1f);
+            float frame = Mathf.Min(Time.deltaTime, 0.1f);
+            bool fullShotRolling = rolling && !airborne && !puttMode;
+            if (fullShotRolling)
+            {
+                rollScreenTime += frame;
+                // A full shot creeping along a hillside: play the rest of the roll fast (same physics,
+                // so it still stops, drops into water or goes off a ledge exactly where it would).
+                if (rollingOnHillside && rollTime >= 1f && velocity.magnitude < 2.5f * Mathf.Max(0.0001f, metersToUnity))
+                    frame *= Mathf.Max(1f, hillsideRollTimeScale);
+            }
+            stepAccumulator += frame;
+            if (fullShotRolling && rollScreenTime >= maximumRollSeconds)
+            {
+                // Rolling for too long on screen: work out where it stops now and move on.
+                FinishRollNow();
+                stepAccumulator = 0f;
+            }
             while (stepAccumulator >= Step && IsInFlight)
             {
                 stepAccumulator -= Step;
@@ -431,6 +459,22 @@ namespace GolfSimZA.Physics
                 interpolating = false;
                 AnyInFlight = false;
             }
+        }
+
+        /// <summary>
+        /// Runs the rest of a full shot's roll at once (the same roll physics, up to the roll time
+        /// limit), so the ball goes straight to where it would stop. If it rolls off a ledge it
+        /// stays airborne and the drop is shown normally.
+        /// </summary>
+        private void FinishRollNow()
+        {
+            Vector3 from = ball.position;
+            int guard = Mathf.CeilToInt(maximumRollTime / Step) + 10;
+            while (rolling && !airborne && guard-- > 0)
+                StepRoll(Step);
+            simPrevious = simCurrent = ball.position;
+            interpolating = false;
+            Debug.Log($"[GolfSimZA] Long roll finished at once: the ball moved another {HorizontalDistance(ball.position, from):0.0} m and {(IsInFlight ? "is still moving" : "stopped")}.");
         }
 
         // ---------------- Flight ----------------
@@ -765,7 +809,12 @@ namespace GolfSimZA.Physics
             Vector3 slopeAcceleration = new Vector3(normal.x, 0f, normal.z) * (gravity * normal.y * slopeRollFactor);
 
             float rolledSoFar = HorizontalDistance(ball.position, landingPosition);
-            bool slopeHolds = slopeAcceleration.magnitude <= deceleration * 0.9f;
+            // A putt keeps the green's true slope behaviour. A full shot that has nearly stopped is held
+            // by the grass up to a bit more than its rolling resistance, so it does not creep on forever
+            // on a slope that almost balances the grass.
+            float slopePull = slopeAcceleration.magnitude;
+            bool slopeHolds = slopePull <= deceleration * (puttMode ? 0.9f : Mathf.Max(0.9f, grassHoldFactor));
+            rollingOnHillside = !puttMode && slopePull >= deceleration * 0.5f;
             if ((speed <= stopSpeed && slopeHolds) || (!puttMode && rolledSoFar >= maxRollMeters) || rollTime >= maximumRollTime)
             {
                 velocity = Vector3.zero;
