@@ -1420,6 +1420,9 @@ MonoBehaviour:
   minBounceSpeed: 1.2
   slopeRollFactor: 0.71
   maximumRollTime: 25
+  grassHoldFactor: 1.25
+  hillsideRollTimeScale: 8
+  maximumRollSeconds: 5
   rollSpinDecayPerSecond: 0.65
   useMeasuredR10Carry: 1
   cupRadius: 0.054
