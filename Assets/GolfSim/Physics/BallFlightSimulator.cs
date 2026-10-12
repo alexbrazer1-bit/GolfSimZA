@@ -120,20 +120,63 @@ namespace GolfSimZA.Physics
             return -(groundNormal.x * right.x + groundNormal.z * right.z) / ny * 100f;
         }
 
+        /// <summary>Half the width of a golfer's stance, metres: the side slope is read between the feet.</summary>
+        public const float StanceHalfWidthMeters = 0.8f;
+        /// <summary>Side slopes up to this (percent) are too small to change a real shot and are ignored.</summary>
+        public const float LieDeadZonePercent = 2f;
+        /// <summary>Share of the tilted-face effect left after the golfer adjusts stance, grip and swing.</summary>
+        public const float LieStanceFactor = 0.5f;
+        /// <summary>Largest start direction change a sloped lie can give, degrees.</summary>
+        public const float LieMaxShiftDeg = 5f;
+
         /// <summary>
         /// Start direction change from a side slope (degrees, + = right). A right-handed golfer
         /// stands on the left of the aim line, so ground rising to the right puts the ball above
         /// the feet; a left-hander stands on the right, so it is the other way round - and the
         /// same formula gives both: the slope tilts the club face, and a lofted face tilted
-        /// points sideways by atan(tan(loft) x sin(slope)). Golfers allow for part of it with
-        /// their stance, so 85 % of that is used.
+        /// points sideways by atan(tan(loft) x sin(slope)). Real golfers take most of that out
+        /// with their set-up (choke down, ball position, flatter or steeper swing), so a small
+        /// slope does next to nothing: the first 2 % is ignored, half of the rest is used and the
+        /// change is capped at 5 degrees. A 7 iron on a 5 % slope moves about 1.5 m, on a 10 %
+        /// slope about 4 m.
         /// </summary>
         public static float LieShift(float sideSlopePercent, float loftDeg)
         {
-            float slope = Mathf.Atan(sideSlopePercent / 100f);
+            float size = Mathf.Abs(sideSlopePercent);
+            if (size <= LieDeadZonePercent) return 0f;
+            float effective = Mathf.Sign(sideSlopePercent) * (size - LieDeadZonePercent);
+            float slope = Mathf.Atan(effective / 100f);
             float loft = Mathf.Clamp(loftDeg, 6f, 64f) * Mathf.Deg2Rad;
-            float shift = -Mathf.Atan(Mathf.Tan(loft) * Mathf.Sin(slope)) * Mathf.Rad2Deg * 0.85f;
-            return Mathf.Clamp(shift, -20f, 20f);
+            float shift = -Mathf.Atan(Mathf.Tan(loft) * Mathf.Sin(slope)) * Mathf.Rad2Deg * LieStanceFactor;
+            return Mathf.Clamp(shift, -LieMaxShiftDeg, LieMaxShiftDeg);
+        }
+
+        /// <summary>
+        /// Side slope across the aim line where the golfer stands (percent, + = higher on the right).
+        /// Ground heights are read under both feet at three points along the stance and averaged,
+        /// so a small bump or dip right under the ball does not count as a hill. Falls back to
+        /// the ground tilt under the ball when the stance cannot be read (off the course edge, water).
+        /// </summary>
+        private float StanceSideSlopePercent(Vector3 ballPosition, float aimYawDeg, Vector3 fallbackNormal)
+        {
+            float scale = Mathf.Max(0.0001f, metersToUnity);
+            Quaternion aim = Quaternion.Euler(0f, aimYawDeg, 0f);
+            Vector3 right = aim * Vector3.right;
+            Vector3 forward = aim * Vector3.forward;
+            float half = StanceHalfWidthMeters * scale;
+            float sum = 0f;
+            int count = 0;
+            for (int i = -1; i <= 1; i++)
+            {
+                Vector3 centre = ballPosition + forward * (i * 0.4f * scale);
+                if (!GroundProbe.TrySample(centre - right * half, out float left, out _) || GroundProbe.LastWasWater) continue;
+                if (!GroundProbe.TrySample(centre + right * half, out float rightHeight, out _) || GroundProbe.LastWasWater) continue;
+                float percent = (rightHeight - left) / (2f * half) * 100f;
+                if (Mathf.Abs(percent) > 60f) continue; // a lip, wall or tree root, not the slope of the lie
+                sum += percent;
+                count++;
+            }
+            return count > 0 ? sum / count : SideSlopePercent(fallbackNormal, aimYawDeg);
         }
 
         /// <summary>Angle the ball came down at on its first landing (degrees).</summary>
@@ -286,13 +329,13 @@ namespace GolfSimZA.Physics
             if (!isPutt && AppSettings.Current.lieSlope && GroundProbe.TrySample(ball.position, out _, out Vector3 lieNormal))
             {
                 float loft = shot.HasClubPath && shot.DynamicLoftDeg > 1f ? shot.DynamicLoftDeg : ActiveClub.LoftOf(string.IsNullOrEmpty(shot.ClubName) ? ActiveClub.Resolve() : shot.ClubName);
-                LieSlopePercent = SideSlopePercent(lieNormal, AimYawDegrees);
+                LieSlopePercent = StanceSideSlopePercent(ball.position, AimYawDegrees, lieNormal);
                 LieShiftDeg = LieShift(LieSlopePercent, loft);
                 if (Mathf.Abs(LieShiftDeg) > 0.05f)
                 {
+                    // Only the start line changes: the launch monitor already measured the real
+                    // spin, so no extra draw / fade is added (that doubled the miss before).
                     shot.LaunchDirectionDeg += LieShiftDeg;
-                    // The tilted face also adds draw / fade spin the same way.
-                    shot.SpinAxisDeg += LieShiftDeg * 0.5f;
                     Debug.Log($"[GolfSimZA] Sloped lie: {LieSlopePercent:0.0}% side slope, loft {loft:0}° -> shot starts {Mathf.Abs(LieShiftDeg):0.0}° {(LieShiftDeg < 0f ? "left" : "right")}");
                 }
             }
